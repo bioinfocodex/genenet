@@ -38,7 +38,10 @@ export default function MolbuilderStats({
   const C = (targetSeq.match(/C/gi) || []).length;
   const GC = len > 0 ? ((G + C) / len * 100).toFixed(1) : '0';
   const tm = wallaceTm(targetSeq);
-  const mw = (len * 330 / 1000).toFixed(1); // Rough Da -> kDa for DNA
+  // ~650 Da per base pair, the standard double-stranded approximation. This
+  // was 330, which is the per-nucleotide figure for a single strand and so
+  // reported half the mass of any plasmid or other duplex shown here.
+  const mw = (len * 650 / 1000).toFixed(1); // Da -> kDa
 
   return (
     <div className="seq-stats-sidebar animate-fade-in" style={{ 
@@ -88,7 +91,7 @@ export default function MolbuilderStats({
           </div>
 
           <StatRow label="Tm (Wallace)" value={`${tm}°C`} icon={<Info size={14} />} />
-          <StatRow label="Molecular Weight" value={`${mw} kDa`} icon={<Dna size={14} />} />
+          <StatRow label="Molecular Weight (dsDNA)" value={`${mw} kDa`} icon={<Dna size={14} />} />
         </div>
       </div>
 
