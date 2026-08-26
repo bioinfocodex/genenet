@@ -8,13 +8,10 @@ import {
   BarChart, 
   PieChart 
 } from 'lucide-react';
-import { 
-  wallaceTm, 
-  estimateProteinMW, 
-  AA3, 
-  AA3BG, 
-  AA3FG 
-} from '@/lib/molbuilder-logic';
+// This panel reports DNA statistics; the amino-acid tables and the protein
+// molecular-weight helper were imported but never used. estimateProteinMW does
+// not exist in molbuilder-logic at all, which broke the build.
+import { wallaceTm } from '@/lib/molbuilder-logic';
 
 interface MolbuilderStatsProps {
   seq: string;
