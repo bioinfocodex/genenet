@@ -13,8 +13,8 @@ const PLANS = [
 
 const STORAGE_OPTIONS: { id: StorageType; icon: React.ReactNode; label: string; sub: string; showPath: boolean }[] = [
   { id: 'local',   icon: <HardDrive size={22} />, label: 'This Computer',             sub: 'Store everything locally. Best for single-machine setups.',                                                        showPath: false },
-  { id: 'onedrive', icon: <Cloud size={22} />,    label: 'OneDrive / Google Drive',   sub: 'Store in your local cloud sync folder (OneDrive, Google Drive, Dropbox). Syncs automatically across devices.',    showPath: true  },
-  { id: 'network', icon: <Network size={22} />,   label: 'Network Drive / NAS',       sub: 'Store on a shared LAN drive. All team machines read/write the same files.',                                       showPath: true  },
+  { id: 'onedrive', icon: <Cloud size={22} />,    label: 'OneDrive / Google Drive',   sub: 'Keep uploaded files in your sync folder. The database stays on this computer.',                                   showPath: true  },
+  { id: 'network', icon: <Network size={22} />,   label: 'Network Drive / NAS',       sub: 'Keep uploaded files on a shared LAN drive. The database stays on this computer.',                                 showPath: true  },
   { id: 'cloud',   icon: <Server size={22} />,    label: 'Cloud / Remote Database',   sub: 'Use a hosted PostgreSQL or remote database URL. Best for internet-accessible deployments.',                       showPath: false },
 ];
 
@@ -121,7 +121,9 @@ export default function SetupPage() {
                   <input value={storagePath} onChange={e => setStoragePath(e.target.value)} required className="input-control"
                     placeholder="e.g. /Users/you/OneDrive - Company/GeneNet  or  C:\Users\you\OneDrive\GeneNet" />
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                    Enter the full path to a folder inside your OneDrive/Google Drive/Dropbox sync folder. The app will create the GeneNet data folder there automatically. Every team member sets their own local sync path pointing to the same shared folder.
+                    Enter the full path to a folder inside your OneDrive/Google Drive/Dropbox sync folder. Uploads, releases and backups are kept there.
+                    {' '}The database itself stays on this computer. A live SQLite file in a sync folder gets corrupted, and if two machines open it at once the sync client keeps one copy and quietly renames the other, losing whichever set of experiments synced first.
+                    {' '}To put the whole team in one workspace, run GeneNet on one machine and have everyone else connect to it from the Connect screen.
                   </span>
                 </F>
               )}

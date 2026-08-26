@@ -1,6 +1,7 @@
 import path from 'path';
 import { mkdir, copyFile, writeFile as fsWriteFile, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
+import { isCloudSynced, defaultDatabasePath, backupDirFor } from '@/lib/db-location';
 
 /** Get the configured storage base path.
  *  Priority: ONEDRIVE_PATH env var → storagePath from DB → local public/ fallback */
@@ -46,13 +47,25 @@ export async function storeFile(
   return { storagePath, publicPath: `/uploads/${subDir}/${storedName}` };
 }
 
-/** Write ONEDRIVE_PATH and DATABASE_URL into .env so they persist across restarts */
+/**
+ * Write ONEDRIVE_PATH and DATABASE_URL into .env so they persist across restarts.
+ *
+ * The two go to different places on purpose. Uploads belong in the chosen
+ * storage folder, including a synced one -- a gel image is written once and
+ * sync copies it correctly. The database does not: see db-location.ts for why
+ * a live SQLite file in OneDrive or Dropbox loses experiments silently. When
+ * the chosen folder is synced, the database goes to the machine's own data
+ * directory instead and only the uploads follow the user's choice.
+ */
 export async function persistStoragePath(storagePath: string) {
   const envPath = path.join(process.cwd(), '.env');
   let contents = '';
   try { contents = await readFile(envPath, 'utf8'); } catch { /* no .env yet */ }
 
-  const dbPath = path.join(storagePath, 'database', 'genenet.db');
+  const synced = isCloudSynced(storagePath);
+  const dbPath = synced
+    ? defaultDatabasePath()
+    : path.join(storagePath, 'database', 'genenet.db');
 
   // Update or add ONEDRIVE_PATH
   if (contents.includes('ONEDRIVE_PATH=')) {
@@ -70,11 +83,14 @@ export async function persistStoragePath(storagePath: string) {
 
   await fsWriteFile(envPath, contents.trim() + '\n');
 
-  // Create folder structure
-  await ensureDir(path.join(storagePath, 'database'));
+  // Create folder structure. The database directory follows the database, which
+  // is not necessarily under storagePath any more.
+  await ensureDir(path.dirname(dbPath));
   await ensureDir(path.join(storagePath, 'uploads', 'gels'));
   await ensureDir(path.join(storagePath, 'uploads', 'sequences'));
   await ensureDir(path.join(storagePath, 'releases'));
+  // Backups are finished files, so the synced folder is the right home for them.
+  await ensureDir(backupDirFor(storagePath));
 
   // Copy current DB there if it doesn't exist yet
   const localDb = path.join(process.cwd(), 'prisma', 'dev.db');
