@@ -1,14 +1,13 @@
 'use server';
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/session';
+import { requireAdmin as sharedRequireAdmin } from '@/lib/auth-guard';
 import { revalidatePath } from 'next/cache';
 
+// Was already reading the role from the database rather than the token, which
+// was right; the shared guard adds the status check on top.
 async function requireAdmin() {
-  const session = await getSession();
-  if (!session) throw new Error('Unauthorized.');
-  const user = await prisma.user.findUnique({ where: { id: session.userId } });
-  if (!user || user.role !== 'ADMIN') throw new Error('Unauthorized.');
-  return { ...session, role: user.role };
+  const user = await sharedRequireAdmin();
+  return { userId: user.id, role: user.role };
 }
 
 function generateInviteCode(): string {

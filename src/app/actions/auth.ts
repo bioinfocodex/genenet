@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { persistStoragePath } from '@/lib/storage';
+import { getCurrentUser, requireAdmin as sharedRequireAdmin } from '@/lib/auth-guard';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -36,10 +37,15 @@ function generateConnectionCode(): string {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /** Used internally by pages to get the logged-in user. */
+/**
+ * The signed-in user, or null. Delegates to getCurrentUser so that a blocked or
+ * removed member stops being "signed in" on their next request rather than when
+ * their seven-day token expires.
+ *
+ * Named getMockUser when the app used a hard-coded user; it does real work now.
+ */
 export async function getMockUser() {
-  const session = await getSession();
-  if (!session) return null;
-  return prisma.user.findUnique({ where: { id: session.userId } });
+  return getCurrentUser();
 }
 
 export async function getAllUsers() {
@@ -185,8 +191,8 @@ export async function register(_prevState: { error?: string } | undefined, formD
 // ─── Invite management (admin only) ──────────────────────────────────────────
 
 export async function createInvite(formData: FormData) {
-  const session = await getSession();
-  if (!session || session.role !== 'ADMIN') throw new Error('Unauthorized.');
+  const actor = await getCurrentUser();
+  if (!actor || actor.role !== 'ADMIN') throw new Error('Unauthorized.');
 
   const email     = (formData.get('email') as string | null)?.trim().toLowerCase() || null;
   const expiresIn = formData.get('expiresIn') as string; // "7d" | "30d" | "never"
@@ -200,7 +206,7 @@ export async function createInvite(formData: FormData) {
       code: generateInviteCode(),
       email: email || null,
       expiresAt,
-      createdById: session.userId,
+      createdById: actor.id,
     },
   });
 
@@ -208,8 +214,8 @@ export async function createInvite(formData: FormData) {
 }
 
 export async function revokeInvite(formData: FormData) {
-  const session = await getSession();
-  if (!session || session.role !== 'ADMIN') throw new Error('Unauthorized.');
+  const actor = await getCurrentUser();
+  if (!actor || actor.role !== 'ADMIN') throw new Error('Unauthorized.');
   const id = formData.get('id') as string;
   await prisma.invite.delete({ where: { id } });
   revalidatePath('/settings');
@@ -221,12 +227,11 @@ export async function getWorkspaceInfo() {
 
 // ─── Admin: User Access Control ───────────────────────────────────────────────
 
+// Read the role from the database, and refuse a blocked admin: the shared
+// guard does both.
 async function requireAdmin() {
-  const session = await getSession();
-  if (!session) throw new Error('Unauthorized.');
-  const user = await prisma.user.findUnique({ where: { id: session.userId } });
-  if (!user || user.role !== 'ADMIN') throw new Error('Unauthorized.');
-  return { ...session, role: user.role };
+  const user = await sharedRequireAdmin();
+  return { userId: user.id, role: user.role };
 }
 
 export async function blockUser(formData: FormData) {

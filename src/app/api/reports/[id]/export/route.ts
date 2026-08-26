@@ -5,8 +5,11 @@ import {
   AlignmentType, Table, TableRow, TableCell, WidthType,
   BorderStyle, PageBreak, ShadingType,
 } from 'docx';
+import { requireApiUser } from '@/lib/auth-guard';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser();
+  if ('response' in auth) return auth.response;
   const { id } = await params;
   const report = await prisma.report.findUnique({
     where: { id },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { calcTm, calcGC, reverseComplement } from '@/lib/simulation';
+import { requireApiUser } from '@/lib/auth-guard';
 
 const RE_EXTENSIONS: Record<string, string> = {
   EcoRI: 'GAATTC',
@@ -23,6 +24,8 @@ function countBindingSites(binding: string, template: string): number {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiUser();
+  if ('response' in auth) return auth.response;
   const body = await req.json().catch(() => ({}));
   const { binding, reExtension, phospho5, strand, template } = body as {
     binding?: string;

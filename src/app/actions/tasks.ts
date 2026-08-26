@@ -2,14 +2,14 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { getSession } from '@/lib/session';
+import { requireUser } from '@/lib/auth-guard';
 
 export async function getTasks() {
   return prisma.task.findMany({ include: { assignedTo: true } });
 }
 
 export async function createTask(fd: FormData) {
-  const session = await getSession();
+  const session = await requireUser();
   const title = (fd.get('title') as string).trim();
   if (!title) return;
 
@@ -27,7 +27,7 @@ export async function createTask(fd: FormData) {
       status: (fd.get('status') as string) || 'TODO',
       dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
       assignedToId: assignedToId || undefined,
-      createdById: session?.userId || undefined,
+      createdById: session.id,
       projectId: projectId || undefined,
       procedureId: procedureId || undefined,
       geneSequenceId: geneSequenceId || undefined,
@@ -82,13 +82,13 @@ export async function assignTask(taskId: string, userId: string) {
 }
 
 export async function addTaskComment(fd: FormData) {
-  const session = await getSession();
+  const session = await requireUser();
   const taskId = fd.get('taskId') as string;
   const content = (fd.get('content') as string).trim();
-  if (!content || !session?.userId) return;
+  if (!content) return;
 
   await prisma.taskComment.create({
-    data: { taskId, content, authorId: session.userId },
+    data: { taskId, content, authorId: session.id },
   });
 
   revalidatePath(`/tasks/${taskId}`);

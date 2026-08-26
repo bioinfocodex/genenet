@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import os from 'os';
+import { requireApiUser } from '@/lib/auth-guard';
 
 export async function GET() {
+  const auth = await requireApiUser();
+  if ('response' in auth) return auth.response;
   const interfaces = os.networkInterfaces();
   const ips: { name: string; address: string }[] = [];
 

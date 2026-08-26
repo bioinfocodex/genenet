@@ -2,8 +2,10 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { requireUser } from '@/lib/auth-guard';
 
 export async function createCollection(formData: FormData) {
+  await requireUser();
   const name = (formData.get('name') as string).trim();
   const description = (formData.get('description') as string | null)?.trim() || null;
   if (!name) throw new Error('Name required');
@@ -13,6 +15,7 @@ export async function createCollection(formData: FormData) {
 }
 
 export async function deleteCollection(formData: FormData) {
+  await requireUser();
   const id = formData.get('id') as string;
   if (!id) return;
   await prisma.collection.delete({ where: { id } });
@@ -20,6 +23,7 @@ export async function deleteCollection(formData: FormData) {
 }
 
 export async function addToCollection(formData: FormData) {
+  await requireUser();
   const collectionId = formData.get('collectionId') as string;
   const itemType = formData.get('itemType') as string;
   const itemId = formData.get('itemId') as string;
@@ -34,6 +38,7 @@ export async function addToCollection(formData: FormData) {
 }
 
 export async function removeFromCollection(formData: FormData) {
+  await requireUser();
   const id = formData.get('id') as string;
   if (!id) return;
   await prisma.collectionItem.delete({ where: { id } });

@@ -2,8 +2,8 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { getSession } from '@/lib/session';
 import { calcTm, calcGC, parseFasta, parseGenBank } from '@/lib/simulation';
+import { requireUser } from '@/lib/auth-guard';
 
 export async function createSequence(data: FormData) {
   const name = (data.get('name') as string).trim();
@@ -136,8 +136,7 @@ export async function updatePrimer(formData: FormData) {
 // ─── Simulation Save ──────────────────────────────────────────────────────────
 
 export async function saveSimulation(formData: FormData) {
-  const session = await getSession();
-  if (!session) throw new Error('Not authenticated');
+  const session = await requireUser();
 
   const type = formData.get('type') as string;
   const name = (formData.get('name') as string | null) || '';
@@ -153,7 +152,7 @@ export async function saveSimulation(formData: FormData) {
       name,
       inputData,
       outputData,
-      createdById: session.userId,
+      createdById: session.id,
       geneSequenceId: geneSequenceId || null,
     },
   });

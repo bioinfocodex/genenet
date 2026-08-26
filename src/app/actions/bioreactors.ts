@@ -2,8 +2,10 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { requireUser } from '@/lib/auth-guard';
 
 export async function createRun(formData: FormData) {
+  await requireUser();
   const name = (formData.get('name') as string).trim();
   const vesselSize = (formData.get('vesselSize') as string) || '2L';
   const organism = (formData.get('organism') as string | null)?.trim() || null;
@@ -16,6 +18,7 @@ export async function createRun(formData: FormData) {
 }
 
 export async function updateRunStatus(formData: FormData) {
+  await requireUser();
   const id = formData.get('id') as string;
   const status = formData.get('status') as string;
   if (!id) return;
@@ -27,6 +30,7 @@ export async function updateRunStatus(formData: FormData) {
 }
 
 export async function deleteRun(formData: FormData) {
+  await requireUser();
   const id = formData.get('id') as string;
   if (!id) return;
   await prisma.bioreactorRun.delete({ where: { id } });
@@ -35,6 +39,7 @@ export async function deleteRun(formData: FormData) {
 }
 
 export async function addReading(formData: FormData) {
+  await requireUser();
   const runId = formData.get('runId') as string;
   const elapsedHrs = parseFloat(formData.get('elapsedHrs') as string);
   const ph = formData.get('ph') ? parseFloat(formData.get('ph') as string) : null;
@@ -54,6 +59,7 @@ export async function addReading(formData: FormData) {
 }
 
 export async function deleteReading(formData: FormData) {
+  await requireUser();
   const id = formData.get('id') as string;
   const runId = formData.get('runId') as string;
   if (!id) return;

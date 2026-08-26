@@ -2,7 +2,7 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { getSession } from '@/lib/session';
+import { requireUser } from '@/lib/auth-guard';
 
 const TYPE_PREFIX: Record<string, string> = {
   PLASMID:       'PLA',
@@ -27,7 +27,7 @@ async function nextSampleId(prefix: string): Promise<string> {
 }
 
 export async function createSample(fd: FormData) {
-  const session = await getSession();
+  const session = await requireUser();
   const type = (fd.get('type') as string) || 'OTHER';
   const prefix = TYPE_PREFIX[type] ?? 'SAM';
   const sampleId = await nextSampleId(prefix);
@@ -47,7 +47,7 @@ export async function createSample(fd: FormData) {
       taskId:      (fd.get('taskId') as string) || null,
       projectId:   (fd.get('projectId') as string) || null,
       geneSequenceId: (fd.get('geneSequenceId') as string) || null,
-      createdById: session?.userId || null,
+      createdById: session.id,
     },
   });
 

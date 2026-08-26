@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireApiUser } from '@/lib/auth-guard';
 
 const ESMFOLD_URL = 'https://esmatlas.com/resources?action=fold';
 
@@ -10,6 +11,8 @@ const ESMFOLD_URL = 'https://esmatlas.com/resources?action=fold';
  * Proxies to the ESMAtlas ESMFold endpoint so the browser avoids CORS.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireApiUser();
+  if ('response' in auth) return auth.response;
   let seq = '';
   try {
     const body = await req.json();

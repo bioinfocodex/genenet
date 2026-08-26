@@ -2,9 +2,11 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { storeFile } from '@/lib/storage';
+import { requireUser } from '@/lib/auth-guard';
 
 /** Upload a gel image file and create a DB record. */
 export async function uploadGelImage(fd: FormData) {
+  await requireUser();
   const file = fd.get('file') as File | null;
   if (!file || file.size === 0) return { error: 'No file provided' };
 
@@ -40,6 +42,7 @@ export async function uploadGelImage(fd: FormData) {
 
 /** Attach an existing GelImage to a task. */
 export async function attachGelToTask(fd: FormData) {
+  await requireUser();
   const gelId = fd.get('gelId') as string;
   const taskId = fd.get('taskId') as string;
   await prisma.gelImage.update({ where: { id: gelId }, data: { taskId } });
@@ -49,6 +52,7 @@ export async function attachGelToTask(fd: FormData) {
 
 /** Detach a GelImage from its task (keep the record). */
 export async function detachGelFromTask(fd: FormData) {
+  await requireUser();
   const gelId = fd.get('gelId') as string;
   const img = await prisma.gelImage.update({ where: { id: gelId }, data: { taskId: null } });
   revalidatePath('/gels/images');
@@ -57,6 +61,7 @@ export async function detachGelFromTask(fd: FormData) {
 
 /** Delete a GelImage record (file remains on disk for safety). */
 export async function deleteGelImage(fd: FormData) {
+  await requireUser();
   const id = fd.get('id') as string;
   const img = await prisma.gelImage.delete({ where: { id } });
   revalidatePath('/gels/images');
@@ -65,6 +70,7 @@ export async function deleteGelImage(fd: FormData) {
 
 /** Update notes/experimentType on an existing image. */
 export async function updateGelImage(fd: FormData) {
+  await requireUser();
   const id = fd.get('id') as string;
   await prisma.gelImage.update({
     where: { id },

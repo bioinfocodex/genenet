@@ -1,19 +1,18 @@
 'use server';
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { requireUser } from '@/lib/auth-guard';
 
 export async function createGel(formData: FormData) {
-  const session = await getSession();
-  if (!session) throw new Error('Not authenticated');
+  const session = await requireUser();
   const name = (formData.get('name') as string | null)?.trim() || 'Untitled Gel';
   const concentration = parseFloat((formData.get('concentration') as string) || '1.0');
   const voltage = parseInt((formData.get('voltage') as string) || '100');
   const runTime = parseInt((formData.get('runTime') as string) || '30');
   const lanes = (formData.get('lanes') as string | null) || '[]';
   const gel = await prisma.gelSimulation.create({
-    data: { name, concentration, voltage, runTime, lanes, createdById: session.userId },
+    data: { name, concentration, voltage, runTime, lanes, createdById: session.id },
   });
   revalidatePath('/gels');
   redirect(`/gels/${gel.id}`);

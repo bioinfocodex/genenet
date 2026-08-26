@@ -3,8 +3,10 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { translateDNA, calcProteinProperties } from '@/lib/simulation';
+import { requireUser } from '@/lib/auth-guard';
 
 export async function createProtein(formData: FormData) {
+  await requireUser();
   const name = (formData.get('name') as string).trim();
   const rawSeq = (formData.get('sequence') as string ?? '').trim();
   const description = (formData.get('description') as string | null)?.trim() || null;
@@ -43,6 +45,7 @@ export async function createProtein(formData: FormData) {
 }
 
 export async function deleteProtein(formData: FormData) {
+  await requireUser();
   const id = formData.get('id') as string;
   if (!id) return;
   await prisma.protein.delete({ where: { id } });
@@ -50,6 +53,7 @@ export async function deleteProtein(formData: FormData) {
 }
 
 export async function translateGeneToProtein(formData: FormData) {
+  await requireUser();
   const geneSequenceId = formData.get('geneSequenceId') as string;
   if (!geneSequenceId) throw new Error('No gene selected');
 
