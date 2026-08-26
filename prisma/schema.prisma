@@ -1,5 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // The client had been generated for "darwin" (Intel) on an arm64 Mac, so
+  // every query failed at runtime with "could not locate the Query Engine for
+  // runtime darwin-arm64" -- next build fell back to dynamic rendering and hid
+  // it. Naming the target explicitly makes `prisma generate` fetch the right
+  // engine regardless of which Node happens to be first on PATH.
+  binaryTargets = ["native", "darwin-arm64"]
 }
 
 datasource db {
