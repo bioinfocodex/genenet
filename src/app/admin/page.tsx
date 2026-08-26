@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma';
 import { getMockUser, getWorkspaceSettings } from '@/app/actions/auth';
 import { redirect } from 'next/navigation';
 import AdminClient from './client';
+import BackupPanel from '@/components/BackupPanel';
+import { getBackupState } from '@/app/actions/backup';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +15,9 @@ export default async function AdminPage() {
   ]);
 
   if (!me || me.role !== 'ADMIN') redirect('/');
+
+  // After the admin check: getBackupState is admin-only and would throw here.
+  const backupState = await getBackupState();
 
   return (
     <div style={{ maxWidth: '900px', margin: '0 auto' }}>
@@ -30,6 +35,8 @@ export default async function AdminPage() {
         serverUrl={wsSettings?.serverUrl ?? null}
         workspaceName={wsSettings?.workspaceName ?? 'GeneNet Lab'}
       />
+
+      <BackupPanel backups={backupState.backups} location={backupState.location} />
     </div>
   );
 }
