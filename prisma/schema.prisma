@@ -1,0 +1,525 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String?
+  role         String   @default("MEMBER")
+  status       String   @default("ACTIVE")  // ACTIVE | BLOCKED | REMOVED
+  avatar       String?
+  createdAt    DateTime @default(now())
+
+  tasksAssigned      Task[]             @relation("AssignedTasks")
+  tasksCreated       Task[]             @relation("CreatedTasks")
+  taskComments       TaskComment[]      @relation("CommentAuthor")
+  experiments        Experiment[]
+  activities         Activity[]
+  invitesSent        Invite[]           @relation("InviteCreator")
+  proceduresAuthored Procedure[]        @relation("ProcedureAuthor")
+  procedureVersions  ProcedureVersion[] @relation("VersionUpdatedBy")
+  projectsCreated    Project[]          @relation("ProjectCreator")
+  taskStepsCompleted TaskStep[]         @relation("StepCompletedBy")
+  reportsCreated     Report[]           @relation("ReportCreator")
+  simulations        Simulation[]       @relation("SimulationCreator")
+  gelsCreated        GelSimulation[]    @relation("GelCreator")
+  samplesCreated     Sample[]           @relation("SampleCreator")
+}
+
+model WorkspaceSettings {
+  id              String  @id @default("workspace")
+  workspaceName   String  @default("GeneNet Lab")
+  adminId         String
+  isSetupComplete Boolean @default(false)
+  storageNote     String?
+
+  // Network / connection
+  storageType     String  @default("local")    // local | network | cloud | onedrive
+  storagePath     String?                       // e.g. /mnt/lab-data or D:/LabData
+  systemId        String?                       // e.g. SYS-A3F2B1
+  connectionCode  String?                       // e.g. LAB-48291
+  serverUrl       String?                       // e.g. http://192.168.1.10:3000
+
+  // Licensing / seat management
+  plan            String  @default("starter")  // starter | pro | enterprise
+  seatLimit       Int     @default(5)
+  companyName     String?
+}
+
+model Invite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  email       String?
+  name        String?                           // pre-filled name for invitee
+  usedAt      DateTime?
+  usedByName  String?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  emailSent   Boolean   @default(false)
+
+  createdBy   User   @relation("InviteCreator", fields: [createdById], references: [id])
+  createdById String
+}
+
+// ─── Procedures ──────────────────────────────────────────────────────────────
+
+model Procedure {
+  id           String   @id @default(cuid())
+  procedureId  String   @unique  // PROC-0001
+  name         String
+  description  String?
+  category     String   @default("General")
+  version      String   @default("v1.0")
+  status       String   @default("Draft")  // Draft | Review | Approved | Archived
+  safetyNotes  String?
+  reviewer     String?
+  contributors String?  // comma-separated names
+  isArchived   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  author    User   @relation("ProcedureAuthor", fields: [authorId], references: [id])
+  authorId  String
+
+  steps     ProcedureStep[]
+  materials ProcedureMaterial[]
+  equipment ProcedureEquipment[]
+  versions  ProcedureVersion[]
+  tasks     Task[]
+}
+
+model ProcedureStep {
+  id          String @id @default(cuid())
+  stepNumber  Int
+  title       String
+  description String
+
+  procedure   Procedure  @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  procedureId String
+
+  taskSteps TaskStep[]
+}
+
+model ProcedureMaterial {
+  id           String  @id @default(cuid())
+  materialName String
+  quantity     String?
+  unit         String?
+
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  procedureId String
+}
+
+model ProcedureEquipment {
+  id            String @id @default(cuid())
+  equipmentName String
+
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  procedureId String
+}
+
+model ProcedureVersion {
+  id            String   @id @default(cuid())
+  versionNumber String
+  changeLog     String
+  updatedAt     DateTime @default(now())
+
+  procedure   Procedure @relation(fields: [procedureId], references: [id])
+  procedureId String
+
+  updatedBy   User   @relation("VersionUpdatedBy", fields: [updatedById], references: [id])
+  updatedById String
+}
+
+// ─── Projects & Tasks ────────────────────────────────────────────────────────
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  status      String   @default("ACTIVE")  // ACTIVE | COMPLETED | ON_HOLD
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy   User   @relation("ProjectCreator", fields: [createdById], references: [id])
+  createdById String
+
+  tasks   Task[]
+  report  Report?
+  samples Sample[] @relation("SampleProject")
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("TODO")    // TODO | IN_PROGRESS | DONE
+  priority    String    @default("MEDIUM")  // LOW | MEDIUM | HIGH
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  assignedTo   User?   @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  assignedToId String?
+
+  createdBy   User?   @relation("CreatedTasks", fields: [createdById], references: [id])
+  createdById String?
+
+  project   Project? @relation(fields: [projectId], references: [id])
+  projectId String?
+
+  procedure   Procedure? @relation(fields: [procedureId], references: [id])
+  procedureId String?
+
+  geneSequence   GeneSequence? @relation("TaskSequences", fields: [geneSequenceId], references: [id])
+  geneSequenceId String?
+
+  // Execution fields
+  result          String?
+  success         Boolean?
+  discussion      String?
+  troubleshooting String?
+  nextStep        String?
+  attemptNumber   Int     @default(1)
+
+  // Task iteration (repeat failed task)
+  parentTask   Task?   @relation("TaskAttempts", fields: [parentTaskId], references: [id])
+  parentTaskId String?
+  childTasks   Task[]  @relation("TaskAttempts")
+
+  steps       TaskStep[]
+  reportLinks ReportTaskLink[]
+  comments    TaskComment[]
+  gelImages   GelImage[]
+  samples     Sample[]         @relation("SampleTask")
+}
+
+model GelImage {
+  id             String   @id @default(cuid())
+  fileName       String
+  filePath       String   // path under public/uploads/gels/
+  fileType       String   // jpg | png | tif | other
+  experimentType String?  // PCR | DIGESTION | LIGATION | OTHER
+  notes          String?
+  capturedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  taskId String?
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId String
+
+  author   User   @relation("CommentAuthor", fields: [authorId], references: [id])
+  authorId String
+}
+
+model TaskStep {
+  id          String    @id @default(cuid())
+  stepNumber  Int
+  title       String
+  description String
+  status      String    @default("PENDING")  // PENDING | COMPLETED
+  notes       String?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId String
+
+  sourceStep   ProcedureStep? @relation(fields: [sourceStepId], references: [id])
+  sourceStepId String?
+
+  completedBy   User?   @relation("StepCompletedBy", fields: [completedById], references: [id])
+  completedById String?
+}
+
+// ─── Experiments ─────────────────────────────────────────────────────────────
+
+model Experiment {
+  id             String   @id @default(cuid())
+  title          String
+  protocol       String
+  status         String   @default("PLANNED")
+  resultData     String?
+  expectedParams String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+}
+
+model Activity {
+  id        String   @id @default(cuid())
+  action    String
+  target    String
+  timestamp DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+}
+
+model GeneSequence {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  type        String   @default("gene")
+  sequence    String
+  size        Int
+  tags        String?
+  features    String?  @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  primers     Primer[]
+  simulations Simulation[]
+  proteins    Protein[]    @relation("ProteinFromGene")
+  tasks       Task[]       @relation("TaskSequences")
+  samples     Sample[]     @relation("SampleSequence")
+}
+
+model Primer {
+  id        String  @id @default(cuid())
+  name      String
+  sequence  String
+  direction String  @default("forward")  // forward | reverse
+  tm        Float?
+  gcContent Float?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  geneSequence   GeneSequence @relation(fields: [geneSequenceId], references: [id], onDelete: Cascade)
+  geneSequenceId String
+}
+
+model Simulation {
+  id         String   @id @default(cuid())
+  type       String   // PCR | DIGESTION | LIGATION
+  name       String   @default("")
+  inputData  String   // JSON
+  outputData String   // JSON
+  createdAt  DateTime @default(now())
+
+  createdBy   User   @relation("SimulationCreator", fields: [createdById], references: [id])
+  createdById String
+
+  geneSequence   GeneSequence? @relation(fields: [geneSequenceId], references: [id])
+  geneSequenceId String?
+}
+
+// ─── Reports ─────────────────────────────────────────────────────────────────
+
+model Report {
+  id        String   @id @default(cuid())
+  title     String
+  status    String   @default("Draft")   // Draft | In Progress | Completed
+  abstract  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id])
+  projectId String  @unique
+
+  createdBy   User   @relation("ReportCreator", fields: [createdById], references: [id])
+  createdById String
+
+  sections  ReportSection[]
+  figures   ReportFigure[]
+  tables    ReportTable[]
+  taskLinks ReportTaskLink[]
+}
+
+model ReportSection {
+  id          String @id @default(cuid())
+  sectionKey  String  // e.g. "gene_info", "expected_results", "discussion"
+  title       String
+  content     String @default("")
+  order       Int    @default(0)
+
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId String
+}
+
+model ReportFigure {
+  id       String @id @default(cuid())
+  imageUrl String?
+  title    String @default("")
+  legend   String @default("")
+  order    Int    @default(0)
+
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId String
+}
+
+model ReportTable {
+  id        String @id @default(cuid())
+  tableData String @default("[]")  // JSON: string[][]
+  title     String @default("")
+  legend    String @default("")
+  order     Int    @default(0)
+
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId String
+}
+
+model ReportTaskLink {
+  id     String @id @default(cuid())
+
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId String
+
+  task   Task   @relation(fields: [taskId], references: [id])
+  taskId String
+
+  @@unique([reportId, taskId])
+}
+
+// ─── Protein Module ───────────────────────────────────────────────────────────
+
+model Protein {
+  id             String   @id @default(cuid())
+  name           String
+  sequence       String   // one-letter amino acid codes
+  description    String?
+  tags           String?
+  mw             Float?   // molecular weight in Da
+  isoelectric    Float?   // pI
+  gravy          Float?   // grand average hydropathicity
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  geneSequence   GeneSequence? @relation("ProteinFromGene", fields: [geneSequenceId], references: [id])
+  geneSequenceId String?
+}
+
+// ─── Collections ──────────────────────────────────────────────────────────────
+
+model Collection {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       CollectionItem[]
+}
+
+model CollectionItem {
+  id           String   @id @default(cuid())
+  itemType     String   // 'sequence' | 'primer' | 'protein'
+  itemId       String
+  notes        String?
+  addedAt      DateTime @default(now())
+
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collectionId String
+
+  @@unique([collectionId, itemType, itemId])
+}
+
+// ─── Bioreactors ──────────────────────────────────────────────────────────────
+
+model BioreactorRun {
+  id          String    @id @default(cuid())
+  name        String
+  vesselSize  String    @default("2L")   // 2L | 10L | custom
+  organism    String?
+  medium      String?
+  status      String    @default("RUNNING")  // RUNNING | COMPLETED | FAILED | PAUSED
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  readings    BioreactorReading[]
+}
+
+model BioreactorReading {
+  id          String   @id @default(cuid())
+  elapsedHrs  Float
+  ph          Float?
+  temperature Float?
+  dissolvedO2 Float?
+  feedRate    Float?
+  agitation   Int?
+  od600       Float?
+  notes       String?
+  recordedAt  DateTime @default(now())
+
+  run   BioreactorRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId String
+}
+
+// ─── Gel Simulations ─────────────────────────────────────────────────────────
+
+model GelSimulation {
+  id            String   @id @default(cuid())
+  name          String   @default("Untitled Gel")
+  concentration Float    @default(1.0)  // % agarose
+  voltage       Int      @default(100)  // volts
+  runTime       Int      @default(30)   // minutes
+  lanes         String   @default("[]") // JSON array of lanes
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  createdBy   User   @relation("GelCreator", fields: [createdById], references: [id])
+  createdById String
+}
+
+// ─── Sample Storage ───────────────────────────────────────────────────────────
+
+model Freezer {
+  id          String   @id @default(cuid())
+  name        String
+  temperature Int      // -20 or -80 (°C)
+  location    String?  // e.g. "Lab Room 2, West Wall"
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  samples Sample[]
+}
+
+model Sample {
+  id          String   @id @default(cuid())
+  sampleId    String   @unique  // auto-generated e.g. PLA-001
+  name        String
+  type        String   // PLASMID | LINEAR_DNA | GLYCEROL_STOCK | OTHER
+  status      String   @default("ACTIVE") // ACTIVE | USED | DEPLETED | ARCHIVED
+  description String?
+  notes       String?
+
+  // Storage location
+  freezer     Freezer? @relation(fields: [freezerId], references: [id])
+  freezerId   String?
+  rack        String?
+  box         String?
+  position    String?  // e.g. A1, B3
+
+  // Linkages
+  task          Task?         @relation("SampleTask", fields: [taskId], references: [id])
+  taskId        String?
+  project       Project?      @relation("SampleProject", fields: [projectId], references: [id])
+  projectId     String?
+  geneSequence  GeneSequence? @relation("SampleSequence", fields: [geneSequenceId], references: [id])
+  geneSequenceId String?
+
+  createdBy   User?   @relation("SampleCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
