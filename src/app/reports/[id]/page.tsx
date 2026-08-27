@@ -1,6 +1,8 @@
 import React from 'react';
 import { prisma } from '@/lib/prisma';
 import SignaturePanel from '@/components/SignaturePanel';
+import RecordHistory from '@/components/RecordHistory';
+import { historyFor } from '@/lib/history';
 import { signaturesFor } from '@/lib/signature';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
@@ -38,6 +40,7 @@ export default async function ReportViewPage({ params }: { params: Promise<{ id:
 
 
   const signatures = await signaturesFor('Report', report.id);
+  const history = await historyFor('Report', report.id);
 
   const sectionMap = Object.fromEntries(report.sections.map(s => [s.sectionKey, s]));
   const orderedSections = SECTION_ORDER.map(k => sectionMap[k]).filter(Boolean).filter(s => s.content.trim());
@@ -157,6 +160,7 @@ export default async function ReportViewPage({ params }: { params: Promise<{ id:
         )}
       
     <SignaturePanel model="Report" recordId={report.id} signatures={signatures} />
+      <RecordHistory entries={history} />
 
   </div>
     </div>

@@ -1,6 +1,8 @@
 import React from 'react';
 import { prisma } from '@/lib/prisma';
 import SignaturePanel from '@/components/SignaturePanel';
+import RecordHistory from '@/components/RecordHistory';
+import { historyFor } from '@/lib/history';
 import { signaturesFor } from '@/lib/signature';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
@@ -32,6 +34,7 @@ export default async function ProcedureDetailPage({ params }: { params: Promise<
 
 
   const signatures = await signaturesFor('Procedure', procedure.id);
+  const history = await historyFor('Procedure', procedure.id);
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
@@ -168,6 +171,7 @@ export default async function ProcedureDetailPage({ params }: { params: Promise<
         </div>
       </div>
       <SignaturePanel model="Procedure" recordId={procedure.id} signatures={signatures} />
+      <RecordHistory entries={history} />
     </div>
   );
 }
