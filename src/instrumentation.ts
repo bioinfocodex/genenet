@@ -8,6 +8,11 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
 
+  // Before anything else touches the database: journal mode is persistent, so
+  // this is a one-off that every later connection inherits.
+  const { applySqliteTuning } = await import('@/lib/sqlite-tuning');
+  await applySqliteTuning();
+
   const { startBackupSchedule } = await import('@/lib/backup-schedule');
   startBackupSchedule();
 }

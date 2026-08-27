@@ -13,6 +13,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Moving to PostgreSQL
+// -------------------
+// SQLite is right for a lab running one server: with WAL enabled (see
+// src/lib/sqlite-tuning.ts) it sustained ~18,000 writes and ~2,000 reads over
+// three seconds on this schema, with reads never queueing behind a write. It
+// stops being right at the point where the database must be reachable by more
+// than one server process, because SQLite's locking is filesystem-local and
+// cannot coordinate between machines.
+//
+// The switch is a configuration change rather than a rewrite:
+//   1. provider = "postgresql" above
+//   2. DATABASE_URL = postgresql://user:pass@host:5432/genenet
+//   3. npx prisma migrate deploy
+//
+// Two things in the code assume SQLite and need attention first:
+//   - src/lib/backup.ts uses VACUUM INTO for snapshots. Postgres wants
+//     pg_dump instead.
+//   - src/lib/sqlite-tuning.ts no-ops for non-file: URLs already, so it needs
+//     nothing.
+//
+// Do this before selling a multi-seat install that is not one machine.
+
 model User {
   id           String   @id @default(cuid())
   name         String
