@@ -1,6 +1,7 @@
 'use client';
 import { Bell, Search, LogOut } from 'lucide-react';
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { logout } from '@/app/actions/auth';
 
 interface User { id: string; name: string; email: string; role: string; avatar: string | null; }
@@ -9,12 +10,31 @@ export default function Header({ user }: { user: User | null }) {
   const [, startTransition] = useTransition();
   const handleLogout = () => startTransition(() => { logout(); });
 
+  // This box had a placeholder and no handler since the beginning: typing in it
+  // did nothing at all. Submitting now goes to the search page, which resolves
+  // a sample ID straight to its record.
+  const router = useRouter();
+  const [query, setQuery] = useState('');
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = query.trim();
+    if (q.length < 2) return;
+    router.push(`/search?q=${encodeURIComponent(q)}`);
+  };
+
   return (
     <header className="glass-panel" style={{ height: '70px', borderRadius: 0, borderBottom: '1px solid var(--glass-border)', borderTop: 'none', borderLeft: 'none', borderRight: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2rem', position: 'sticky', top: 0, zIndex: 40, flexShrink: 0 }}>
-      <div className="input-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '300px', padding: '0.5rem 1rem', borderRadius: '20px' }}>
-        <Search size={16} color="var(--text-secondary)" />
-        <input type="text" placeholder="Search experiments, tasks..." style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', width: '100%', fontSize: '0.9rem' }} />
-      </div>
+      <form onSubmit={handleSearch} className="input-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '300px', padding: '0.5rem 0.85rem' }}>
+          <Search size={16} color="var(--text-secondary)" />
+          <input
+            type="search"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search or scan a sample ID"
+            aria-label="Search the workspace"
+            style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: '0.85rem', width: '100%' }}
+          />
+        </form>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
         <button style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center' }}>
