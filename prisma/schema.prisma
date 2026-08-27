@@ -291,6 +291,46 @@ model Experiment {
   userId String
 }
 
+/// An electronic signature applied to a record.
+///
+/// 21 CFR Part 11 asks a signature to carry three things: who signed, when, and
+/// what the signature *means* -- authorship is not approval, and approval is not
+/// witnessing. It also has to be permanently linked to the record it signed, so
+/// contentHash stores a digest of the record at the moment of signing. If the
+/// record is edited afterwards the hash no longer matches, and the signature is
+/// shown as applying to a superseded version rather than quietly appearing to
+/// endorse text the signer never saw.
+///
+/// Signing re-checks the signer's password, which is the second authentication
+/// component Part 11 requires at the moment of signing: the session proves who
+/// is logged in, the password proves who is at the keyboard.
+///
+/// Like AuditLog, no foreign key to User: deleting a person must not delete the
+/// evidence that they approved something.
+model Signature {
+  id       String   @id @default(cuid())
+  at       DateTime @default(now())
+
+  model    String   // Procedure | Experiment | Report
+  recordId String
+
+  /// authored | reviewed | approved | witnessed
+  meaning  String
+
+  signerId    String
+  signerName  String
+  signerEmail String
+
+  /// Digest of the record's content when it was signed.
+  contentHash String
+
+  /// Optional remark, e.g. "approved with the deviation noted in step 4".
+  note String?
+
+  @@index([model, recordId])
+  @@index([signerId])
+}
+
 /// Tamper-evident record of every change to workspace data.
 ///
 /// Activity, below, is the human-readable feed shown in the UI: free text like

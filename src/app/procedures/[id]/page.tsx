@@ -1,5 +1,7 @@
 import React from 'react';
 import { prisma } from '@/lib/prisma';
+import SignaturePanel from '@/components/SignaturePanel';
+import { signaturesFor } from '@/lib/signature';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Copy, Archive, BookOpen, Clock, User, Tag, Shield, ChevronRight } from 'lucide-react';
@@ -27,6 +29,9 @@ export default async function ProcedureDetailPage({ params }: { params: Promise<
   });
 
   if (!procedure) notFound();
+
+
+  const signatures = await signaturesFor('Procedure', procedure.id);
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
@@ -162,6 +167,7 @@ export default async function ProcedureDetailPage({ params }: { params: Promise<
           </div>
         </div>
       </div>
+      <SignaturePanel model="Procedure" recordId={procedure.id} signatures={signatures} />
     </div>
   );
 }
@@ -172,6 +178,7 @@ function Meta({ icon, label, value }: { icon: React.ReactNode; label: string; va
       <span style={{ color: 'var(--text-muted)' }}>{icon}</span>
       <span style={{ color: 'var(--text-muted)' }}>{label}:</span>
       <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{value}</span>
-    </div>
+
+  </div>
   );
 }

@@ -1,4 +1,6 @@
 import { registerHooks } from 'node:module';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Preloaded before the test files.
@@ -13,6 +15,20 @@ registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === 'server-only' || specifier === 'client-only') {
       return { url: 'data:text/javascript,export{}', shortCircuit: true };
+    }
+    // The app uses the @/ alias that tsconfig maps to src/. Node does not read
+    // tsconfig, so the same mapping is applied here rather than tests having to
+    // import server modules by relative path.
+    if (specifier.startsWith('@/')) {
+      // tsconfig maps @/* to src/*, and the app writes those imports without a
+      // file extension. Node needs one, so the real extensions are tried in the
+      // order TypeScript would resolve them.
+      const base = `../src/${specifier.slice(2)}`;
+      for (const ext of ['.ts', '.tsx', '.mts', '.js', '']) {
+        const target = new URL(base + ext, import.meta.url);
+        if (existsSync(fileURLToPath(target))) return nextResolve(target.href, context);
+      }
+      return nextResolve(new URL(base, import.meta.url).href, context);
     }
     return nextResolve(specifier, context);
   },

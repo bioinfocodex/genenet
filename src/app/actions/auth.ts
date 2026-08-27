@@ -3,7 +3,8 @@ import { prisma } from '@/lib/prisma';
 import { createSession, deleteSession, getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { randomBytes, randomInt, scryptSync, timingSafeEqual } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
+import { hashPassword, verifyPassword } from '@/lib/password';
 import { persistStoragePath } from '@/lib/storage';
 import { getCurrentUser, requireAdmin as sharedRequireAdmin } from '@/lib/auth-guard';
 import { headers } from 'next/headers';
@@ -13,18 +14,6 @@ import {
 } from '@/lib/rate-limit';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-}
-
-function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(':');
-  const buf = scryptSync(password, salt, 64);
-  return timingSafeEqual(buf, Buffer.from(hash, 'hex'));
-}
 
 function generateInviteCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // e.g. "A3F2B1C9"

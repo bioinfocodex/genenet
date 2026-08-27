@@ -1,5 +1,7 @@
 import React from 'react';
 import { prisma } from '@/lib/prisma';
+import SignaturePanel from '@/components/SignaturePanel';
+import { signaturesFor } from '@/lib/signature';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronRight, Edit, Download, FileText } from 'lucide-react';
@@ -33,6 +35,9 @@ export default async function ReportViewPage({ params }: { params: Promise<{ id:
   });
 
   if (!report) notFound();
+
+
+  const signatures = await signaturesFor('Report', report.id);
 
   const sectionMap = Object.fromEntries(report.sections.map(s => [s.sectionKey, s]));
   const orderedSections = SECTION_ORDER.map(k => sectionMap[k]).filter(Boolean).filter(s => s.content.trim());
@@ -150,7 +155,10 @@ export default async function ReportViewPage({ params }: { params: Promise<{ id:
             </div>
           </div>
         )}
-      </div>
+      
+    <SignaturePanel model="Report" recordId={report.id} signatures={signatures} />
+
+  </div>
     </div>
   );
 }
