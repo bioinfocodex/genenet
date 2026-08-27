@@ -1,5 +1,6 @@
 import path from 'path';
 import os from 'os';
+import { existsSync } from 'fs';
 
 /**
  * Where the SQLite database is allowed to live.
@@ -50,10 +51,40 @@ const CLOUD_SYNC_MARKERS = [
   'cloudstorage', // macOS puts every provider under ~/Library/CloudStorage
 ];
 
+/**
+ * Home folders that iCloud has taken over, if any.
+ *
+ * "Desktop & Documents Folders" is the case the marker list cannot see. When
+ * it is on, ~/Desktop and ~/Documents are synced but keep their ordinary
+ * paths -- there is no "iCloud" anywhere in /Users/you/Desktop/lab/genenet.db
+ * -- so a purely textual check calls the most common hiding place on a Mac
+ * safe. The giveaway is that iCloud mirrors the folder under CloudDocs, so
+ * that is what gets tested.
+ *
+ * Windows has the same feature in OneDrive Known Folder Move, but there the
+ * path really does become ...\OneDrive\Desktop, which the markers catch.
+ */
+function icloudManagedHomeFolders(): string[] {
+  if (process.platform !== 'darwin') return [];
+  const home = os.homedir();
+  const mirrored = path.join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs');
+  return ['Desktop', 'Documents']
+    .filter(f => existsSync(path.join(mirrored, f)))
+    .map(f => path.join(home, f));
+}
+
+/** True if `child` is `parent` itself or sits underneath it. */
+function isInside(child: string, parent: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 /** True if the path sits inside a folder a sync client manages. */
 export function isCloudSynced(target: string): boolean {
-  const p = target.replace(/^file:/, '').toLowerCase();
-  return CLOUD_SYNC_MARKERS.some(m => p.includes(m));
+  const raw = target.replace(/^file:/, '');
+  if (CLOUD_SYNC_MARKERS.some(m => raw.toLowerCase().includes(m))) return true;
+  // Checked second: it touches the filesystem, and most paths are settled above.
+  return icloudManagedHomeFolders().some(root => isInside(raw, root));
 }
 
 /** Which provider it looks like, for a message a person can act on. */
@@ -65,6 +96,10 @@ export function cloudProvider(target: string): string | null {
   if (p.includes('icloud') || p.includes('clouddocs')) return 'iCloud Drive';
   if (p.includes('box sync') || p.includes('boxdrive')) return 'Box';
   if (p.includes('nextcloud') || p.includes('owncloud')) return 'Nextcloud';
+  const raw = target.replace(/^file:/, '');
+  if (icloudManagedHomeFolders().some(root => isInside(raw, root))) {
+    return 'iCloud (Desktop & Documents)';
+  }
   return isCloudSynced(p) ? 'a cloud sync folder' : null;
 }
 

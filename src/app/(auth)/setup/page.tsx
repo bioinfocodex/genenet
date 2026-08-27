@@ -103,7 +103,12 @@ export default function SetupPage() {
               {storageType === 'local' && (
                 <div style={{ padding: '0.9rem 1rem', background: 'rgba(37,99,235,0.05)', border: '1px solid rgba(37,99,235,0.15)', borderRadius: 8, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                   <HardDrive size={14} style={{ display: 'inline', marginRight: '0.35rem' }} />
-                  All data will be stored in the <code style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.3rem', borderRadius: 3, border: '1px solid var(--glass-border)' }}>prisma/dev.db</code> file on this machine.
+                  The database lives in this machine&rsquo;s own application-data folder
+                  &mdash; <code style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.3rem', borderRadius: 3, border: '1px solid var(--glass-border)' }}>Library/Application&nbsp;Support/GeneNet</code> on
+                  macOS, <code style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.3rem', borderRadius: 3, border: '1px solid var(--glass-border)' }}>AppData</code> on
+                  Windows &mdash; deliberately outside any folder a sync client watches.
+                  {' '}If you would rather it sat somewhere else, set <code style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.3rem', borderRadius: 3, border: '1px solid var(--glass-border)' }}>DATABASE_URL</code> in <code>.env</code>;
+                  GeneNet checks the location at startup and warns if it has ended up somewhere synced.
                 </div>
               )}
 
@@ -122,7 +127,12 @@ export default function SetupPage() {
               {storageType === 'network' && (
                 <F label="Network Drive Path *">
                   <input value={storagePath} onChange={e => setStoragePath(e.target.value)} required className="input-control" placeholder="e.g. /mnt/lab-nas/GeneNet  or  \\\\192.168.1.5\\LabShare\\GeneNet" />
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Mount the network drive first. Database and uploads will be stored here.</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    Mount the network drive first. Uploads, releases and backups are kept here, and so is the database.
+                    {' '}Only ever run one copy of GeneNet against it: SQLite relies on file locking, and locking over SMB or NFS
+                    is not dependable enough for two machines to share a database safely. For a shared workspace, run GeneNet on
+                    one machine and have the others connect to it.
+                  </span>
                 </F>
               )}
 
