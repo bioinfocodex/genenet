@@ -58,3 +58,6 @@ next-env.d.ts
 # GitHub's 100 MB per-file limit, so committing them makes the push fail.
 # Publish them as release assets instead.
 /public/releases/
+
+# machine-local Claude Code settings — paths and permissions specific to one machine
+.claude/settings.local.json

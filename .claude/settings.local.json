@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(/Users/matrikabhattarai/Desktop/Antigravity/genomic-ai-suite/.venv/bin/python -c ':*)"
-    ]
-  }
-}
