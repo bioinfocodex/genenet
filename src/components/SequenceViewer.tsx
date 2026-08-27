@@ -10,6 +10,8 @@ import {
   LADDER_1KB, gelPosition, calculateFragments,
   type ORF, type PCRResult, type LigationResult,
 } from '@/lib/simulation';
+import { verifyRead, type ReadVerification } from '@/lib/alignment';
+import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
 import MolbuilderStats from './sequences/MolbuilderStats';
@@ -50,7 +52,7 @@ export interface SavedPrimer {
   notes?: string;
 }
 
-type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold';
+type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold';
 
 const PRESET_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
 const FEATURE_TYPES = [
@@ -895,6 +897,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           )}
           {leftTab === 'aigen'  && <AIGenePanel sequence={sequence} />}
           {leftTab === 'sanger' && <SangerPanel reference={sequence} />}
+          {leftTab === 'crispr' && <CrisprPanel sequence={sequence} selection={selection} onSelect={setSelection} />}
           {leftTab === 'dimer'  && <DimerPanel primers={primers} />}
           {leftTab === 'design' && (
             <LiveDesignPanel
@@ -934,6 +937,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
               <SidebarBtn label="Find ORFs" onClick={() => setLeftTab('orfs')} />
               <SidebarBtn label="Translate" onClick={() => setLeftTab('translate')} />
               <SidebarBtn label="RE Analysis" onClick={() => setLeftTab('sites')} />
+              <SidebarBtn label="Align a Read" onClick={() => setLeftTab('sanger')} />
+              <SidebarBtn label="CRISPR Guides" onClick={() => setLeftTab('crispr')} />
               <SidebarBtn label="GC Content" onClick={() => setLeftTab('sequence')} />
               <SidebarBtn
                 label={digestOpen ? 'Hide Digest Sim' : 'Digest Sim'}
@@ -2906,54 +2911,16 @@ function AIGenePanel({ sequence }: { sequence: string }) {
 
 // ─── Sanger Alignment Panel ───────────────────────────────────────────────────
 
-interface AlignResult {
-  score: number;
-  refAligned: string;
-  queryAligned: string;
-  matches: number;
-  mismatches: number;
-  gaps: number;
-  identity: number;
-}
+// globalAlign lived here. It used a flat gap penalty and a full global alignment,
+// so a short read inside a long plasmid was charged for the whole flanking
+// reference, and scattered indels scored the same as contiguous ones. Replaced
+// by verifyRead from lib/alignment: affine gaps, free reference ends, both
+// orientations tried, and differences reported by position in the reference.
 
-function globalAlign(ref: string, query: string): AlignResult | null {
-  const MATCH = 2, MISMATCH = -1, GAP = -1;
-  const n = ref.length, m = query.length;
-  if (n * m > 4_000_000) return null;
-  const W = m + 1;
-  const dp = new Float32Array((n + 1) * W);
-  for (let i = 0; i <= n; i++) dp[i * W] = i * GAP;
-  for (let j = 0; j <= m; j++) dp[j] = j * GAP;
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      const diag = dp[(i - 1) * W + (j - 1)] + (ref[i - 1] === query[j - 1] ? MATCH : MISMATCH);
-      const up   = dp[(i - 1) * W + j] + GAP;
-      const left = dp[i * W + (j - 1)] + GAP;
-      dp[i * W + j] = Math.max(diag, up, left);
-    }
-  }
-  let refA = '', qryA = '';
-  let i = n, j = m;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0) {
-      const diag = dp[(i - 1) * W + (j - 1)] + (ref[i - 1] === query[j - 1] ? MATCH : MISMATCH);
-      if (dp[i * W + j] === diag) { refA = ref[i - 1] + refA; qryA = query[j - 1] + qryA; i--; j--; continue; }
-    }
-    if (i > 0 && dp[i * W + j] === dp[(i - 1) * W + j] + GAP) { refA = ref[i - 1] + refA; qryA = '-' + qryA; i--; }
-    else { refA = '-' + refA; qryA = query[j - 1] + qryA; j--; }
-  }
-  let matches = 0, mismatches = 0, gaps = 0;
-  for (let k = 0; k < refA.length; k++) {
-    if (refA[k] === '-' || qryA[k] === '-') gaps++;
-    else if (refA[k] === qryA[k]) matches++;
-    else mismatches++;
-  }
-  return { score: dp[n * W + m], refAligned: refA, queryAligned: qryA, matches, mismatches, gaps, identity: Math.round((matches / (matches + mismatches + gaps)) * 100) };
-}
 
 function SangerPanel({ reference }: { reference: string }) {
   const [query, setQuery] = useState('');
-  const [result, setResult] = useState<AlignResult | null | 'overflow'>(null);
+  const [result, setResult] = useState<ReadVerification | null | 'overflow'>(null);
   const [running, setRunning] = useState(false);
 
   const run = () => {
@@ -2961,9 +2928,10 @@ function SangerPanel({ reference }: { reference: string }) {
     const r = reference.toUpperCase().replace(/[^ACGT]/g, '');
     if (!q) return;
     setRunning(true);
+    // Yield first: a long alignment should not freeze the tab mid-click.
     setTimeout(() => {
-      const res = globalAlign(r, q);
-      setResult(res ?? 'overflow');
+      try { setResult(verifyRead(r, q)); }
+      catch { setResult('overflow'); }
       setRunning(false);
     }, 0);
   };
@@ -2971,9 +2939,9 @@ function SangerPanel({ reference }: { reference: string }) {
   const CHUNK = 60;
   const chunks: { ref: string; qry: string; match: string; pos: number }[] = [];
   if (result && result !== 'overflow') {
-    for (let k = 0; k < result.refAligned.length; k += CHUNK) {
-      const ref = result.refAligned.substring(k, k + CHUNK);
-      const qry = result.queryAligned.substring(k, k + CHUNK);
+    for (let k = 0; k < result.alignment.alignedA.length; k += CHUNK) {
+      const ref = result.alignment.alignedA.substring(k, k + CHUNK);
+      const qry = result.alignment.alignedB.substring(k, k + CHUNK);
       const match = ref.split('').map((b, i) => b === '-' || qry[i] === '-' ? ' ' : b === qry[i] ? '|' : '·').join('');
       chunks.push({ ref, qry, match, pos: k + 1 });
     }
@@ -2984,7 +2952,7 @@ function SangerPanel({ reference }: { reference: string }) {
       <div style={{ marginBottom: '1rem' }}>
         <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Sanger Sequencing Alignment</h3>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
-          Compare a Sanger read to this reference sequence using global pairwise alignment (match +2, mismatch −1, gap −1).
+          Compare a sequencing read to this reference. Both orientations are tried, so it does not matter which primer the read came from, and gaps are scored so a real indel stays in one piece.
         </p>
       </div>
 
@@ -3027,10 +2995,10 @@ function SangerPanel({ reference }: { reference: string }) {
           {/* Score summary */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
             {[
-              ['Score', result.score.toFixed(0), '#2563eb'],
-              ['Identity', `${result.identity}%`, result.identity >= 95 ? '#16a34a' : result.identity >= 80 ? '#ea580c' : '#dc2626'],
-              ['Mismatches', String(result.mismatches), result.mismatches === 0 ? '#16a34a' : '#ea580c'],
-              ['Gaps', String(result.gaps), result.gaps === 0 ? '#16a34a' : '#f59e0b'],
+              ['Identity', `${(result.identity * 100).toFixed(1)}%`, result.identity >= 0.99 ? '#16a34a' : result.identity >= 0.9 ? '#ea580c' : '#dc2626'],
+              ['Covers', `${result.coverageStart}–${result.coverageEnd}`, '#2563eb'],
+              ['Differences', String(result.differences.length), result.differences.length === 0 ? '#16a34a' : '#ea580c'],
+              ['Orientation', result.reversed ? 'reverse' : 'forward', '#7c3aed'],
             ].map(([k, v, c]) => (
               <div key={k} style={{ padding: '0.45rem 0.6rem', background: 'white', border: '1px solid var(--glass-border)', borderRadius: '7px' }}>
                 <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{k}</div>
@@ -3039,9 +3007,25 @@ function SangerPanel({ reference }: { reference: string }) {
             ))}
           </div>
 
-          {result.mismatches > 0 && (
-            <div style={{ padding: '0.5rem 0.75rem', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '0.78rem', color: '#92400e', marginBottom: '0.75rem' }}>
-              💡 Differences may indicate mutations or sequencing errors.
+          {result.differences.length > 0 && (
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                Differences from the reference
+              </div>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.2rem', maxHeight: 168, overflowY: 'auto' }}>
+                {result.differences.slice(0, 60).map((d, i) => (
+                  <li key={i} style={{ fontFamily: 'monospace', fontSize: '0.76rem', display: 'flex', gap: '0.6rem' }}>
+                    <span style={{ color: 'var(--text-muted)', minWidth: 64, textAlign: 'right' }}>{d.position}</span>
+                    <span style={{ minWidth: 74, color: d.kind === 'mismatch' ? '#ea580c' : d.kind === 'deletion' ? '#dc2626' : '#2563eb' }}>{d.kind}</span>
+                    <span>{d.reference} &rarr; {d.read}</span>
+                  </li>
+                ))}
+              </ul>
+              {result.differences.length > 60 && (
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                  &hellip;and {result.differences.length - 60} more.
+                </div>
+              )}
             </div>
           )}
 
