@@ -24,8 +24,6 @@ export default function SetupPage() {
   const [error, setError]             = useState('');
   const [, startTransition]           = useTransition();
 
-  const option = STORAGE_OPTIONS.find(o => o.id === storageType)!;
-
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');

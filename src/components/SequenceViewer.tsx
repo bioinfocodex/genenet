@@ -1050,7 +1050,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           {/* 5. Primers */}
           <SidebarSection title={`🧬 Primers (${primers.length})`} open={primersOpen} onToggle={() => setPrimersOpen(o => !o)}>
             {primers.length === 0 ? (
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No primers yet. Select a region on the Sequence tab and click "Make Primer".</p>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No primers yet. Select a region on the Sequence tab and click &ldquo;Make Primer&rdquo;.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                 {primers.map(p => (

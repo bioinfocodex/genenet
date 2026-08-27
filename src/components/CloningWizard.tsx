@@ -8,6 +8,7 @@ import {
 } from '@/lib/restrictionEnzymes';
 import MultiLaneGel from './MultiLaneGel';
 import PlasmidMap from './PlasmidMap';
+import Link from 'next/link';
 
 type SeqRecord = {
   id: string;
@@ -187,7 +188,7 @@ export default function CloningWizard({ sequences }: { sequences: SeqRecord[] })
           You need at least <strong>one gene</strong> and <strong>one plasmid</strong> in your library.
           {genes.length === 0 && ' No gene sequences found.'}{plasmids.length === 0 && ' No plasmid sequences found.'}
         </p>
-        <a href="/sequences/new" className="btn btn-primary">+ Add Sequence</a>
+        <Link href="/sequences/new" className="btn btn-primary">+ Add Sequence</Link>
       </div>
     );
   }

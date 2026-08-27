@@ -25,13 +25,13 @@ export default async function TeamPage() {
       <div style={{ marginBottom: '2rem' }}>
         <h1 className="title-gradient" style={{ fontSize: '2rem' }}>Team Management</h1>
         <p style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', fontSize: '0.88rem' }}>
-          Manage members · Invite new users · Control seat usage
+          Manage members · Invite new users · Review pending invitations
         </p>
       </div>
       <TeamClient
         seats={seats}
         users={users}
-        invites={invites as any}
+        invites={invites}
         currentUserId={me.id}
       />
     </div>

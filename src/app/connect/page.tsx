@@ -88,7 +88,7 @@ export default function ConnectPage() {
             <CheckCircle size={48} color="var(--accent-green)" style={{ marginBottom: '1rem' }} />
             <h2 style={{ fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.5rem' }}>Connected!</h2>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-              You're connected to <strong>{result.workspaceName}</strong>.
+              You&rsquo;re connected to <strong>{result.workspaceName}</strong>.
             </p>
             {result.serverUrl && (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '1.75rem' }}>

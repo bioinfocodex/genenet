@@ -221,7 +221,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
 
         {/* Selection Sector */}
         {selection && selection.start !== selection.end && (() => {
-           let startAngle = toAngle(selection.start - 1);
+           const startAngle = toAngle(selection.start - 1);
            let endAngle = toAngle(selection.end);
            if (endAngle < startAngle) endAngle += 2 * Math.PI;
            const sX = CX + R_IN * Math.cos(startAngle);

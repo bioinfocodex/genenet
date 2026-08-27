@@ -22,6 +22,21 @@ function generateInviteCode(): string {
   return code;
 }
 
+/**
+ * What the invite and SMTP actions hand back.
+ *
+ * Declared rather than inferred so the client can narrow on `success` instead
+ * of casting the result to `any` -- a cast there would also have swallowed a
+ * genuine shape change on this side.
+ */
+export type InviteResult =
+  | { error: string }
+  | { success: true; code: string; inviteLink: string; emailError?: string };
+
+export type SmtpTestResult =
+  | { error: string }
+  | { success: true; message: string };
+
 // ─── Team size ────────────────────────────────────────────────────────────────
 
 /**
@@ -44,7 +59,7 @@ export async function getTeamInfo() {
 
 // ─── Invite a member by email ─────────────────────────────────────────────────
 
-export async function inviteMember(formData: FormData) {
+export async function inviteMember(formData: FormData): Promise<InviteResult> {
   const session = await requireAdmin();
   const email = (formData.get('email') as string).trim().toLowerCase();
   const name  = (formData.get('name') as string).trim();
@@ -165,7 +180,7 @@ async function sendInviteEmail({ to, name, inviteLink, code, companyName }: {
 
 // ─── Test SMTP connection ─────────────────────────────────────────────────────
 
-export async function testSmtp(formData: FormData) {
+export async function testSmtp(formData: FormData): Promise<SmtpTestResult> {
   await requireAdmin();
   const to   = formData.get('to') as string;
   const host = process.env.SMTP_HOST;

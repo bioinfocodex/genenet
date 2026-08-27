@@ -134,7 +134,7 @@ export function parseFasta(text: string): ParsedSequence | null {
   const lines = trimmed.split('\n');
   let name = 'Imported Sequence';
   let description = '';
-  let seqLines: string[] = [];
+  const seqLines: string[] = [];
   let inSeq = false;
 
   for (const line of lines) {

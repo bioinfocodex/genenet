@@ -132,7 +132,7 @@ export function scoreOnTarget(protospacer: string): OnTarget {
 /** Longest stretch that can pair with the sequence's own reverse complement. */
 function longestSelfComplement(s: string): number {
   const rc = revComp(s);
-  let best = 0;
+  const best = 0;
   for (let len = Math.min(12, s.length); len >= 4; len--) {
     for (let i = 0; i + len <= s.length; i++) {
       if (rc.includes(s.slice(i, i + len))) return len;

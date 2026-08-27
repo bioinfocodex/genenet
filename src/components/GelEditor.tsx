@@ -128,7 +128,7 @@ export default function GelEditor({ gel: initGel }: { gel: GelData }) {
 
           {lanes.length === 0 && (
             <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.88rem', border: '1px dashed var(--glass-border)', borderRadius: '8px' }}>
-              Click "Add Lane" to start building your gel
+              Click &ldquo;Add Lane&rdquo; to start building your gel
             </div>
           )}
 

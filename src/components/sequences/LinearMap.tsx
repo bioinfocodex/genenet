@@ -67,7 +67,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     if (dragStart === null) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    let curr = toBp(e.clientX - rect.left);
+    const curr = toBp(e.clientX - rect.left);
     setDragEnd(curr);
   };
   const handleMouseUp = () => {

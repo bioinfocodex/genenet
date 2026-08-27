@@ -45,11 +45,11 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
       const fd = new FormData();
       fd.append('email', inviteEmail);
       fd.append('name', inviteName);
-      const res = await inviteMember(fd) as any;
-      if (res?.success) { 
+      const res = await inviteMember(fd);
+      if ('success' in res) {
         setInviteResult({ ...res, email: inviteEmail });
-        setInviteEmail(''); 
-        setInviteName(''); 
+        setInviteEmail('');
+        setInviteName('');
       } else {
         setInviteResult(res);
       }
@@ -63,7 +63,7 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
     startTransition(async () => {
       const fd = new FormData();
       fd.append('to', smtpTestEmail);
-      const res = await testSmtp(fd) as any;
+      const res = await testSmtp(fd);
       setSmtpTestResult(res);
       setSmtpTesting(false);
     });
