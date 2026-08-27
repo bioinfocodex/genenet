@@ -3,9 +3,14 @@ import { prisma } from '@/lib/prisma';
 import { createSession, deleteSession, getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { randomBytes, randomInt, scryptSync, timingSafeEqual } from 'crypto';
 import { persistStoragePath } from '@/lib/storage';
 import { getCurrentUser, requireAdmin as sharedRequireAdmin } from '@/lib/auth-guard';
+import { headers } from 'next/headers';
+import {
+  POLICIES, checkLimit, recordFailure, recordSuccess,
+  failureDelay, describeWait, clientKey, logAttempt,
+} from '@/lib/rate-limit';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -30,7 +35,10 @@ function generateSystemId(): string {
 }
 
 function generateConnectionCode(): string {
-  const num = Math.floor(10000 + Math.random() * 90000);
+  // randomInt, not Math.random: Math.random is not a cryptographic generator,
+  // and its output is predictable from prior values. This code is what stands
+  // between the network and knowing where the workspace is.
+  const num = randomInt(10000, 100000);
   return `LAB-${num}`; // e.g. LAB-48291
 }
 
@@ -117,10 +125,28 @@ export async function login(_prevState: { error?: string } | undefined, formData
   const email    = (formData.get('email') as string).trim().toLowerCase();
   const password = formData.get('password') as string;
 
+  // Same reasoning as the connection code: an unauthenticated endpoint that
+  // says yes or no to a secret has to cost something to get wrong.
+  const key = clientKey(await headers(), 'login');
+  const gate = checkLimit(key, POLICIES.login);
+  if (!gate.allowed) {
+    logAttempt('login', key, 'locked');
+    return { error: `Too many sign-in attempts. Try again in ${describeWait(gate.retryAfterMs)}.` };
+  }
+
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-    return { error: 'Invalid email or password.' };
+    const after = recordFailure(key, POLICIES.login);
+    logAttempt('login', key, after.allowed ? 'failed' : 'locked');
+    await failureDelay();
+    return {
+      error: after.allowed
+        ? 'Invalid email or password.'
+        : `Invalid email or password. Too many attempts -- try again in ${describeWait(after.retryAfterMs)}.`,
+    };
   }
+
+  recordSuccess(key);
 
   if (user.status === 'BLOCKED') {
     return { error: 'Access revoked by admin. Contact your lab administrator.' };
@@ -155,9 +181,27 @@ export async function register(_prevState: { error?: string } | undefined, formD
     return { error: 'Password must be at least 8 characters.' };
   }
 
-  // Validate invite code
+  // Validate invite code. A correct guess here creates a real account, which
+  // makes it the most valuable thing on the server to guess at.
+  const key = clientKey(await headers(), 'invite-code');
+  const gate = checkLimit(key, POLICIES.inviteCode);
+  if (!gate.allowed) {
+    logAttempt('invite-code', key, 'locked');
+    return { error: `Too many attempts. Try again in ${describeWait(gate.retryAfterMs)}.` };
+  }
+
   const invite = await prisma.invite.findUnique({ where: { code } });
-  if (!invite) return { error: 'Invalid invite code.' };
+  if (!invite) {
+    const after = recordFailure(key, POLICIES.inviteCode);
+    logAttempt('invite-code', key, after.allowed ? 'failed' : 'locked');
+    await failureDelay();
+    return {
+      error: after.allowed
+        ? 'Invalid invite code.'
+        : `Invalid invite code. Too many attempts -- try again in ${describeWait(after.retryAfterMs)}.`,
+    };
+  }
+  recordSuccess(key);
   if (invite.usedAt) return { error: 'This invite code has already been used.' };
   if (invite.expiresAt && invite.expiresAt < new Date()) return { error: 'This invite code has expired.' };
 
@@ -283,8 +327,10 @@ export async function validateConnectionCode(formData: FormData) {
 
 export async function regenerateConnectionCode() {
   await requireAdmin();
-  const num = Math.floor(10000 + Math.random() * 90000);
-  const code = `LAB-${num}`;
+  // Was a second copy of the generator, still on Math.random, so every code an
+  // admin rotated to was weaker than the one setup produced. Call the one
+  // implementation instead.
+  const code = generateConnectionCode();
   await prisma.workspaceSettings.update({ where: { id: 'workspace' }, data: { connectionCode: code } });
   revalidatePath('/admin');
   revalidatePath('/settings');

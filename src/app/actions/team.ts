@@ -1,4 +1,5 @@
 'use server';
+import { randomInt } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin as sharedRequireAdmin } from '@/lib/auth-guard';
 import { revalidatePath } from 'next/cache';
@@ -11,9 +12,13 @@ async function requireAdmin() {
 }
 
 function generateInviteCode(): string {
+  // randomInt rather than Math.random: this code creates an account when
+  // redeemed, so it needs to be unguessable rather than merely arbitrary.
+  // The alphabet omits I, O, 0 and 1 on purpose -- these get read aloud and
+  // typed by hand.
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = 'LAB-';
-  for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 5; i++) code += chars[randomInt(chars.length)];
   return code;
 }
 
