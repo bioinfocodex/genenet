@@ -16,6 +16,13 @@ const PUBLIC_PATHS = ['/login', '/register', '/setup', '/connect', '/download'];
  */
 const PUBLIC_API_PATHS = ['/api/validate-code'];
 
+/**
+ * The token-authenticated API. Not public -- every route under here checks a
+ * bearer token itself -- but it must not be sent to a login page, because the
+ * caller is a script and a 302 to HTML is not something it can act on.
+ */
+const TOKEN_API_PREFIX = '/api/v1';
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isApi = pathname.startsWith('/api/');
@@ -28,6 +35,7 @@ export async function proxy(request: NextRequest) {
   if (
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     PUBLIC_API_PATHS.some(p => pathname === p || pathname.startsWith(p + '/')) ||
+    pathname === TOKEN_API_PREFIX || pathname.startsWith(TOKEN_API_PREFIX + '/') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
   ) {

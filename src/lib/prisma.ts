@@ -29,6 +29,15 @@ if (!globalForPrisma.genenetLocationWarned) {
  */
 async function resolveActor(): Promise<{ id: string | null; email: string | null }> {
   try {
+    // An API request has no session, but it does have a token, and every token
+    // belongs to a person. Checking this first means "the API changed it" is
+    // never the answer to who changed a record.
+    const { currentApiActor } = await import('@/lib/api-auth');
+    const viaToken = currentApiActor();
+    if (viaToken) return { id: viaToken.userId, email: viaToken.userEmail };
+  } catch { /* not an API request */ }
+
+  try {
     const { getCurrentUser } = await import('@/lib/auth-guard');
     const user = await getCurrentUser();
     return { id: user?.id ?? null, email: user?.email ?? null };

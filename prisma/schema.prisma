@@ -291,6 +291,43 @@ model Experiment {
   userId String
 }
 
+/// A token that lets a script or instrument talk to this workspace.
+///
+/// Self-hosting is the reason to choose GeneNet over a cloud notebook, and an
+/// API is what makes that pay off: a lab can wire a plate reader or a
+/// sequencing pipeline straight into its own records, which no cloud vendor is
+/// going to build for one lab.
+///
+/// The token itself is never stored. Only a SHA-256 of it is kept, the same
+/// reasoning as passwords: a stolen database must not hand over working
+/// credentials. The plaintext is shown once, at creation, and cannot be
+/// recovered afterwards.
+///
+/// Every token belongs to a person. A request made with it is attributed to
+/// them in the audit trail, so "the API changed it" is never the answer to who
+/// changed a record.
+model ApiToken {
+  id        String    @id @default(cuid())
+  /// Human label: "plate reader", "nanopore pipeline".
+  name      String
+  /// SHA-256 of the token, hex.
+  tokenHash String    @unique
+  /// First characters of the token, so a person can tell them apart in a list.
+  prefix    String
+  /// read | write. A write token can also read.
+  scope     String    @default("read")
+
+  ownerId    String
+  ownerEmail String
+
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([ownerId])
+}
+
 /// An electronic signature applied to a record.
 ///
 /// 21 CFR Part 11 asks a signature to carry three things: who signed, when, and
