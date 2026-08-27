@@ -1,6 +1,6 @@
 'use client';
 import { useState, useTransition } from 'react';
-import { inviteMember, resendInvite, upgradeSeatLimit, testSmtp } from '@/app/actions/team';
+import { inviteMember, resendInvite, setSeatLimit, testSmtp } from '@/app/actions/team';
 import { blockUser, removeUser, restoreUser } from '@/app/actions/auth';
 import { UserPlus, Mail, RefreshCw, UserX, UserCheck, ChevronUp, X } from 'lucide-react';
 
@@ -8,11 +8,13 @@ type Seats = { seatLimit: number; used: number; remaining: number; plan: string;
 type User  = { id: string; name: string; email: string; role: string; status: string; createdAt: Date };
 type Invite = { id: string; code: string; email: string | null; name: string | null; expiresAt: Date | null; emailSent: boolean; createdBy: { name: string } };
 
-const PLANS = [
-  { key: 'starter',    label: 'Starter',    seats: 5  },
-  { key: 'pro',        label: 'Pro',         seats: 15 },
-  { key: 'enterprise', label: 'Enterprise',  seats: 50 },
-];
+// There were Starter / Pro / Enterprise tiers here, behind a modal titled
+// "Upgrade Plan". Nothing was ever purchased: the action wrote a number to the
+// workspace's own database, and a custom field let an admin type any value. A
+// self-hosted install cannot enforce a seat limit anyway, because the database
+// is on the customer's disk. Presenting it as a paid tier was the dishonest
+// part, not the limit -- so the limit stays as what it actually is: a guardrail
+// the lab sets for itself.
 
 const STATUS_COLOR: Record<string, string> = { ACTIVE: 'var(--accent-green)', BLOCKED: 'var(--accent-orange)', REMOVED: 'var(--accent-red)' };
 
@@ -21,7 +23,7 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
 }) {
   const [isPending, startTransition] = useTransition();
   const [showInvite, setShowInvite] = useState(false);
-  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showSeatLimit, setShowSeatLimit] = useState(false);
   const [showSmtpTest, setShowSmtpTest] = useState(false);
   const [smtpTestEmail, setSmtpTestEmail] = useState('');
   const [smtpTestResult, setSmtpTestResult] = useState<{ success?: boolean; message?: string; error?: string } | null>(null);
@@ -29,7 +31,6 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [inviteResult, setInviteResult] = useState<{ email?: string; code?: string; error?: string; success?: boolean; inviteLink?: string; emailError?: string } | null>(null);
-  const [selectedPlan, setSelectedPlan] = useState(seats.plan);
   const [customSeats, setCustomSeats] = useState(String(seats.seatLimit));
 
   const act = (fn: (fd: FormData) => Promise<unknown>, data: Record<string, string>) => {
@@ -70,12 +71,10 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
     });
   };
 
-  const handleUpgrade = (e: React.FormEvent) => {
+  const handleSeatLimit = (e: React.FormEvent) => {
     e.preventDefault();
-    const plan = PLANS.find(p => p.key === selectedPlan);
-    const limit = plan ? plan.seats : parseInt(customSeats);
-    act(upgradeSeatLimit, { seatLimit: String(limit), plan: selectedPlan });
-    setShowUpgrade(false);
+    act(setSeatLimit, { seatLimit: customSeats });
+    setShowSeatLimit(false);
   };
 
   const pct = Math.round((seats.used / seats.seatLimit) * 100);
@@ -88,15 +87,15 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
       <div className="glass-panel" style={{ padding: '1.75rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
           <div>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700 }}>License &amp; Seats</h2>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{seats.companyName} · {seats.plan.charAt(0).toUpperCase() + seats.plan.slice(1)} Plan</p>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Team</h2>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{seats.companyName} · {seats.used} of {seats.seatLimit} members</p>
           </div>
           <div style={{ display: 'flex', gap: '0.65rem' }}>
             <button onClick={() => { setShowSmtpTest(true); setSmtpTestResult(null); setSmtpTestEmail(''); }} className="btn btn-secondary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <Mail size={14} /> Test Email
             </button>
-            <button onClick={() => setShowUpgrade(true)} className="btn btn-secondary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <ChevronUp size={14} /> Upgrade Plan
+            <button onClick={() => setShowSeatLimit(true)} className="btn btn-secondary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <ChevronUp size={14} /> Team size
             </button>
             <button onClick={() => { setShowInvite(true); setInviteResult(null); }} disabled={seats.remaining <= 0} className="btn btn-primary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <UserPlus size={14} /> Invite Member
@@ -106,7 +105,7 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
 
         {seats.remaining === 0 ? (
           <p style={{ fontSize: '0.8rem', color: 'var(--accent-orange)', marginTop: '0.6rem' }}>
-            Seat limit reached. Upgrade your plan to invite more members.
+            You have reached the team size you set. Raise it to invite more members.
           </p>
         ) : (
           <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--glass-border)' }}>
@@ -281,35 +280,38 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
         </Modal>
       )}
 
-      {/* Upgrade Modal */}
-      {showUpgrade && (
-        <Modal title="Upgrade Plan" onClose={() => setShowUpgrade(false)}>
-          <form onSubmit={handleUpgrade} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {PLANS.map(p => (
-                <label key={p.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', border: `2px solid ${selectedPlan === p.key ? 'var(--accent-blue)' : 'var(--glass-border)'}`, borderRadius: 10, cursor: 'pointer', background: selectedPlan === p.key ? 'var(--accent-blue-15)' : 'var(--bg-primary)' }}>
-                  <input type="radio" name="plan" value={p.key} checked={selectedPlan === p.key} onChange={() => { setSelectedPlan(p.key); setCustomSeats(String(p.seats)); }} style={{ display: 'none' }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{p.label}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Up to {p.seats} users</div>
-                  </div>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: selectedPlan === p.key ? 'var(--accent-blue)' : 'var(--text-muted)' }}>{p.seats} seats</div>
-                </label>
-              ))}
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', border: `2px solid ${selectedPlan === 'custom' ? 'var(--accent-purple)' : 'var(--glass-border)'}`, borderRadius: 10, cursor: 'pointer', background: selectedPlan === 'custom' ? 'rgba(124,58,237,0.08)' : 'var(--bg-primary)' }}>
-                <input type="radio" name="plan" value="custom" checked={selectedPlan === 'custom'} onChange={() => setSelectedPlan('custom')} style={{ display: 'none' }} />
-                <div style={{ flex: 1, fontWeight: 600, fontSize: '0.9rem' }}>Custom</div>
-                <input type="number" min={1} max={999} value={customSeats} onChange={e => setCustomSeats(e.target.value)} onClick={() => setSelectedPlan('custom')} className="input-control" style={{ width: 70, padding: '0.35rem 0.5rem', fontSize: '0.85rem', textAlign: 'center' }} />
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>seats</span>
+      {/* Team size */}
+        {showSeatLimit && (
+          <Modal title="Team size" onClose={() => setShowSeatLimit(false)}>
+            <form onSubmit={handleSeatLimit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+                How many members this workspace expects. It stops you inviting more
+                people than you meant to. It is not a licence, and you can change it
+                whenever the lab changes.
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <input
+                  type="number" min={1} max={999} value={customSeats}
+                  onChange={e => setCustomSeats(e.target.value)}
+                  className="input-control" style={{ width: 120 }} autoFocus
+                />
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  members &middot; {seats.used} here now
+                </span>
               </label>
-            </div>
-            <div style={{ display: 'flex', gap: '0.65rem', justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setShowUpgrade(false)} className="btn btn-secondary">Cancel</button>
-              <button type="submit" disabled={isPending} className="btn btn-primary">Apply</button>
-            </div>
-          </form>
-        </Modal>
-      )}
+              {Number(customSeats) < seats.used && (
+                <p style={{ fontSize: '0.78rem', color: 'var(--accent-orange)', margin: 0 }}>
+                  That is below the {seats.used} members already here. Nobody is removed &mdash;
+                  you just will not be able to invite anyone until it goes back up.
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '0.65rem', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setShowSeatLimit(false)} className="btn btn-secondary">Cancel</button>
+                <button type="submit" disabled={isPending} className="btn btn-primary">Save</button>
+              </div>
+            </form>
+          </Modal>
+        )}
     </div>
   );
 }

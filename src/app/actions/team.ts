@@ -50,7 +50,7 @@ export async function inviteMember(formData: FormData) {
   // Check seat limit
   const seats = await getSeatInfo();
   if (seats.remaining <= 0) {
-    return { error: `Seat limit reached (${seats.seatLimit}). Upgrade your plan to invite more members.` };
+    return { error: `This workspace is set to ${seats.seatLimit} members and is full. Raise the team size to invite more.` };
   }
 
   // Check not already a user
@@ -129,15 +129,31 @@ export async function resendInvite(formData: FormData) {
 
 // ─── Upgrade seat limit ───────────────────────────────────────────────────────
 
-export async function upgradeSeatLimit(formData: FormData) {
+/**
+ * Set how many members this workspace expects.
+ *
+ * Was upgradeSeatLimit, and wrote a `plan` alongside the number as though a
+ * tier had been bought. Nothing was ever bought: a self-hosted install keeps
+ * its database on the customer's own disk, so a seat limit there can always be
+ * changed. Rather than pretend otherwise, this is now what it always was -- a
+ * setting a lab chooses, so it does not invite more people than it meant to.
+ *
+ * The `plan` column stays in the schema for existing rows but is no longer
+ * written or shown.
+ */
+export async function setSeatLimit(formData: FormData) {
   await requireAdmin();
   const newLimit = parseInt(formData.get('seatLimit') as string);
-  const plan = formData.get('plan') as string;
-  if (isNaN(newLimit) || newLimit < 1) return { error: 'Invalid seat limit.' };
+  if (isNaN(newLimit) || newLimit < 1) {
+    return { error: 'Team size must be at least 1.' };
+  }
+  if (newLimit > 999) {
+    return { error: 'Team size must be 999 or fewer.' };
+  }
 
   await prisma.workspaceSettings.update({
     where: { id: 'workspace' },
-    data: { seatLimit: newLimit, plan },
+    data: { seatLimit: newLimit },
   });
   revalidatePath('/admin/team');
   revalidatePath('/admin');

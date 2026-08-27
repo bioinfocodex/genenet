@@ -167,7 +167,7 @@ export default function SetupPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Choose a License Plan</h2>
               <p style={{ fontSize: '0.83rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-                Select how many users (seats) your lab needs. You can upgrade later from the Admin Panel.
+                How many people you expect in the lab. This is a guardrail against over-inviting, not a licence, and you can change it any time from the Admin Panel.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                 {PLANS.map(p => (

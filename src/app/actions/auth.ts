@@ -211,7 +211,7 @@ export async function register(_prevState: { error?: string } | undefined, formD
     prisma.user.count({ where: { status: { not: 'REMOVED' } } }),
   ]);
   if (ws && activeUserCount >= ws.seatLimit) {
-    return { error: `User limit reached (${ws.seatLimit} seats). Contact your lab administrator to upgrade.` };
+    return { error: `This workspace is set to ${ws.seatLimit} members and is full. Ask your lab administrator to raise the team size.` };
   }
 
   // Check email not already taken
