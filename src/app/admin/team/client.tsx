@@ -2,7 +2,7 @@
 import { useState, useTransition } from 'react';
 import { inviteMember, resendInvite, testSmtp } from '@/app/actions/team';
 import { blockUser, removeUser, restoreUser } from '@/app/actions/auth';
-import { UserPlus, Mail, RefreshCw, UserX, UserCheck, ChevronUp, X } from 'lucide-react';
+import { UserPlus, Mail, RefreshCw, UserX, UserCheck, X } from 'lucide-react';
 
 type Team = { used: number; companyName: string };
 type User  = { id: string; name: string; email: string; role: string; status: string; createdAt: Date };
