@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { getMockUser, getWorkspaceInfo, getWorkspaceSettings, createInvite, revokeInvite } from '@/app/actions/auth';
-import { Settings, Users, Link2, Trash2, Server, Network } from 'lucide-react';
+import { Settings, Users, Link2, Trash2, Server, Network, Scale } from 'lucide-react';
 import ConnectionInfo from '@/components/ConnectionInfo';
 
 export const dynamic = 'force-dynamic';
@@ -167,6 +167,28 @@ export default async function SettingsPage() {
           )}
         </div>
       )}
+
+      {/* About. The AGPL asks that people using this over a network be told
+          where the source is; this is that notice. */}
+      <div className="glass-panel" style={{ padding: '1.5rem' }}>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Scale size={18} /> About GeneNet
+        </h2>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 0.6rem', lineHeight: 1.55 }}>
+          Free software under the{' '}
+          <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)' }}>
+            GNU Affero General Public License v3
+          </a>. You may run, study, change and share it. If you offer a changed
+          version to other people over a network, you must offer them your
+          changes too.
+        </p>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
+          Source:{' '}
+          <a href="https://github.com/bioinfocodex/genenet" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)' }}>
+            github.com/bioinfocodex/genenet
+          </a>
+        </p>
+      </div>
     </div>
   );
 }
