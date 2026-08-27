@@ -5,11 +5,6 @@ import { Dna, Server, HardDrive, Cloud, Network, ChevronRight, ChevronLeft, Chec
 
 type StorageType = 'local' | 'network' | 'cloud' | 'onedrive' | 'shared';
 
-const PLANS = [
-  { key: 'starter',    label: 'Starter',    seats: 5,  desc: 'Up to 5 users — ideal for small labs' },
-  { key: 'pro',        label: 'Pro',         seats: 15, desc: 'Up to 15 users — growing research teams' },
-  { key: 'enterprise', label: 'Enterprise',  seats: 50, desc: 'Up to 50 users — large institutions' },
-];
 
 const STORAGE_OPTIONS: { id: StorageType; icon: React.ReactNode; label: string; sub: string; showPath: boolean }[] = [
   { id: 'local',   icon: <HardDrive size={22} />, label: 'This Computer',             sub: 'Store everything locally. Best for single-machine setups.',                                                        showPath: false },
@@ -18,7 +13,7 @@ const STORAGE_OPTIONS: { id: StorageType; icon: React.ReactNode; label: string; 
   { id: 'cloud',   icon: <Server size={22} />,    label: 'Cloud / Remote Database',   sub: 'Use a hosted PostgreSQL or remote database URL. Best for internet-accessible deployments.',                       showPath: false },
 ];
 
-const STEPS = ['Storage', 'Configure', 'License', 'Admin'];
+const STEPS = ['Storage', 'Configure', 'Admin'];
 
 export default function SetupPage() {
   const [step, setStep]               = useState(0);
@@ -26,7 +21,6 @@ export default function SetupPage() {
   const [storagePath, setStoragePath] = useState('');
   const [storageNote, setStorageNote] = useState('');
   const [serverUrl, setServerUrl]     = useState('');
-  const [plan, setPlan]               = useState('starter');
   const [error, setError]             = useState('');
   const [, startTransition]           = useTransition();
 
@@ -40,9 +34,6 @@ export default function SetupPage() {
     fd.append('storagePath', storagePath);
     fd.append('storageNote', storageNote);
     fd.append('serverUrl', serverUrl);
-    fd.append('plan', plan);
-    const selectedPlan = PLANS.find(p => p.key === plan);
-    fd.append('seatLimit', String(selectedPlan?.seats ?? 5));
     startTransition(async () => {
       const result = await setupWorkspace(undefined, fd);
       if (result?.error) setError(result.error);
@@ -162,38 +153,8 @@ export default function SetupPage() {
             </div>
           )}
 
-          {/* ── Step 2: License Plan ── */}
+          {/* ── Step 2: Admin Account ── */}
           {step === 2 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Choose a License Plan</h2>
-              <p style={{ fontSize: '0.83rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-                How many people you expect in the lab. This is a guardrail against over-inviting, not a licence, and you can change it any time from the Admin Panel.
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                {PLANS.map(p => (
-                  <button key={p.key} onClick={() => setPlan(p.key)} style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem 1.25rem', borderRadius: 10, border: `2px solid ${plan === p.key ? 'var(--accent-blue)' : 'var(--glass-border)'}`, background: plan === p.key ? 'var(--accent-blue-15)' : 'var(--bg-primary)', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'all 0.15s' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-primary)', marginBottom: '0.15rem' }}>{p.label}</div>
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{p.desc}</div>
-                    </div>
-                    <div style={{ fontWeight: 800, fontSize: '1rem', color: plan === p.key ? 'var(--accent-blue)' : 'var(--text-muted)', flexShrink: 0 }}>{p.seats} seats</div>
-                    {plan === p.key && <Check size={18} color="var(--accent-blue)" />}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <button onClick={() => setStep(1)} className="btn btn-secondary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
-                  <ChevronLeft size={15} /> Back
-                </button>
-                <button onClick={() => setStep(3)} className="btn btn-primary" style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
-                  Continue <ChevronRight size={15} />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ── Step 3: Admin Account ── */}
-          {step === 3 && (
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Create Admin Account</h2>
               <p style={{ fontSize: '0.83rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
@@ -222,7 +183,7 @@ export default function SetupPage() {
               </F>
 
               <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <button type="button" onClick={() => setStep(2)} className="btn btn-secondary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
+                <button type="button" onClick={() => setStep(1)} className="btn btn-secondary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
                   <ChevronLeft size={15} /> Back
                 </button>
                 <button type="submit" className="btn btn-primary" style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', fontSize: '0.95rem' }}>

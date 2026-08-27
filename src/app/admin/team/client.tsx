@@ -1,10 +1,10 @@
 'use client';
 import { useState, useTransition } from 'react';
-import { inviteMember, resendInvite, setSeatLimit, testSmtp } from '@/app/actions/team';
+import { inviteMember, resendInvite, testSmtp } from '@/app/actions/team';
 import { blockUser, removeUser, restoreUser } from '@/app/actions/auth';
 import { UserPlus, Mail, RefreshCw, UserX, UserCheck, ChevronUp, X } from 'lucide-react';
 
-type Seats = { seatLimit: number; used: number; remaining: number; plan: string; companyName: string };
+type Team = { used: number; companyName: string };
 type User  = { id: string; name: string; email: string; role: string; status: string; createdAt: Date };
 type Invite = { id: string; code: string; email: string | null; name: string | null; expiresAt: Date | null; emailSent: boolean; createdBy: { name: string } };
 
@@ -19,11 +19,10 @@ type Invite = { id: string; code: string; email: string | null; name: string | n
 const STATUS_COLOR: Record<string, string> = { ACTIVE: 'var(--accent-green)', BLOCKED: 'var(--accent-orange)', REMOVED: 'var(--accent-red)' };
 
 export default function TeamClient({ seats, users, invites, currentUserId }: {
-  seats: Seats; users: User[]; invites: Invite[]; currentUserId: string;
+  seats: Team; users: User[]; invites: Invite[]; currentUserId: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const [showInvite, setShowInvite] = useState(false);
-  const [showSeatLimit, setShowSeatLimit] = useState(false);
   const [showSmtpTest, setShowSmtpTest] = useState(false);
   const [smtpTestEmail, setSmtpTestEmail] = useState('');
   const [smtpTestResult, setSmtpTestResult] = useState<{ success?: boolean; message?: string; error?: string } | null>(null);
@@ -31,7 +30,6 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [inviteResult, setInviteResult] = useState<{ email?: string; code?: string; error?: string; success?: boolean; inviteLink?: string; emailError?: string } | null>(null);
-  const [customSeats, setCustomSeats] = useState(String(seats.seatLimit));
 
   const act = (fn: (fd: FormData) => Promise<unknown>, data: Record<string, string>) => {
     startTransition(async () => {
@@ -71,67 +69,49 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
     });
   };
 
-  const handleSeatLimit = (e: React.FormEvent) => {
-    e.preventDefault();
-    act(setSeatLimit, { seatLimit: customSeats });
-    setShowSeatLimit(false);
-  };
-
-  const pct = Math.round((seats.used / seats.seatLimit) * 100);
-  const barColor = pct >= 90 ? 'var(--accent-red)' : pct >= 70 ? 'var(--accent-orange)' : 'var(--accent-green)';
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
 
-      {/* Seat Usage Card */}
+      {/* Team card */}
       <div className="glass-panel" style={{ padding: '1.75rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
           <div>
             <h2 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Team</h2>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{seats.companyName} · {seats.used} of {seats.seatLimit} members</p>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{seats.companyName} · {seats.used} member{seats.used === 1 ? '' : 's'}</p>
           </div>
           <div style={{ display: 'flex', gap: '0.65rem' }}>
             <button onClick={() => { setShowSmtpTest(true); setSmtpTestResult(null); setSmtpTestEmail(''); }} className="btn btn-secondary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <Mail size={14} /> Test Email
             </button>
-            <button onClick={() => setShowSeatLimit(true)} className="btn btn-secondary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <ChevronUp size={14} /> Team size
-            </button>
-            <button onClick={() => { setShowInvite(true); setInviteResult(null); }} disabled={seats.remaining <= 0} className="btn btn-primary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <button onClick={() => { setShowInvite(true); setInviteResult(null); }} className="btn btn-primary" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <UserPlus size={14} /> Invite Member
             </button>
           </div>
         </div>
 
-        {seats.remaining === 0 ? (
-          <p style={{ fontSize: '0.8rem', color: 'var(--accent-orange)', marginTop: '0.6rem' }}>
-            You have reached the team size you set. Raise it to invite more members.
-          </p>
-        ) : (
-          <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--glass-border)' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.75rem' }}>Quick Invite</div>
-            <form onSubmit={handleInvite} style={{ display: 'flex', gap: '0.75rem' }}>
-              <input 
-                type="email" 
-                value={inviteEmail} 
-                onChange={e => setInviteEmail(e.target.value)} 
-                required 
-                className="input-control" 
-                placeholder="member@lab.com" 
-                style={{ flex: 1, padding: '0.45rem 0.75rem', fontSize: '0.85rem' }} 
-              />
-              <button type="submit" disabled={!inviteEmail || isPending} className="btn btn-primary" style={{ fontSize: '0.82rem', padding: '0.45rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Mail size={14} /> {isPending ? 'Sending…' : 'Send Invite'}
-              </button>
-            </form>
-            {inviteResult?.success && (
-              <p style={{ fontSize: '0.78rem', color: 'var(--accent-green)', marginTop: '0.5rem', fontWeight: 600 }}>✓ Invite sent to {inviteResult.email || 'member'}</p>
-            )}
-            {inviteResult?.error && (
-              <p style={{ fontSize: '0.78rem', color: 'var(--accent-red)', marginTop: '0.5rem' }}>⚠ {inviteResult.error}</p>
-            )}
-          </div>
-        )}
+        <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--glass-border)' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.75rem' }}>Quick Invite</div>
+          <form onSubmit={handleInvite} style={{ display: 'flex', gap: '0.75rem' }}>
+            <input 
+              type="email" 
+              value={inviteEmail} 
+              onChange={e => setInviteEmail(e.target.value)} 
+              required 
+              className="input-control" 
+              placeholder="member@lab.com" 
+              style={{ flex: 1, padding: '0.45rem 0.75rem', fontSize: '0.85rem' }} 
+            />
+            <button type="submit" disabled={!inviteEmail || isPending} className="btn btn-primary" style={{ fontSize: '0.82rem', padding: '0.45rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Mail size={14} /> {isPending ? 'Sending…' : 'Send Invite'}
+            </button>
+          </form>
+          {inviteResult?.success && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--accent-green)', marginTop: '0.5rem', fontWeight: 600 }}>✓ Invite sent to {inviteResult.email || 'member'}</p>
+          )}
+          {inviteResult?.error && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--accent-red)', marginTop: '0.5rem' }}>⚠ {inviteResult.error}</p>
+          )}
+        </div>
       </div>
 
       {/* Active Members */}
@@ -280,38 +260,6 @@ export default function TeamClient({ seats, users, invites, currentUserId }: {
         </Modal>
       )}
 
-      {/* Team size */}
-        {showSeatLimit && (
-          <Modal title="Team size" onClose={() => setShowSeatLimit(false)}>
-            <form onSubmit={handleSeatLimit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-                How many members this workspace expects. It stops you inviting more
-                people than you meant to. It is not a licence, and you can change it
-                whenever the lab changes.
-              </p>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <input
-                  type="number" min={1} max={999} value={customSeats}
-                  onChange={e => setCustomSeats(e.target.value)}
-                  className="input-control" style={{ width: 120 }} autoFocus
-                />
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  members &middot; {seats.used} here now
-                </span>
-              </label>
-              {Number(customSeats) < seats.used && (
-                <p style={{ fontSize: '0.78rem', color: 'var(--accent-orange)', margin: 0 }}>
-                  That is below the {seats.used} members already here. Nobody is removed &mdash;
-                  you just will not be able to invite anyone until it goes back up.
-                </p>
-              )}
-              <div style={{ display: 'flex', gap: '0.65rem', justifyContent: 'flex-end' }}>
-                <button type="button" onClick={() => setShowSeatLimit(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" disabled={isPending} className="btn btn-primary">Save</button>
-              </div>
-            </form>
-          </Modal>
-        )}
     </div>
   );
 }

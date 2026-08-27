@@ -22,18 +22,22 @@ function generateInviteCode(): string {
   return code;
 }
 
-// ─── Seat info ────────────────────────────────────────────────────────────────
+// ─── Team size ────────────────────────────────────────────────────────────────
 
-export async function getSeatInfo() {
+/**
+ * How many people are in the workspace.
+ *
+ * There is no ceiling. GeneNet is not licensed per seat, so a lab that grows
+ * is not a lab that has to ask anyone for permission -- this is a count, not
+ * a quota.
+ */
+export async function getTeamInfo() {
   const [ws, total] = await Promise.all([
     prisma.workspaceSettings.findUnique({ where: { id: 'workspace' } }),
     prisma.user.count({ where: { status: { not: 'REMOVED' } } }),
   ]);
   return {
-    seatLimit: ws?.seatLimit ?? 5,
     used: total,
-    remaining: Math.max(0, (ws?.seatLimit ?? 5) - total),
-    plan: ws?.plan ?? 'starter',
     companyName: ws?.companyName ?? ws?.workspaceName ?? 'Lab',
   };
 }
@@ -46,12 +50,6 @@ export async function inviteMember(formData: FormData) {
   const name  = (formData.get('name') as string).trim();
 
   if (!email) return { error: 'Email is required.' };
-
-  // Check seat limit
-  const seats = await getSeatInfo();
-  if (seats.remaining <= 0) {
-    return { error: `This workspace is set to ${seats.seatLimit} members and is full. Raise the team size to invite more.` };
-  }
 
   // Check not already a user
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -76,7 +74,7 @@ export async function inviteMember(formData: FormData) {
 
   let emailError: string | undefined;
   try {
-    await sendInviteEmail({ to: email, name, inviteLink, code, companyName: seats.companyName });
+    await sendInviteEmail({ to: email, name, inviteLink, code, companyName: ws?.companyName ?? ws?.workspaceName ?? 'Lab' });
     await prisma.invite.update({ where: { id: invite.id }, data: { emailSent: true } });
   } catch (err) {
     emailError = err instanceof Error ? err.message : String(err);
@@ -129,35 +127,6 @@ export async function resendInvite(formData: FormData) {
 
 // ─── Upgrade seat limit ───────────────────────────────────────────────────────
 
-/**
- * Set how many members this workspace expects.
- *
- * Was upgradeSeatLimit, and wrote a `plan` alongside the number as though a
- * tier had been bought. Nothing was ever bought: a self-hosted install keeps
- * its database on the customer's own disk, so a seat limit there can always be
- * changed. Rather than pretend otherwise, this is now what it always was -- a
- * setting a lab chooses, so it does not invite more people than it meant to.
- *
- * The `plan` column stays in the schema for existing rows but is no longer
- * written or shown.
- */
-export async function setSeatLimit(formData: FormData) {
-  await requireAdmin();
-  const newLimit = parseInt(formData.get('seatLimit') as string);
-  if (isNaN(newLimit) || newLimit < 1) {
-    return { error: 'Team size must be at least 1.' };
-  }
-  if (newLimit > 999) {
-    return { error: 'Team size must be 999 or fewer.' };
-  }
-
-  await prisma.workspaceSettings.update({
-    where: { id: 'workspace' },
-    data: { seatLimit: newLimit },
-  });
-  revalidatePath('/admin/team');
-  revalidatePath('/admin');
-}
 
 // ─── Email sender (nodemailer or console fallback) ────────────────────────────
 

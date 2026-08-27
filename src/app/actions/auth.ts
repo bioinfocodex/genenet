@@ -65,8 +65,6 @@ export async function setupWorkspace(_prevState: { error?: string } | undefined,
   const storagePath   = (formData.get('storagePath') as string | null)?.trim() || null;
   const storageNote   = (formData.get('storageNote') as string | null)?.trim() || null;
   const serverUrl     = (formData.get('serverUrl') as string | null)?.trim() || null;
-  const plan          = (formData.get('plan') as string | null) || 'starter';
-  const seatLimit     = parseInt((formData.get('seatLimit') as string | null) ?? '5') || 5;
 
   if (!workspaceName || !adminName || !email || !password) {
     return { error: 'All fields are required.' };
@@ -90,8 +88,8 @@ export async function setupWorkspace(_prevState: { error?: string } | undefined,
 
   await prisma.workspaceSettings.upsert({
     where:  { id: 'workspace' },
-    create: { id: 'workspace', workspaceName, adminId: admin.id, isSetupComplete: true, storageNote, storageType, storagePath, systemId, connectionCode, serverUrl, plan, seatLimit },
-    update: { workspaceName, adminId: admin.id, isSetupComplete: true, storageNote, storageType, storagePath, systemId, connectionCode, serverUrl, plan, seatLimit },
+    create: { id: 'workspace', workspaceName, adminId: admin.id, isSetupComplete: true, storageNote, storageType, storagePath, systemId, connectionCode, serverUrl },
+    update: { workspaceName, adminId: admin.id, isSetupComplete: true, storageNote, storageType, storagePath, systemId, connectionCode, serverUrl },
   });
 
   // If OneDrive/network path given, write it to .env and create folder structure
@@ -193,15 +191,6 @@ export async function register(_prevState: { error?: string } | undefined, formD
   recordSuccess(key);
   if (invite.usedAt) return { error: 'This invite code has already been used.' };
   if (invite.expiresAt && invite.expiresAt < new Date()) return { error: 'This invite code has expired.' };
-
-  // Enforce seat limit
-  const [ws, activeUserCount] = await Promise.all([
-    prisma.workspaceSettings.findUnique({ where: { id: 'workspace' } }),
-    prisma.user.count({ where: { status: { not: 'REMOVED' } } }),
-  ]);
-  if (ws && activeUserCount >= ws.seatLimit) {
-    return { error: `This workspace is set to ${ws.seatLimit} members and is full. Ask your lab administrator to raise the team size.` };
-  }
 
   // Check email not already taken
   const exists = await prisma.user.findUnique({ where: { email } });

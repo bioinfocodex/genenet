@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { getMockUser } from '@/app/actions/auth';
-import { getSeatInfo } from '@/app/actions/team';
+import { getTeamInfo } from '@/app/actions/team';
 import { redirect } from 'next/navigation';
 import TeamClient from './client';
 
@@ -11,7 +11,7 @@ export default async function TeamPage() {
   if (!me || me.role !== 'ADMIN') redirect('/');
 
   const [seats, users, invites] = await Promise.all([
-    getSeatInfo(),
+    getTeamInfo(),
     prisma.user.findMany({ orderBy: { createdAt: 'asc' } }),
     prisma.invite.findMany({
       where: { usedAt: null },
