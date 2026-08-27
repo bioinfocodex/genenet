@@ -4,6 +4,11 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { calcTm, calcGC, parseFasta, parseGenBank } from '@/lib/simulation';
 import { requireUser } from '@/lib/auth-guard';
+import {
+  parseSequenceText, countFastaRecords, type ImportedSequence,
+} from '@/lib/sequence-import';
+import { isSnapGene, parseSnapGene } from '@/lib/snapgene';
+import { fetchAccession } from '@/lib/accession';
 
 export async function createSequence(data: FormData) {
   const name = (data.get('name') as string).trim();
@@ -51,25 +56,62 @@ export async function saveFeatures(formData: FormData) {
 
 // ─── Import from FASTA / GenBank ──────────────────────────────────────────────
 
+/**
+ * Import a sequence from pasted text, an uploaded file, or an accession.
+ *
+ * The format is detected from the content rather than trusted from a dropdown:
+ * someone who pastes GenBank with "FASTA" selected should still get their
+ * plasmid, and someone who pastes a bare sequence with no header should get
+ * that too -- which previously failed silently, because the FASTA reader
+ * required a ">" line.
+ */
 export async function importSequence(formData: FormData) {
-  const format = formData.get('format') as string;  // 'fasta' | 'genbank'
-  const raw = (formData.get('raw') as string ?? '').trim();
-  if (!raw) throw new Error('No sequence data provided');
+  // This action was the one mutation in this file with no guard. Server actions
+  // are callable endpoints; it also means the audit trail can attribute the
+  // import to whoever made it.
+  await requireUser();
 
-  const parsed = format === 'genbank' ? parseGenBank(raw) : parseFasta(raw);
-  if (!parsed) throw new Error('Could not parse sequence. Check the format and try again.');
+  const accession = ((formData.get('accession') as string) ?? '').trim();
+  const upload = formData.get('file');
+  const raw = ((formData.get('raw') as string) ?? '').trim();
 
-  const featuresJson = parsed.features.length > 0 ? JSON.stringify(parsed.features) : '[]';
+  let parsed: ImportedSequence | null = null;
+  let note = '';
+
+  if (accession) {
+    const r = await fetchAccession(accession);
+    if (!r.ok) throw new Error(r.error);
+    parsed = r.sequence;
+  } else if (upload instanceof File && upload.size > 0) {
+    const bytes = new Uint8Array(await upload.arrayBuffer());
+    if (isSnapGene(bytes)) {
+      parsed = parseSnapGene(bytes, upload.name.replace(/\.dna$/i, ''));
+    } else {
+      parsed = parseSequenceText(new TextDecoder().decode(bytes));
+      if (parsed && parsed.name === 'Imported sequence') {
+        parsed.name = upload.name.replace(/\.[^.]+$/, '');
+      }
+    }
+    if (!parsed) throw new Error(`Could not read ${upload.name}. Supported: GenBank, FASTA, SnapGene .dna, or a plain sequence.`);
+  } else if (raw) {
+    const records = countFastaRecords(raw);
+    parsed = parseSequenceText(raw);
+    if (!parsed) throw new Error('Could not read that. Paste GenBank, FASTA, or just the sequence.');
+    if (records > 1) note = ` (first of ${records} records)`;
+  } else {
+    throw new Error('Provide a sequence, a file, or an accession number.');
+  }
 
   await prisma.geneSequence.create({
     data: {
-      name: parsed.name,
+      name: parsed.name + note,
       description: parsed.description || null,
-      type: parsed.type,
+      // Circularity is not a column, so it goes where the viewer already looks.
+      type: parsed.circular ? 'plasmid' : (parsed.sequence.length > 3000 ? 'plasmid' : 'gene'),
       sequence: parsed.sequence,
       size: parsed.sequence.length,
       tags: null,
-      features: featuresJson,
+      features: JSON.stringify(parsed.features ?? []),
     },
   });
 
