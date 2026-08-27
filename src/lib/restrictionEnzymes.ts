@@ -1,33 +1,40 @@
 export interface Enzyme {
   name: string;
   pattern: string;
-  cutBefore: number;   // cut position on top strand (0-indexed within pattern)
+  /**
+   * Top-strand cut, as an offset from the start of the recognition site.
+   * For Type IIS enzymes this is past the end of the site: BsaI recognises
+   * GGTCTC and cuts one base beyond it, so cutBefore is 7.
+   */
+  cutBefore: number;
+  /** Bottom-strand cut, same frame of reference. */
+  cutBottom?: number;
+  /**
+   * The overhang sequence, when the site fixes it. Empty for blunt cutters and
+   * for Type IIS, where the overhang is whatever the target sequence happens to
+   * be at the cut -- which is exactly why Golden Gate works.
+   */
   overhang: string;
   overhangType: '5prime' | '3prime' | 'blunt';
+  /** Overhang length in bases, known even when the sequence is not. */
+  overhangLength?: number;
+  /** Cuts outside its recognition site. */
+  typeIIS?: boolean;
 }
 
-export const ENZYMES: Record<string, Enzyme> = {
-  EcoRI:   { name: 'EcoRI',   pattern: 'GAATTC',   cutBefore: 1, overhang: 'AATT', overhangType: '5prime' },
-  BamHI:   { name: 'BamHI',   pattern: 'GGATCC',   cutBefore: 1, overhang: 'GATC', overhangType: '5prime' },
-  HindIII: { name: 'HindIII', pattern: 'AAGCTT',   cutBefore: 1, overhang: 'AGCT', overhangType: '5prime' },
-  XhoI:    { name: 'XhoI',    pattern: 'CTCGAG',   cutBefore: 1, overhang: 'TCGA', overhangType: '5prime' },
-  SalI:    { name: 'SalI',    pattern: 'GTCGAC',   cutBefore: 1, overhang: 'TCGA', overhangType: '5prime' },
-  NcoI:    { name: 'NcoI',    pattern: 'CCATGG',   cutBefore: 1, overhang: 'CATG', overhangType: '5prime' },
-  XbaI:    { name: 'XbaI',    pattern: 'TCTAGA',   cutBefore: 1, overhang: 'CTAG', overhangType: '5prime' },
-  SpeI:    { name: 'SpeI',    pattern: 'ACTAGT',   cutBefore: 1, overhang: 'CTAG', overhangType: '5prime' },
-  NheI:    { name: 'NheI',    pattern: 'GCTAGC',   cutBefore: 1, overhang: 'CTAG', overhangType: '5prime' },
-  BglII:   { name: 'BglII',   pattern: 'AGATCT',   cutBefore: 1, overhang: 'GATC', overhangType: '5prime' },
-  NotI:    { name: 'NotI',    pattern: 'GCGGCCGC', cutBefore: 2, overhang: 'GGCC', overhangType: '5prime' },
-  AgeI:    { name: 'AgeI',    pattern: 'ACCGGT',   cutBefore: 1, overhang: 'CCGG', overhangType: '5prime' },
-  NdeI:    { name: 'NdeI',    pattern: 'CATATG',   cutBefore: 2, overhang: 'TA',   overhangType: '5prime' },
-  ClaI:    { name: 'ClaI',    pattern: 'ATCGAT',   cutBefore: 2, overhang: 'CG',   overhangType: '5prime' },
-  MluI:    { name: 'MluI',    pattern: 'ACGCGT',   cutBefore: 1, overhang: 'CGCG', overhangType: '5prime' },
-  SmaI:    { name: 'SmaI',    pattern: 'CCCGGG',   cutBefore: 3, overhang: '',     overhangType: 'blunt'  },
-  EcoRV:   { name: 'EcoRV',   pattern: 'GATATC',   cutBefore: 3, overhang: '',     overhangType: 'blunt'  },
-  KpnI:    { name: 'KpnI',    pattern: 'GGTACC',   cutBefore: 5, overhang: 'GTAC', overhangType: '3prime' },
-  SacI:    { name: 'SacI',    pattern: 'GAGCTC',   cutBefore: 5, overhang: 'AGCT', overhangType: '3prime' },
-  PstI:    { name: 'PstI',    pattern: 'CTGCAG',   cutBefore: 5, overhang: 'TGCA', overhangType: '3prime' },
-};
+/**
+ * Every Type II restriction enzyme in REBASE that has a commercial supplier.
+ *
+ * This was a hand-written table of twenty. The digest logic was never the
+ * limitation -- it worked; it simply had almost nothing to work on, and a
+ * cloning tool that does not know BsaI cannot do Golden Gate.
+ *
+ * All twenty of the original entries were checked against REBASE before being
+ * replaced, and all twenty agreed on pattern, cut position, overhang and
+ * overhang type.
+ */
+export { REBASE_ENZYMES } from './restrictionEnzymes.data';
+export const ENZYMES: Record<string, Enzyme> = REBASE_TABLE;
 
 // Enzyme pairs that produce compatible cohesive ends (can ligate together)
 const COMPATIBLE_PAIRS = new Set([
@@ -42,6 +49,8 @@ export function areEndsCompatible(e1: string, e2: string): boolean {
   if (e1 === e2) return true;
   return COMPATIBLE_PAIRS.has(`${e1}:${e2}`);
 }
+
+import { REBASE_ENZYMES as REBASE_TABLE } from './restrictionEnzymes.data';
 
 // IUPAC nucleotide base matching
 function matchesIUPAC(base: string, code: string): boolean {

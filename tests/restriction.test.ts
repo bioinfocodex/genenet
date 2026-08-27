@@ -36,19 +36,53 @@ describe('the enzyme table', () => {
     for (const [key, e] of Object.entries(ENZYMES)) {
       assert.equal(e.name, key, `${key} name should match its key`);
       assert.match(e.pattern, /^[ACGTRYSWKMBDHVN]+$/, `${key} pattern must be IUPAC`);
-      assert.ok(e.cutBefore >= 0 && e.cutBefore <= e.pattern.length,
-        `${key} cuts at ${e.cutBefore}, outside its ${e.pattern.length} bp site`);
+      assert.ok(e.cutBefore >= 0, `${key} cuts at a negative offset`);
       assert.ok(['5prime', '3prime', 'blunt'].includes(e.overhangType),
         `${key} has an unknown overhang type`);
     }
   });
 
-  test('blunt cutters have no overhang, sticky ones do', () => {
+  test('only Type IIS enzymes cut outside their recognition site', () => {
+    // The distinguishing property: BsaI recognises GGTCTC and cuts one base
+    // past it, which is why Golden Gate can choose its own overhangs.
+    for (const [key, e] of Object.entries(ENZYMES)) {
+      if (e.cutBefore > e.pattern.length) {
+        assert.equal(e.typeIIS, true, `${key} cuts outside its site but is not marked Type IIS`);
+      }
+    }
+  });
+
+  test('the Golden Gate workhorses are present and cut outside their sites', () => {
+    // The cloning wizard offers Golden Gate. It cannot work without these.
+    for (const name of ['BsaI', 'BsmBI', 'BbsI', 'SapI']) {
+      const e = ENZYMES[name];
+      assert.ok(e, `${name} should be in the table`);
+      assert.equal(e.typeIIS, true, `${name} should be Type IIS`);
+      assert.ok(e.cutBefore > e.pattern.length, `${name} should cut past its site`);
+      assert.equal(e.overhangType, '5prime', `${name} should leave a 5' overhang`);
+    }
+    // BsaI: GGTCTC(1/5) -- 1 past on top, 5 on the bottom, a 4 nt overhang.
+    assert.equal(ENZYMES.BsaI.pattern, 'GGTCTC');
+    assert.equal(ENZYMES.BsaI.cutBefore, 7);
+    assert.equal(ENZYMES.BsaI.overhangLength, 4);
+  });
+
+  test('blunt cutters leave nothing, sticky ones leave a measurable overhang', () => {
     for (const [key, e] of Object.entries(ENZYMES)) {
       if (e.overhangType === 'blunt') {
         assert.equal(e.overhang, '', `${key} is blunt so should have no overhang`);
+        assert.equal(e.overhangLength ?? 0, 0, `${key} is blunt so its overhang is 0 long`);
       } else {
-        assert.ok(e.overhang.length > 0, `${key} is sticky so should have an overhang`);
+        assert.ok((e.overhangLength ?? 0) > 0, `${key} is sticky so should have a length`);
+        // A fixed overhang sequence is only knowable when the site is
+        // unambiguous. A Type IIS enzyme cuts past its site, and a degenerate
+        // site such as AccB1I's G^GYRCC leaves whichever bases the target has --
+        // in both cases only the length is a property of the enzyme.
+        const unambiguous = /^[ACGT]+$/.test(e.pattern);
+        if (!e.typeIIS && unambiguous) {
+          assert.ok(e.overhang.length > 0, `${key} has a fixed site so should have a sequence`);
+          assert.equal(e.overhang.length, e.overhangLength, `${key} overhang length disagrees`);
+        }
       }
     }
   });
@@ -60,12 +94,24 @@ describe('the enzyme table', () => {
     }
   });
 
-  test('recognition sites that should be palindromic are', () => {
-    for (const [key, e] of Object.entries(ENZYMES)) {
-      if (!/^[ACGT]+$/.test(e.pattern)) continue; // skip degenerate sites
-      if (e.pattern.length % 2 !== 0) continue;   // odd sites cannot be palindromes
+  test('the classic cloning enzymes recognise palindromes', () => {
+    // A homodimeric enzyme cutting a palindrome is the classic Type II case,
+    // and it is what makes the cut position mirror on the two strands. Type IIS
+    // enzymes are deliberately asymmetric, so they are not held to it.
+    for (const name of ['EcoRI', 'BamHI', 'HindIII', 'NotI', 'XhoI', 'SalI', 'PstI', 'SmaI', 'KpnI', 'SacI']) {
+      const e = ENZYMES[name];
+      if (!e) continue;
       assert.equal(reverseComplement(e.pattern), e.pattern,
-        `${key} (${e.pattern}) is expected to be palindromic`);
+        `${name} (${e.pattern}) should be palindromic`);
+    }
+  });
+
+  test('a palindromic cutter cuts at mirrored positions on the two strands', () => {
+    for (const [key, e] of Object.entries(ENZYMES)) {
+      if (e.typeIIS || !/^[ACGT]+$/.test(e.pattern)) continue;
+      if (reverseComplement(e.pattern) !== e.pattern) continue;
+      assert.equal(e.cutBottom, e.pattern.length - e.cutBefore,
+        `${key} bottom-strand cut is not the mirror of the top`);
     }
   });
 });
