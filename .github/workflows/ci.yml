@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The test runner uses node:test with native TypeScript type
+          # stripping, so there is no test framework or transpiler to install.
+          # Both need Node 22.18 or newer.
+          node-version: '22.18'
+          cache: npm
+
+      # postinstall runs prisma generate, which needs the schema to be valid.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # Building is not the same as working: a Prisma client generated for the
+      # wrong platform still compiles, and every affected page quietly falls
+      # back to dynamic rendering while the build reports success. So the build
+      # runs against a real database rather than on its own.
+      - name: Prepare a database for the build
+        run: npx prisma db push --skip-generate
+        env:
+          DATABASE_URL: file:./ci.db
+
+      - name: Build
+        run: npm run build
+        env:
+          DATABASE_URL: file:./ci.db
+          SESSION_SECRET: ci-placeholder-not-a-real-secret
