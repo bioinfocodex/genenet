@@ -1,8 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 import { describeDatabaseLocationRisk } from '@/lib/db-location';
+import { auditExtension } from '@/lib/audit';
 
 const globalForPrisma = global as unknown as {
-  prisma: PrismaClient;
+  prisma: ReturnType<typeof build>;
+  prismaBase: PrismaClient;
   genenetLocationWarned: boolean;
 };
 
@@ -17,8 +19,34 @@ if (!globalForPrisma.genenetLocationWarned) {
   globalForPrisma.genenetLocationWarned = true;
 }
 
-export const prisma =
-  globalForPrisma.prisma ||
-  new PrismaClient();
+/**
+ * Who is making this change, for the audit trail.
+ *
+ * Imported lazily because auth-guard imports this module: taking the dependency
+ * at call time rather than load time keeps the cycle from biting. Anything that
+ * writes outside a request -- the backup scheduler, a seed script -- has no
+ * session, and is recorded with a null actor rather than being refused.
+ */
+async function resolveActor(): Promise<{ id: string | null; email: string | null }> {
+  try {
+    const { getCurrentUser } = await import('@/lib/auth-guard');
+    const user = await getCurrentUser();
+    return { id: user?.id ?? null, email: user?.email ?? null };
+  } catch {
+    return { id: null, email: null };
+  }
+}
+
+function build() {
+  const base = globalForPrisma.prismaBase ?? new PrismaClient();
+  globalForPrisma.prismaBase = base;
+  return auditExtension(base, resolveActor);
+}
+
+/**
+ * The audited client. Everything in the application imports this, so every
+ * write is recorded without the caller doing anything.
+ */
+export const prisma = globalForPrisma.prisma ?? build();
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;

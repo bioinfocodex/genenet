@@ -1,4 +1,5 @@
 import 'server-only';
+import { cache } from 'react';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
@@ -18,8 +19,15 @@ import { getSession } from '@/lib/session';
 
 export type CurrentUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>;
 
-/** The signed-in, still-active user -- or null. Never throws. */
-export async function getCurrentUser() {
+/**
+ * The signed-in, still-active user -- or null. Never throws.
+ *
+ * Memoised for the lifetime of one request with React's cache(). Every guarded
+ * action already calls this once; the audit trail now calls it again on every
+ * mutation, and without memoisation that would be a session verify plus a user
+ * lookup per write.
+ */
+export const getCurrentUser = cache(async function getCurrentUser() {
   const session = await getSession();
   if (!session?.userId) return null;
 
@@ -35,7 +43,7 @@ export async function getCurrentUser() {
   if (user.status !== 'ACTIVE') return null;
 
   return user;
-}
+});
 
 /** For server actions: the active user, or an exception that aborts the action. */
 export async function requireUser() {

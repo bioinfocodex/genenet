@@ -291,6 +291,41 @@ model Experiment {
   userId String
 }
 
+/// Tamper-evident record of every change to workspace data.
+///
+/// Activity, below, is the human-readable feed shown in the UI: free text like
+/// "created procedure". It cannot answer what a field held before an edit, who
+/// changed it, or that a record was deleted at all, which is what an audit
+/// trail has to do -- and what 21 CFR Part 11 asks for when it says a
+/// computer-generated, time-stamped record of creation, modification and
+/// deletion. The two are kept apart because they serve different readers.
+///
+/// Written by the Prisma extension in src/lib/audit.ts rather than by callers,
+/// so coverage cannot drift as new actions are added.
+model AuditLog {
+  id       String   @id @default(cuid())
+  at       DateTime @default(now())
+
+  action   String   // create | update | delete
+  model    String   // Task, Sample, Procedure, ...
+  recordId String?  // null for bulk operations
+  rows     Int      @default(1) // >1 for updateMany / deleteMany
+
+  /// No relation to User on purpose. A foreign key would let deleting a person
+  /// cascade away the evidence of what they did, and the email is denormalised
+  /// so the trail still names them after their account is gone.
+  actorId    String?
+  actorEmail String?
+
+  /// JSON. Null on create (nothing before) and on delete (nothing after).
+  before String?
+  after  String?
+
+  @@index([at])
+  @@index([model, recordId])
+  @@index([actorId])
+}
+
 model Activity {
   id        String   @id @default(cuid())
   action    String

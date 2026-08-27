@@ -114,6 +114,9 @@ const EXPORTED_MODELS = [
   'simulation', 'protein', 'collection', 'collectionItem', 'freezer', 'sample',
   'gelSimulation', 'gelImage', 'bioreactorRun', 'bioreactorReading', 'activity',
   'invite',
+  // The audit trail is part of the record, not metadata about it: it is the
+  // evidence of who changed what, which is the first thing a reviewer asks for.
+  'auditLog',
 ] as const;
 
 export interface WorkspaceExport {
@@ -157,7 +160,9 @@ export async function exportWorkspace(): Promise<WorkspaceExport> {
     application: 'GeneNet',
     note:
       'Complete workspace export. One key per record type, each an array of rows, ' +
-      'with the field names used by the application. Password hashes are omitted. ' +
+      'with the field names used by the application. auditLog is the record of ' +
+      'every change: who, when, and the values before and after. ' +
+      'Password hashes are omitted. ' +
       'Uploaded files (gel images and sequence attachments) are not inside this ' +
       'file; they live in the uploads folder of the configured storage location.',
     counts,
