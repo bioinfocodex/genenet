@@ -168,19 +168,17 @@ export default async function SettingsPage() {
         </div>
       )}
 
-      {/* About. The AGPL asks that people using this over a network be told
-          where the source is; this is that notice. */}
+      {/* About: the licence and where the source lives. */}
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Scale size={18} /> About GeneNet
         </h2>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 0.6rem', lineHeight: 1.55 }}>
           Free software under the{' '}
-          <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)' }}>
-            GNU Affero General Public License v3
-          </a>. You may run, study, change and share it. If you offer a changed
-          version to other people over a network, you must offer them your
-          changes too.
+          <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)' }}>
+            MIT License
+          </a>. Use it, change it and share it however you like — the only
+          condition is that the copyright notice travels with it.
         </p>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
           Source:{' '}

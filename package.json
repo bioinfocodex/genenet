@@ -2,7 +2,7 @@
   "name": "lab-network",
   "version": "0.1.0",
   "description": "Self-hosted lab information system: samples, sequences, protocols and an audit trail, over a SQLite file you own.",
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bioinfocodex/genenet.git"

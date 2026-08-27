@@ -98,13 +98,8 @@ explain *why*, not *what*.
 
 ## Licence
 
-[AGPL-3.0](LICENSE). You may run, study, modify and share it freely.
+[MIT](LICENSE). Use it, change it, ship it, sell it — commercially or not.
+The only condition is that the copyright notice travels with it.
 
-The one condition worth understanding: if you offer a modified GeneNet to
-others over a network, you must offer them your modifications too. Running it
-for your own lab — modified or not — triggers nothing. This is deliberate. It
-keeps a hosted fork from becoming the version everyone uses while the shared
-one withers.
-
-GeneNet is free, and funded by support and hosting for labs that want it rather
-than by charging per seat.
+GeneNet is free, and funded by support and hosting for labs that want it
+rather than by charging per seat.
