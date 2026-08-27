@@ -19,7 +19,9 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
         geneSequence: { select: { id: true, name: true } },
         steps: { orderBy: { stepNumber: 'asc' } },
         comments: { orderBy: { createdAt: 'asc' }, include: { author: { select: { name: true } } } },
-        gelImages: { orderBy: { capturedAt: 'desc' } },
+        // task is selected because the panel shows which task an image belongs to;
+        // without it every image on this page reads as "Unassigned".
+        gelImages: { orderBy: { capturedAt: 'desc' }, include: { task: { select: { id: true, title: true } } } },
         samples: { select: { id: true, sampleId: true, name: true } },
         parentTask: { select: { id: true, title: true, attemptNumber: true, success: true } },
         childTasks: { select: { id: true, title: true, attemptNumber: true, status: true }, orderBy: { attemptNumber: 'asc' } },
@@ -49,7 +51,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
         {task.attemptNumber > 1 && <span style={{ color: 'var(--accent-orange)' }}>(Attempt #{task.attemptNumber})</span>}
       </div>
 
-      <TaskExecutionPanel task={task as any} allTasks={allTasks} freezers={freezers} />
+      <TaskExecutionPanel task={task} allTasks={allTasks} freezers={freezers} />
     </div>
   );
 }

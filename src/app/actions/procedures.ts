@@ -19,12 +19,34 @@ function bumpVersion(v: string): string {
 
 // ─── Create ──────────────────────────────────────────────────────────────────
 
+/**
+ * The shape ProcedureEditor posts, mirrored here so the nested creates below
+ * are not written against `any`.
+ *
+ * This is a description of the contract, not a check on it: the value arrives
+ * as JSON from a browser, and JSON.parse validates nothing. It is asserted
+ * rather than proven, and a malformed post still throws at the point of use.
+ */
+interface ProcedurePayload {
+  name: string;
+  description?: string;
+  category: string;
+  status: string;
+  safetyNotes?: string;
+  reviewer?: string;
+  contributors?: string;
+  changeLog?: string;
+  steps: { title: string; description: string }[];
+  materials: { name: string; quantity: string; unit: string }[];
+  equipment: { name: string }[];
+}
+
 export async function createProcedure(formData: FormData) {
   const user = await getMockUser();
   if (!user) throw new Error('Not authenticated');
 
   const raw = formData.get('data') as string;
-  const data = JSON.parse(raw);
+  const data = JSON.parse(raw) as ProcedurePayload;
 
   const procedureId = await nextProcedureId();
 
@@ -40,21 +62,21 @@ export async function createProcedure(formData: FormData) {
       contributors: data.contributors || null,
       authorId: user.id,
       steps: {
-        create: data.steps.map((s: any, i: number) => ({
+        create: data.steps.map((s, i) => ({
           stepNumber: i + 1,
           title: s.title,
           description: s.description,
         })),
       },
       materials: {
-        create: data.materials.map((m: any) => ({
+        create: data.materials.map((m) => ({
           materialName: m.name,
           quantity: m.quantity || null,
           unit: m.unit || null,
         })),
       },
       equipment: {
-        create: data.equipment.map((e: any) => ({
+        create: data.equipment.map((e) => ({
           equipmentName: e.name,
         })),
       },
@@ -86,7 +108,7 @@ export async function updateProcedure(formData: FormData) {
 
   const id = formData.get('id') as string;
   const raw = formData.get('data') as string;
-  const data = JSON.parse(raw);
+  const data = JSON.parse(raw) as ProcedurePayload;
 
   const existing = await prisma.procedure.findUnique({ where: { id } });
   if (!existing) throw new Error('Procedure not found');
@@ -110,21 +132,21 @@ export async function updateProcedure(formData: FormData) {
       contributors: data.contributors || null,
       version: newVersion,
       steps: {
-        create: data.steps.map((s: any, i: number) => ({
+        create: data.steps.map((s, i) => ({
           stepNumber: i + 1,
           title: s.title,
           description: s.description,
         })),
       },
       materials: {
-        create: data.materials.map((m: any) => ({
+        create: data.materials.map((m) => ({
           materialName: m.name,
           quantity: m.quantity || null,
           unit: m.unit || null,
         })),
       },
       equipment: {
-        create: data.equipment.map((e: any) => ({
+        create: data.equipment.map((e) => ({
           equipmentName: e.name,
         })),
       },

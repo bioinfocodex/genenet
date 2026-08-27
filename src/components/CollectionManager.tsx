@@ -180,7 +180,7 @@ function CollectionCard({ col, expanded, onToggle, sequences, proteins, onAdd, o
         <div style={{ borderTop: '1px solid var(--glass-border)', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {/* Add item */}
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <select value={addType} onChange={e => { setAddType(e.target.value as any); setAddId(''); }} className="input-control" style={{ padding: '0.4rem 0.6rem', fontSize: '0.82rem' }}>
+            <select value={addType} onChange={e => { setAddType(e.target.value as 'sequence' | 'protein'); setAddId(''); }} className="input-control" style={{ padding: '0.4rem 0.6rem', fontSize: '0.82rem' }}>
               <option value="sequence">Sequence</option>
               <option value="protein">Protein</option>
             </select>

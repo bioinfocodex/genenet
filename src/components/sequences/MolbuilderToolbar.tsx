@@ -18,7 +18,7 @@ interface MolbuilderToolbarProps {
     primer: boolean;
     orf: boolean;
   };
-  setLayers: (layers: any) => void;
+  setLayers: (layers: MolbuilderToolbarProps['layers']) => void;
   frames: Set<number>;
   setFrames: (frames: Set<number>) => void;
   viewMode: 'wrap' | 'linear';

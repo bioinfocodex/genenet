@@ -10,9 +10,15 @@ import {
   Dna
 } from 'lucide-react';
 
+/** The toggles this panel owns, handed to the caller with each search. */
+interface FindOptions {
+  matchCase: boolean;
+  matchType: 'dna' | 'aa';
+}
+
 interface MolbuilderFindReplaceProps {
-  onFind: (query: string, options: any) => void;
-  onReplace: (query: string, replace: string, options: any) => void;
+  onFind: (query: string, options: FindOptions) => void;
+  onReplace: (query: string, replace: string, options: FindOptions) => void;
   onClose: () => void;
   currentMatch?: number;
   totalMatches?: number;

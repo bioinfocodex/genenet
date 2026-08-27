@@ -13,7 +13,7 @@ export default function TaskCreateForm({ projectId, users, procedures }: { proje
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    startTransition(() => { createTask(undefined as any, fd); });
+    startTransition(() => { createTask(undefined, fd); });
   };
 
   return (

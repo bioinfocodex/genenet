@@ -20,7 +20,7 @@ export async function createExperiment(data: FormData) {
     const totalBp = parseInt(data.get('totalBp') as string || '0');
     const plasmidName = data.get('plasmidName') as string || 'Vector';
     const cutsRaw = data.get('cuts') as string;
-    let cuts: any[] = [];
+    let cuts: { enzyme: string; position: number }[] = [];
     
     if (cutsRaw) {
        cuts = cutsRaw.split(',').map(c => {

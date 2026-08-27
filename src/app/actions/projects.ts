@@ -7,7 +7,14 @@ import { initReport } from './reports';
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
 
-export async function createProject(_prev: any, formData: FormData) {
+/**
+ * What useActionState passes back on the next submit: whatever the action
+ * returned last time, or undefined on the first render. Naming it means the
+ * form and the action cannot drift apart silently.
+ */
+export type ActionState = { error: string } | undefined;
+
+export async function createProject(_prev: ActionState, formData: FormData) {
   const user = await getMockUser();
   if (!user) return { error: 'Not authenticated' };
 
@@ -36,7 +43,7 @@ export async function updateProjectStatus(formData: FormData) {
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 
-export async function createTask(_prev: any, formData: FormData) {
+export async function createTask(_prev: ActionState, formData: FormData) {
   const user = await getMockUser();
   if (!user) return { error: 'Not authenticated' };
 

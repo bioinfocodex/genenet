@@ -25,7 +25,7 @@ export default async function CollectionsPage() {
       </div>
 
       <CollectionManager
-        collections={collections as any}
+        collections={collections}
         sequences={sequences}
         proteins={proteins}
       />

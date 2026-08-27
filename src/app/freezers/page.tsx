@@ -31,7 +31,7 @@ export default async function FreezersPage() {
         </div>
       </div>
 
-      <FreezerViewer freezers={freezers as any} />
+      <FreezerViewer freezers={freezers} />
     </div>
   );
 }

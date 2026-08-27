@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     include: {
       project: { include: { tasks: { include: { steps: true, procedure: true } } } },
       createdBy: true,
-      sections:  { orderBy: [{ order: 'asc' } as any, { sectionKey: 'asc' }] },
+      sections:  { orderBy: [{ order: 'asc' }, { sectionKey: 'asc' }] },
       figures:   { orderBy: { order: 'asc' } },
       tables:    { orderBy: { order: 'asc' } },
       taskLinks: { include: { task: { include: { steps: true, procedure: true } } } },
@@ -27,7 +27,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const sectionMap = Object.fromEntries(report.sections.map(s => [s.sectionKey, s.content]));
 
-  const children: any[] = [];
+  // What docx accepts as a section body, and what this route actually builds.
+  const children: (Paragraph | Table)[] = [];
 
   // ── Title Page ────────────────────────────────────────────────────────────
   children.push(

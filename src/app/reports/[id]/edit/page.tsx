@@ -17,7 +17,7 @@ export default async function ReportEditPage({ params }: { params: Promise<{ id:
         },
       },
       createdBy: true,
-      sections:  { orderBy: [{ order: 'asc' } as any, { sectionKey: 'asc' }] },
+      sections:  { orderBy: [{ order: 'asc' }, { sectionKey: 'asc' }] },
       figures:   { orderBy: { order: 'asc' } },
       tables:    { orderBy: { order: 'asc' } },
       taskLinks: { include: { task: { include: { steps: true } } } },
@@ -44,7 +44,7 @@ export default async function ReportEditPage({ params }: { params: Promise<{ id:
         </Link>
       </div>
 
-      <ReportEditor report={report as any} />
+      <ReportEditor report={report} />
     </div>
   );
 }

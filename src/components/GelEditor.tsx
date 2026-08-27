@@ -97,15 +97,16 @@ export default function GelEditor({ gel: initGel }: { gel: GelData }) {
             <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Gel Name</label>
             <input value={name} onChange={e => setName(e.target.value)} className="input-control" style={{ padding: '0.5rem 0.75rem', fontSize: '0.88rem', width: '100%' }} />
           </div>
-          {[
+          {([
             { label: 'Agarose (%)', value: concentration, set: setConcentration, min: 0.5, max: 3, step: 0.1 },
             { label: 'Voltage (V)', value: voltage, set: setVoltage, min: 50, max: 200, step: 10 },
             { label: 'Run Time (min)', value: runTime, set: setRunTime, min: 10, max: 120, step: 5 },
-          ].map(({ label, value, set, min, max, step }) => (
+          ] as { label: string; value: number; set: (n: number) => void; min: number; max: number; step: number }[]
+          ).map(({ label, value, set, min, max, step }) => (
             <div key={label} style={{ minWidth: 130 }}>
               <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>{label}</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <input type="range" min={min} max={max} step={step} value={value} onChange={e => set(parseFloat(e.target.value) as any)} style={{ flex: 1 }} />
+                <input type="range" min={min} max={max} step={step} value={value} onChange={e => set(parseFloat(e.target.value))} style={{ flex: 1 }} />
                 <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', minWidth: 36 }}>{value}</span>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import type { SequenceFeature } from '../SequenceViewer';
 import type { ReSite } from './LinearMap'; // reused type
 
@@ -12,6 +12,14 @@ interface CircularMapProps {
   name?: string;
   onAddFeature?: (sel: { start: number; end: number }) => void;
 }
+
+// Fixed layout. Outside the component because none of it varies per render.
+const SVG = 800;
+const CX = SVG / 2, CY = SVG / 2;
+const R_OUT = 220;
+const R_IN = 210;
+const R_BB = (R_OUT + R_IN) / 2;
+const TRACK_W = 18;
 
 export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature }: CircularMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -40,21 +48,12 @@ export default function CircularMap({ sequence, features, reSites, selection, on
   const fwdTracks = assignTracks(features, 1);
   const revTracks = assignTracks(features, -1);
 
-  // Layout constants
-  const SVG = 800;
-  const CX = SVG / 2, CY = SVG / 2;
-
-  // Calculate backbone radius based on tracks
-  const R_OUT = 220;
-  const R_IN = 210;
-  const R_BB = (R_OUT + R_IN) / 2;
-  const TRACK_W = 18;
-
-  // GC Content Plot
+  // Depends on how many reverse tracks were needed, so it stays in the body.
   const R_GC_OUT = R_IN - (revTracks.numTracks * TRACK_W) - 15;
   const R_GC_IN = R_GC_OUT - 40;
 
-  const toAngle = (pos: number) => (pos / len) * 2 * Math.PI - Math.PI / 2;
+  // Stable for a given sequence length, so the GC memo can depend on it.
+  const toAngle = useCallback((pos: number) => (pos / len) * 2 * Math.PI - Math.PI / 2, [len]);
 
   function featureArcPath(featStart: number, featEnd: number, trackIdx: number, strand: 1 | -1): string {
     const adjustedEnd = featEnd < featStart ? featEnd + len : featEnd;
@@ -140,7 +139,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
       return `${CX + Math.min(R_GC_OUT, Math.max(R_GC_IN, r)) * Math.cos(angle)},${CY + Math.min(R_GC_OUT, Math.max(R_GC_IN, r)) * Math.sin(angle)}`;
     });
     return `M${pts.join(' L')} Z`;
-  }, [gcData, R_GC_OUT, R_GC_IN]);
+  }, [gcData, R_GC_OUT, R_GC_IN, toAngle]);
   
   const gcBaselineRadius = (R_GC_OUT + R_GC_IN) / 2;
 

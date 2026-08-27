@@ -12,11 +12,12 @@ import {
 // molecular-weight helper were imported but never used. estimateProteinMW does
 // not exist in molbuilder-logic at all, which broke the build.
 import { wallaceTm } from '@/lib/molbuilder-logic';
+import type { SequenceFeature } from '@/components/SequenceViewer';
 
 interface MolbuilderStatsProps {
   seq: string;
   selection?: { start: number; end: number } | null;
-  features: any[];
+  features: SequenceFeature[];
   onClose: () => void;
 }
 

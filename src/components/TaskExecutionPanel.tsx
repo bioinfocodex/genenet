@@ -324,13 +324,13 @@ export default function TaskExecutionPanel({ task, allTasks, freezers }: { task:
           <div>
             <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.5rem' }}>Experiment Outcome</label>
             <div style={{ display: 'flex', gap: '0.75rem' }}>
-              {[
+              {([
                 { val: 'true',  label: '✓ Successful', accent: 'var(--accent-green)', bg: 'rgba(16,185,129,0.08)' },
                 { val: 'false', label: '✗ Failed',      accent: 'var(--accent-red)',   bg: 'rgba(239,68,68,0.08)' },
                 { val: '',      label: '— Pending',     accent: 'var(--text-muted)',   bg: 'var(--bg-primary)' },
-              ].map(opt => (
+              ] as const).map(opt => (
                 <label key={opt.val} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', padding: '0.6rem 1rem', borderRadius: 8, border: `2px solid ${success === opt.val ? opt.accent : 'var(--glass-border)'}`, background: success === opt.val ? opt.bg : 'transparent', color: success === opt.val ? opt.accent : 'var(--text-secondary)', fontWeight: success === opt.val ? 600 : 400, fontSize: '0.85rem', transition: 'all 0.15s' }}>
-                  <input type="radio" name="success" value={opt.val} checked={success === opt.val} onChange={() => setSuccess(opt.val as any)} style={{ display: 'none' }} />
+                  <input type="radio" name="success" value={opt.val} checked={success === opt.val} onChange={() => setSuccess(opt.val)} style={{ display: 'none' }} />
                   {opt.label}
                 </label>
               ))}
@@ -403,7 +403,7 @@ export default function TaskExecutionPanel({ task, allTasks, freezers }: { task:
 
       {/* ── Gel Images ───────────────────────────────────────────────────────── */}
       {tab === 'gels' && (
-        <GelImportPanel images={task.gelImages as any} tasks={allTasks} taskId={task.id} />
+        <GelImportPanel images={task.gelImages} tasks={allTasks} taskId={task.id} />
       )}
 
       {/* ── Comments ─────────────────────────────────────────────────────────── */}

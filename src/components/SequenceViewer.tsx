@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useMemo, useTransition, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
@@ -133,6 +134,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, initialFeatures, initialPrimers = [] }: Props) {
+  const router = useRouter();
   const [leftTab, setLeftTab] = useState<LeftTab>('map');
   const [features, setFeatures] = useState<SequenceFeature[]>(initialFeatures);
   const [primers, setPrimers] = useState<SavedPrimer[]>(initialPrimers);
@@ -410,7 +412,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
   const addLibraryFeature = (item: typeof LIBRARY_FEATURES[0]) => {
     const feat: SequenceFeature = {
-      id: `lib-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: `lib-${crypto.randomUUID()}`,
       name: item.name, start: 1, end: Math.min(500, size),
       type: item.type, color: item.color, strand: 1,
     };
@@ -478,8 +480,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   // Menu bar items
   const menuItems: Record<string, { label: string; action: () => void; divider?: boolean }[]> = {
     File: [
-      { label: 'New Sequence', action: () => { window.location.href = '/sequences/new'; } },
-      { label: 'Open Library', action: () => { window.location.href = '/sequences'; } },
+      { label: 'New Sequence', action: () => router.push('/sequences/new') },
+      { label: 'Open Library', action: () => router.push('/sequences') },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Export FASTA', action: exportFasta },
       { label: 'Export GenBank', action: exportGenBank },

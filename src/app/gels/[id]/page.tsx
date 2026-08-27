@@ -18,7 +18,7 @@ export default async function GelDetailPage({ params }: { params: Promise<{ id: 
         <ChevronRight size={13} />
         <span>{gel.name}</span>
       </div>
-      <GelEditor gel={gel as any} />
+      <GelEditor gel={gel} />
     </div>
   );
 }

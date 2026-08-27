@@ -26,6 +26,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # --max-warnings is deliberately not set to 0. Fifty-four warnings remain,
+      # mostly unused variables, and failing on those would mean either fixing
+      # every one now or switching the rules off -- and a rule that is off
+      # catches nothing later. Errors block, and there are none: all 52 that
+      # existed when this step was added were fixed rather than downgraded.
+      - name: Lint
+        run: npm run lint
+
       - name: Tests
         run: npm test
 

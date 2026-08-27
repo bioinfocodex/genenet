@@ -12,13 +12,33 @@ import {
   translateSeq,
   getAAStyle
 } from '@/lib/molbuilder-logic';
+// Type-only: erased at compile time, so this does not create a runtime cycle
+// back into SequenceViewer, which renders this component.
+import type { SequenceFeature, SavedPrimer } from '@/components/SequenceViewer';
+
+/**
+ * A primer this component can actually draw.
+ *
+ * SavedPrimer carries no coordinates -- it is a name, a sequence, a Tm and a
+ * GC figure -- so where it sits on the template is not known here. The layer
+ * below reads start and end, which means with a plain SavedPrimer it filters
+ * on undefined and draws nothing at all. That was previously hidden behind
+ * `any[]`; the optional fields make it visible, and the guard makes the
+ * nothing deliberate rather than accidental.
+ *
+ * To make the primer layer work, coordinates have to be recorded when a
+ * primer is designed, or resolved by locating its sequence on the template.
+ */
+type DrawablePrimer = SavedPrimer & { start?: number; end?: number };
+import type { ReSite } from '@/components/sequences/LinearMap';
+import type { ORF } from '@/lib/simulation';
 
 interface MolbuilderRendererProps {
   sequence: string;
-  features: any[];
-  enzymes?: any[];
-  primers?: any[];
-  orfs?: any[];
+  features: SequenceFeature[];
+  enzymes?: ReSite[];
+  primers?: DrawablePrimer[];
+  orfs?: ORF[];
   lineLen: number;
   layers: {
     feat: boolean;
@@ -29,7 +49,7 @@ interface MolbuilderRendererProps {
   frames: Set<number>;
   selection?: { start: number; end: number } | null;
   onSelect: (sel: { start: number; end: number } | null) => void;
-  onFeatureClick?: (feat: any) => void;
+  onFeatureClick?: (feat: SequenceFeature) => void;
 }
 
 export default function MolbuilderRenderer({
@@ -97,12 +117,12 @@ export default function MolbuilderRenderer({
     );
 
     // 2. Layer: Primers (1-indexed start/end)
-    const activePrimesFwd = layers.primer ? primers.filter(p => p.direction === 'forward' && p.start <= iEnd1 && p.end >= i1) : [];
+    const activePrimesFwd = layers.primer ? primers.filter(p => p.direction === 'forward' && p.start !== undefined && p.end !== undefined && p.start <= iEnd1 && p.end >= i1) : [];
     const primerFwdRow = activePrimesFwd.length > 0 && (
       <div key={`prim-fwd-${i}`} style={{ height: '14px', position: 'relative', borderLeft: '60px solid transparent', marginBottom: '2px', fontFamily: 'var(--font-mono)' }}>
         {activePrimesFwd.map((p, idx) => {
-          const start = Math.max(0, p.start - i1);
-          const end = Math.min(chunkLen, p.end - i);
+          const start = Math.max(0, p.start! - i1);
+          const end = Math.min(chunkLen, p.end! - i);
           const width = end - start;
           return (
             <div key={`${p.id}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${width}ch`, height: '6px', background: '#ec4899', borderRadius: '0 3px 3px 0', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: '8px', color: 'white', paddingRight: '2px' }}>
@@ -293,12 +313,12 @@ export default function MolbuilderRenderer({
     );
 
     // 7c. Primers (Reverse: 1-indexed)
-    const activePrimesRev = layers.primer ? primers.filter(p => p.direction === 'reverse' && p.start <= iEnd1 && p.end >= i1) : [];
+    const activePrimesRev = layers.primer ? primers.filter(p => p.direction === 'reverse' && p.start !== undefined && p.end !== undefined && p.start <= iEnd1 && p.end >= i1) : [];
     const primerRevRow = activePrimesRev.length > 0 && (
       <div key={`prim-rev-${i}`} style={{ height: '14px', position: 'relative', borderLeft: '60px solid transparent', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
         {activePrimesRev.map((p, idx) => {
-          const start = Math.max(0, p.start - i1);
-          const end = Math.min(chunkLen, p.end - i);
+          const start = Math.max(0, p.start! - i1);
+          const end = Math.min(chunkLen, p.end! - i);
           const width = end - start;
           return (
             <div key={`${p.id}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${width}ch`, height: '6px', background: '#db2777', borderRadius: '3px 0 0 3px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', fontSize: '8px', color: 'white', paddingLeft: '2px' }}>

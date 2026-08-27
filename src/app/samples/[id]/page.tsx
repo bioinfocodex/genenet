@@ -38,7 +38,7 @@ export default async function SampleDetailPage({ params }: { params: Promise<{ i
         <ChevronRight size={13} />
         <span style={{ fontFamily: 'monospace', color: TYPE_COLOR[sample.type] ?? 'var(--text-primary)' }}>{sample.sampleId}</span>
       </div>
-      <SampleDetailClient sample={sample as any} freezers={freezers} sequences={sequences} />
+      <SampleDetailClient sample={sample} freezers={freezers} sequences={sequences} />
     </div>
   );
 }

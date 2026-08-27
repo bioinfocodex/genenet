@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 interface Reading {
   elapsedHrs: number;
@@ -24,6 +24,12 @@ interface Props {
   readings: Reading[];
 }
 
+// Fixed chart geometry. Outside the component because it never varies.
+const W = 700, H = 260;
+const PAD = { l: 50, r: 20, t: 20, b: 40 };
+const plotW = W - PAD.l - PAD.r;
+const plotH = H - PAD.t - PAD.b;
+
 export default function BioreactorChart({ readings }: Props) {
   const [activeParams, setActiveParams] = useState<Set<Param>>(new Set(['ph', 'temperature', 'dissolvedO2']));
 
@@ -35,19 +41,15 @@ export default function BioreactorChart({ readings }: Props) {
     });
   };
 
-  const W = 700, H = 260;
-  const PAD = { l: 50, r: 20, t: 20, b: 40 };
-  const plotW = W - PAD.l - PAD.r;
-  const plotH = H - PAD.t - PAD.b;
+  const maxT = useMemo(() => Math.max(...readings.map(r => r.elapsedHrs), 1), [readings]);
 
-  const maxT = Math.max(...readings.map(r => r.elapsedHrs), 1);
-
-  const toX = (t: number) => PAD.l + (t / maxT) * plotW;
-  const toY = (val: number, range: [number, number]) => {
+  // Stable across renders, so the memo below can depend on them honestly.
+  const toX = useCallback((t: number) => PAD.l + (t / maxT) * plotW, [maxT]);
+  const toY = useCallback((val: number, range: [number, number]) => {
     const [lo, hi] = range;
     const clamped = Math.max(lo, Math.min(hi, val));
     return PAD.t + plotH - ((clamped - lo) / (hi - lo)) * plotH;
-  };
+  }, []);
 
   const lines = useMemo(() => {
     return (Object.keys(PARAM_CONFIG) as Param[])
@@ -62,7 +64,7 @@ export default function BioreactorChart({ readings }: Props) {
         return { p, cfg, d, pts };
       })
       .filter(Boolean);
-  }, [readings, activeParams]);
+  }, [readings, activeParams, toX, toY]);
 
   const xTicks = Array.from({ length: 6 }, (_, i) => (i / 5) * maxT);
 

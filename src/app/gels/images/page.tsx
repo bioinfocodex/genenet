@@ -26,7 +26,7 @@ export default async function GelImagesPage() {
           Import and manage gel documentation images. Attach images to tasks for structured experiment records.
         </p>
       </div>
-      <GelImportPanel images={images as any} tasks={tasks} />
+      <GelImportPanel images={images} tasks={tasks} />
     </div>
   );
 }

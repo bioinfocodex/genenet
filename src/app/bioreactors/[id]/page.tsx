@@ -23,7 +23,7 @@ export default async function BioreactorRunPage({ params }: { params: Promise<{ 
         <ChevronRight size={13} />
         <span>{run.name}</span>
       </div>
-      <BioreactorRunClient run={run as any} />
+      <BioreactorRunClient run={run} />
     </div>
   );
 }

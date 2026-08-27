@@ -34,7 +34,7 @@ export async function initReport(projectId: string): Promise<string> {
       title: project.name,
       projectId,
       createdById: user.id,
-      sections: { create: DEFAULT_SECTIONS.map((s, i) => ({ ...s, content: '', order: i } as any)) },
+      sections: { create: DEFAULT_SECTIONS.map((s, i) => ({ ...s, content: '', order: i })) },
     },
   });
   return report.id;

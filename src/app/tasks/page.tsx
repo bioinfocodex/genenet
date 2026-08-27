@@ -17,7 +17,7 @@ export default async function TasksPage() {
 
   return (
     <TaskBoard
-      tasks={tasks as any}
+      tasks={tasks}
       users={users}
       projects={projects}
       sequences={sequences}
