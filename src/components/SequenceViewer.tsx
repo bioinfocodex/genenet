@@ -12,6 +12,7 @@ import {
   type ORF, type PCRResult, type LigationResult,
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
+import { locatePrimers } from '@/lib/primers';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
@@ -271,6 +272,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   // ORFs count (lazy, for sidebar stats)
   const orfsCount = useMemo(() => findORFs(sequence, 100).length, [sequence]);
   const orfs = useMemo(() => findORFs(sequence, 100), [sequence]);
+
+  // Primers are stored without coordinates, so where they sit on this template
+  // has to be worked out before the map can draw them. A primer that does not
+  // anneal exactly -- a mutagenesis primer, or one for a different construct --
+  // comes back unlocated rather than being placed approximately.
+  const { located: locatedPrimers, unlocated: unlocatedPrimers } = useMemo(
+    () => locatePrimers(sequence, primers),
+    [sequence, primers],
+  );
+  const drawablePrimers = useMemo(
+    () => locatedPrimers.map(({ primer, site }) => ({ ...primer, start: site.start, end: site.end })),
+    [locatedPrimers],
+  );
 
   // Visible features (respects hiddenFeatures toggle)
   const visibleFeatures = useMemo(
@@ -750,13 +764,21 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   onClose={() => setShowMolFind(false)} 
                 />
               )}
+              {molLayers.primer && unlocatedPrimers.length > 0 && (
+                <div style={{ padding: '0.4rem 0.75rem', fontSize: '0.72rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', background: 'rgba(245,158,11,0.06)' }}>
+                  Not shown on the map: {unlocatedPrimers.map(p => p.name).join(', ')} &mdash;{' '}
+                  {unlocatedPrimers.length === 1 ? 'it does not' : 'they do not'} match this sequence exactly,
+                  so {unlocatedPrimers.length === 1 ? 'its position is' : 'their positions are'} not known.
+                  Mutagenesis primers and primers carrying a tail behave this way.
+                </div>
+              )}
               <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
                 <div style={{ flex: 1, overflowY: 'auto' }}>
                   <MolbuilderRenderer
                     sequence={sequence}
                     features={visibleFeatures}
                     enzymes={allReSites}
-                    primers={primers}
+                    primers={drawablePrimers}
                     orfs={orfs}
                     lineLen={molLineLen}
                     layers={molLayers}

@@ -1,5 +1,6 @@
 import { registerHooks } from 'node:module';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -47,5 +48,31 @@ registerHooks({
       }
     }
     return nextResolve(specifier, context);
+  },
+
+  /**
+   * Node strips TypeScript types natively but does not understand JSX, so a
+   * .tsx component cannot be imported the way a .ts module can. TypeScript's
+   * own transpiler handles it, and unlike esbuild or swc it is plain
+   * JavaScript -- which matters here, because the installed esbuild and swc
+   * binaries are x64 and this is an arm64 machine.
+   *
+   * Types are erased, not checked. `npm run typecheck` is what checks them.
+   */
+  load(url, context, nextLoad) {
+    if (url.startsWith('file:') && url.endsWith('.tsx')) {
+      const source = readFileSync(fileURLToPath(url), 'utf8');
+      const { outputText } = ts.transpileModule(source, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          jsx: ts.JsxEmit.ReactJSX,
+          esModuleInterop: true,
+        },
+        fileName: fileURLToPath(url),
+      });
+      return { format: 'module', shortCircuit: true, source: outputText };
+    }
+    return nextLoad(url, context);
   },
 });

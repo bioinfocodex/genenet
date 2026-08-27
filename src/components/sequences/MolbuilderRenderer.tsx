@@ -17,19 +17,14 @@ import {
 import type { SequenceFeature, SavedPrimer } from '@/components/SequenceViewer';
 
 /**
- * A primer this component can actually draw.
+ * A primer with its position on the template.
  *
- * SavedPrimer carries no coordinates -- it is a name, a sequence, a Tm and a
- * GC figure -- so where it sits on the template is not known here. The layer
- * below reads start and end, which means with a plain SavedPrimer it filters
- * on undefined and draws nothing at all. That was previously hidden behind
- * `any[]`; the optional fields make it visible, and the guard makes the
- * nothing deliberate rather than accidental.
- *
- * To make the primer layer work, coordinates have to be recorded when a
- * primer is designed, or resolved by locating its sequence on the template.
+ * SavedPrimer carries no coordinates -- a primer is an oligo, not a feature of
+ * any one sequence -- so the caller resolves where it anneals (see
+ * lib/primers.ts) and passes the result in. The same primer may appear more
+ * than once if it anneals in more than one place.
  */
-type DrawablePrimer = SavedPrimer & { start?: number; end?: number };
+export type DrawablePrimer = SavedPrimer & { start: number; end: number };
 import type { ReSite } from '@/components/sequences/LinearMap';
 import type { ORF } from '@/lib/simulation';
 
@@ -117,15 +112,15 @@ export default function MolbuilderRenderer({
     );
 
     // 2. Layer: Primers (1-indexed start/end)
-    const activePrimesFwd = layers.primer ? primers.filter(p => p.direction === 'forward' && p.start !== undefined && p.end !== undefined && p.start <= iEnd1 && p.end >= i1) : [];
+    const activePrimesFwd = layers.primer ? primers.filter(p => p.direction === 'forward' && p.start <= iEnd1 && p.end >= i1) : [];
     const primerFwdRow = activePrimesFwd.length > 0 && (
       <div key={`prim-fwd-${i}`} style={{ height: '14px', position: 'relative', borderLeft: '60px solid transparent', marginBottom: '2px', fontFamily: 'var(--font-mono)' }}>
         {activePrimesFwd.map((p, idx) => {
-          const start = Math.max(0, p.start! - i1);
-          const end = Math.min(chunkLen, p.end! - i);
+          const start = Math.max(0, p.start - i1);
+          const end = Math.min(chunkLen, p.end - i);
           const width = end - start;
           return (
-            <div key={`${p.id}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${width}ch`, height: '6px', background: '#ec4899', borderRadius: '0 3px 3px 0', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: '8px', color: 'white', paddingRight: '2px' }}>
+            <div key={`${p.id}-${idx}`} title={`${p.name} (${p.direction}, ${p.start}–${p.end})`} style={{ position: 'absolute', left: `${start}ch`, width: `${width}ch`, height: '6px', background: '#ec4899', borderRadius: '0 3px 3px 0', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: '8px', color: 'white', paddingRight: '2px' }}>
               ▶
             </div>
           );
@@ -313,15 +308,15 @@ export default function MolbuilderRenderer({
     );
 
     // 7c. Primers (Reverse: 1-indexed)
-    const activePrimesRev = layers.primer ? primers.filter(p => p.direction === 'reverse' && p.start !== undefined && p.end !== undefined && p.start <= iEnd1 && p.end >= i1) : [];
+    const activePrimesRev = layers.primer ? primers.filter(p => p.direction === 'reverse' && p.start <= iEnd1 && p.end >= i1) : [];
     const primerRevRow = activePrimesRev.length > 0 && (
       <div key={`prim-rev-${i}`} style={{ height: '14px', position: 'relative', borderLeft: '60px solid transparent', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
         {activePrimesRev.map((p, idx) => {
-          const start = Math.max(0, p.start! - i1);
-          const end = Math.min(chunkLen, p.end! - i);
+          const start = Math.max(0, p.start - i1);
+          const end = Math.min(chunkLen, p.end - i);
           const width = end - start;
           return (
-            <div key={`${p.id}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${width}ch`, height: '6px', background: '#db2777', borderRadius: '3px 0 0 3px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', fontSize: '8px', color: 'white', paddingLeft: '2px' }}>
+            <div key={`${p.id}-${idx}`} title={`${p.name} (${p.direction}, ${p.start}–${p.end})`} style={{ position: 'absolute', left: `${start}ch`, width: `${width}ch`, height: '6px', background: '#db2777', borderRadius: '3px 0 0 3px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', fontSize: '8px', color: 'white', paddingLeft: '2px' }}>
               ◀
             </div>
           );
