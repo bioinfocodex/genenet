@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronRight, Database, Dna } from 'lucide-react';
 import SequenceViewer, { type SequenceFeature } from '@/components/SequenceViewer';
+import { normaliseFeatures } from '@/lib/features';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,7 +77,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         sequence={seq.sequence}
         size={seq.size}
         seqType={seq.type}
-        initialFeatures={(() => { try { return JSON.parse(seq.features ?? '[]') as SequenceFeature[]; } catch { return []; } })()}
+        initialFeatures={normaliseFeatures(seq.features)}
         initialPrimers={seq.primers.map(p => ({
           id: p.id,
           name: p.name,

@@ -55,6 +55,19 @@ export default function CircularMap({ sequence, features, reSites, selection, on
   // Stable for a given sequence length, so the GC memo can depend on it.
   const toAngle = useCallback((pos: number) => (pos / len) * 2 * Math.PI - Math.PI / 2, [len]);
 
+  /** The line an intron is drawn as: a thin arc across the feature's whole span. */
+  function intronArcPath(featStart: number, featEnd: number, trackIdx: number, strand: 1 | -1): string {
+    const adjustedEnd = featEnd < featStart ? featEnd + len : featEnd;
+    const a1 = toAngle(featStart - 1);
+    const a2 = toAngle(adjustedEnd);
+    const rm = strand === 1
+      ? R_OUT + 5 + trackIdx * TRACK_W + (TRACK_W - 4) / 2
+      : R_IN - 5 - trackIdx * TRACK_W - (TRACK_W - 4) / 2;
+    const large = ((a2 - a1 + 2 * Math.PI) % (2 * Math.PI)) > Math.PI ? 1 : 0;
+    const p = (a: number) => `${CX + rm * Math.cos(a)},${CY + rm * Math.sin(a)}`;
+    return `M${p(a1)} A${rm},${rm} 0 ${large} 1 ${p(a2)}`;
+  }
+
   function featureArcPath(featStart: number, featEnd: number, trackIdx: number, strand: 1 | -1): string {
     const adjustedEnd = featEnd < featStart ? featEnd + len : featEnd;
     const frac = (adjustedEnd - featStart) / len;
@@ -267,7 +280,25 @@ export default function CircularMap({ sequence, features, reSites, selection, on
                style={{ cursor: 'pointer', transition: 'all 0.2s' }}
                filter={isHovered ? 'url(#shadow)' : 'none'}
              >
+               {feat.segments ? (
+                 <>
+                   {/* Introns first, so the exon blocks sit on top of the line. */}
+                   <path d={intronArcPath(feat.start, feat.end, trackIdx, feat.strand)} fill="none" stroke={feat.color} strokeWidth={1.25} opacity={0.65} />
+                   {feat.segments.map((seg, si) => (
+                     <path
+                       key={si}
+                       d={featureArcPath(seg.start, seg.end, trackIdx, feat.strand)}
+                       fill={feat.color}
+                       opacity={isHovered ? 1 : 0.85}
+                       stroke={isHovered ? '#fff' : feat.color}
+                       strokeWidth={isHovered ? 2 : 1}
+                       strokeLinejoin="round"
+                     />
+                   ))}
+                 </>
+               ) : (
                <path d={path} fill={feat.color} opacity={isHovered ? 1 : 0.85} stroke={isHovered ? '#fff' : feat.color} strokeWidth={isHovered ? 2 : 1} strokeLinejoin="round" />
+               )}
                {/* Show feature name if long enough */}
                {adjustedEnd - feat.start > 60 && (
                  <text x={CX + lblR * Math.cos(midA)} y={CY + lblR * Math.sin(midA) + 3} textAnchor="middle" fontSize={9} fill="#fff" fontWeight="700" style={{ pointerEvents: 'none' }}>

@@ -179,7 +179,29 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
             
             return (
               <g key={feat.id} style={{ cursor: 'pointer', transition: 'all 0.2s' }} onClick={(e) => { e.stopPropagation(); onFeatureClick?.(feat); }}>
-                {feat.strand === 1 ? (
+                {feat.segments ? (
+                  // Spliced: a block per exon, joined by a line across the
+                  // introns. Drawing one bar from first to last base would
+                  // claim the introns are coding.
+                  <>
+                    <line x1={x1} y1={y + 9} x2={x2} y2={y + 9} stroke={feat.color} strokeWidth={1.5} opacity={0.65} />
+                    {feat.segments.map((seg, si) => {
+                      const sx1 = toX(seg.start - 1);
+                      const sx2 = toX(seg.end);
+                      const sw = Math.max(sx2 - sx1, 2);
+                      // The arrow goes on the terminal exon, pointing the way
+                      // the feature is transcribed.
+                      const terminal = feat.strand === 1 ? si === feat.segments!.length - 1 : si === 0;
+                      const aw = terminal ? Math.min(10, sw * 0.5) : 0;
+                      const d = feat.strand === 1
+                        ? `M${sx1},${y} L${sx2 - aw},${y} L${sx2},${y + 9} L${sx2 - aw},${y + 18} L${sx1},${y + 18} Z`
+                        : `M${sx1 + aw},${y} L${sx2},${y} L${sx2},${y + 18} L${sx1 + aw},${y + 18} L${sx1},${y + 9} Z`;
+                      return (
+                        <path key={si} d={d} fill={feat.color} opacity={0.85} stroke={feat.color} strokeWidth={1.5} strokeLinejoin="round" />
+                      );
+                    })}
+                  </>
+                ) : feat.strand === 1 ? (
                   <path d={`M${x1},${y} L${x2 - arrowW},${y} L${x2},${y + 9} L${x2 - arrowW},${y + 18} L${x1},${y + 18} Z`} fill={feat.color} opacity={0.85} stroke={feat.color} strokeWidth={1.5} strokeLinejoin="round" />
                 ) : (
                   <path d={`M${x1 + arrowW},${y} L${x2},${y} L${x2},${y + 18} L${x1 + arrowW},${y + 18} L${x1},${y + 9} Z`} fill={feat.color} opacity={0.85} stroke={feat.color} strokeWidth={1.5} strokeLinejoin="round" />

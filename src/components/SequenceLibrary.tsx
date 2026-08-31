@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ChevronDown, ChevronUp, Trash2, ExternalLink } from 'lucide-react';
 import { deleteSequenceAction } from '@/app/actions/sequences';
 import SequenceViewer, { type SequenceFeature } from './SequenceViewer';
+import { normaliseFeatures } from '@/lib/features';
 
 interface SeqRecord {
   id: string;
@@ -81,7 +82,7 @@ function SequenceTable({ sequences, accent, badge }: { sequences: SeqRecord[]; a
             const isOpen = expandedId === seq.id;
             const isLast = i === sequences.length - 1;
             let parsedFeatures: SequenceFeature[] = [];
-            try { parsedFeatures = JSON.parse(seq.features ?? '[]'); } catch { parsedFeatures = []; }
+            parsedFeatures = normaliseFeatures(seq.features);
 
             return (
               <React.Fragment key={seq.id}>

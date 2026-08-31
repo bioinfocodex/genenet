@@ -183,15 +183,38 @@ export default function MolbuilderRenderer({
 
     // 5. Features (1-indexed start/end)
     const activeFeats = layers.feat ? features.filter(f => f.start <= iEnd1 && f.end >= i1) : [];
-    const featRow = activeFeats.length > 0 && (
+    // A spliced feature is drawn as its exons. Painting one bar from first to
+    // last base would colour the introns as though they were coding.
+    const featBlocks = activeFeats.flatMap((f, idx) =>
+      (f.segments ?? [{ start: f.start, end: f.end }])
+        .filter(seg => seg.start <= iEnd1 && seg.end >= i1)
+        .map((seg, si) => ({ f, seg, key: `${f.id}-${idx}-${si}` })),
+    );
+    const featRow = featBlocks.length > 0 && (
       <div key={`feat-${i}`} style={{ height: '18px', position: 'relative', marginBottom: '4px', paddingLeft: '60px', fontFamily: 'var(--font-mono)' }}>
-        {activeFeats.map((f, idx) => {
-          const start = Math.max(0, f.start - i1);
-          const end = Math.min(chunkLen, f.end - i + 1);
+        {/* Intron lines, behind the exon blocks. */}
+        {activeFeats.filter(f => f.segments).map((f, idx) => {
+          const s = Math.max(0, f.start - i1);
+          const e = Math.min(chunkLen, f.end - i + 1);
+          return (
+            <div
+              key={`intron-${f.id}-${idx}`}
+              title={`${f.name} — intron`}
+              style={{
+                position: 'absolute', left: `${s}ch`, width: `${Math.max(0.5, e - s)}ch`,
+                top: '6px', height: '2px', background: f.color || '#94a3b8',
+                opacity: 0.45, zIndex: 9,
+              }}
+            />
+          );
+        })}
+        {featBlocks.map(({ f, seg, key }) => {
+          const start = Math.max(0, seg.start - i1);
+          const end = Math.min(chunkLen, seg.end - i + 1);
           const width = Math.max(0.5, end - start);
           return (
             <div 
-              key={`${f.id}-${idx}`}
+              key={key}
               onClick={() => onFeatureClick?.(f)}
               style={{
                 position: 'absolute',
@@ -208,7 +231,7 @@ export default function MolbuilderRenderer({
                 justifyContent: 'center',
                 overflow: 'hidden'
               }}
-              title={f.name}
+              title={f.segments ? `${f.name} (exon)` : f.name}
             >
               <span style={{ fontSize: '8px', color: 'white', fontWeight: 700, pointerEvents: 'none' }}>{width > 4 ? f.name : ''}</span>
             </div>

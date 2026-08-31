@@ -10,6 +10,7 @@ import {
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { addPrimer, deletePrimer, saveSimulation } from '@/app/actions/sequences';
 import type { SequenceFeature } from './SequenceViewer';
+import { normaliseFeatures } from '@/lib/features';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,7 +84,7 @@ export default function SequenceDetailClient({ seq }: { seq: GeneSequenceData })
   }, [allReSites]);
 
   let parsedFeatures: SequenceFeature[] = [];
-  try { parsedFeatures = JSON.parse(seq.features ?? '[]'); } catch { parsedFeatures = []; }
+  parsedFeatures = normaliseFeatures(seq.features);
 
   const tabs: [Tab, string, React.ReactNode][] = [
     ['overview',  'Overview',  <Dna key="o" size={14} />],

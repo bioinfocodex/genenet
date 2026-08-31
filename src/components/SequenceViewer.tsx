@@ -13,6 +13,7 @@ import {
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import { locatePrimers } from '@/lib/primers';
+import type { SequenceFeature } from '@/lib/features';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
@@ -23,16 +24,10 @@ import CircularMap from './sequences/CircularMap';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface SequenceFeature {
-  id: string;
-  name: string;
-  start: number;  // 1-indexed, inclusive
-  end: number;    // 1-indexed, inclusive
-  color: string;
-  type: string;
-  strand: 1 | -1;
-  notes?: string;
-}
+// Defined in lib/features so the server can normalise stored records against
+// the same shape the viewer draws. Re-exported here: plenty of components
+// already import it from this module.
+export type { SequenceFeature } from '@/lib/features';
 
 interface ReSite {
   enzyme: string;
