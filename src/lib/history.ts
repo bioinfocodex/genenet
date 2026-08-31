@@ -26,6 +26,7 @@ const IGNORED_FIELDS = new Set(['updatedAt', 'createdAt', 'id']);
 /** Never shown, even though the trail redacts it already. */
 const HIDDEN_FIELDS = new Set(['passwordHash']);
 
+import { describeSequenceChange, summariseSequenceChange } from '@/lib/sequence-diff';
 import type { FieldChange, HistoryEntry } from '@/lib/history-types';
 export type { FieldChange, HistoryEntry };
 
@@ -69,6 +70,20 @@ function diff(before: Record<string, unknown> | null, after: Record<string, unkn
     // was not changed rather than cleared.
     if (!(f in after)) continue;
     if (JSON.stringify(a) === JSON.stringify(b)) continue;
+
+      // A sequence is the one field where showing the value tells you nothing:
+      // truncated at 140 characters, before and after look identical. Where it
+      // changed and by how much is what a person can act on.
+      if (f === 'sequence' && typeof a === 'string' && typeof b === 'string') {
+        const change = describeSequenceChange(a, b);
+        out.push({
+          field: 'Sequence',
+          from: `${change.before.toLocaleString()} bp`,
+          to: summariseSequenceChange(change),
+        });
+        continue;
+      }
+
     out.push({ field: label(f), from: show(a), to: show(b) });
   }
   return out.sort((x, y) => x.field.localeCompare(y.field));

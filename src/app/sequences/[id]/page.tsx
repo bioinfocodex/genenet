@@ -4,6 +4,10 @@ import Link from 'next/link';
 import { ChevronRight, Database, Dna } from 'lucide-react';
 import SequenceViewer, { type SequenceFeature } from '@/components/SequenceViewer';
 import { normaliseFeatures } from '@/lib/features';
+import { ancestryOf, descendantsOf } from '@/lib/lineage';
+import { historyFor } from '@/lib/history';
+import SequenceLineage from '@/components/SequenceLineage';
+import RecordHistory from '@/components/RecordHistory';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +22,13 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   });
 
   if (!seq) notFound();
+
+  // Where it came from, what came from it, and what has been done to it since.
+  const [ancestry, descendants, history] = await Promise.all([
+    ancestryOf(seq.id),
+    descendantsOf(seq.id),
+    historyFor('GeneSequence', seq.id),
+  ]);
 
   return (
     <div>
@@ -88,6 +99,14 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           notes: p.notes ?? undefined,
         }))}
       />
+
+      {/* Where it came from, and what has been done to it. Below the viewer:
+          the sequence is what people open the page for, and provenance is
+          what they come back for. */}
+      <div style={{ marginTop: '1.5rem' }}>
+        <SequenceLineage ancestry={ancestry} descendants={descendants} />
+        <RecordHistory entries={history} />
+      </div>
     </div>
   );
 }

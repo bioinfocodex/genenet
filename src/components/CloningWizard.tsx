@@ -627,6 +627,7 @@ function GoldenGatePanel({ sequences }: { sequences: SeqRecord[] }) {
           junctions={junctions}
           method={`Golden Gate (${enzyme})`}
           accent={accent}
+          parents={chosen.map(c => ({ id: c.id, name: c.name }))}
         />
       )}
 
@@ -878,6 +879,7 @@ function HomologyPanel({ sequences, method, accent, icon, blurb }: {
           junctions={junctions}
           method={result.spec.name}
           accent={accent}
+          parents={chosen.map(c => ({ id: c.id, name: c.name }))}
         />
       )}
 
@@ -979,6 +981,7 @@ function TAPanel({ sequences }: { sequences: SeqRecord[] }) {
           }))}
           method={`${result.spec.name} — insert ${o.sense}`}
           accent={o.sense === 'forward' ? accent : '#94a3b8'}
+          parents={[insert, vector].filter(Boolean).map(x => ({ id: x!.id, name: x!.name }))}
         />
       ))}
 

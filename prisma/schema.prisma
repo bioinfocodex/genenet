@@ -428,6 +428,7 @@ model GeneSequence {
   proteins    Protein[]    @relation("ProteinFromGene")
   tasks       Task[]       @relation("TaskSequences")
   samples     Sample[]     @relation("SampleSequence")
+  lineage     SequenceLineage[] @relation("LineageChild")
 }
 
 model Primer {
@@ -660,4 +661,32 @@ model Sample {
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+/**
+ * Where a construct came from.
+ *
+ * One row per parent, so a three-part assembly records three. The parent's name
+ * is kept alongside its id because a lineage that forgets what a deleted parent
+ * was called is worse than no lineage: it shows a gap where there was a
+ * decision. The id may dangle; the name never does.
+ */
+model SequenceLineage {
+  id          String   @id @default(cuid())
+
+  child       GeneSequence @relation("LineageChild", fields: [childId], references: [id], onDelete: Cascade)
+  childId     String
+
+  /** Null once the parent record is gone. The name survives regardless. */
+  parentId    String?
+  parentName  String
+
+  /** How the child was made: "Gibson Assembly", "Golden Gate (BsaI)", "import". */
+  method      String
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  @@index([childId])
+  @@index([parentId])
 }

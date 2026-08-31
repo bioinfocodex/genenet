@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { calcTm, calcGC, parseFasta, parseGenBank } from '@/lib/simulation';
 import { requireUser } from '@/lib/auth-guard';
+import { recordLineage } from '@/lib/lineage';
 import {
   parseSequenceText, countFastaRecords, type ImportedSequence,
 } from '@/lib/sequence-import';
@@ -194,6 +195,7 @@ export async function saveConstruct(formData: FormData): Promise<SaveConstructRe
   const sequence = (formData.get('sequence') as string | null)?.toUpperCase().replace(/\s/g, '');
   const method = (formData.get('method') as string | null)?.trim() ?? 'assembly';
   const parts = (formData.get('parts') as string | null)?.trim() ?? '';
+  const parentsJson = (formData.get('parents') as string | null) ?? '';
   const topology = (formData.get('topology') as string | null) ?? 'circular';
 
   if (!name || !sequence) return { error: 'A construct needs a name and a sequence.' };
@@ -208,6 +210,26 @@ export async function saveConstruct(formData: FormData): Promise<SaveConstructRe
       features: '[]',
     },
   });
+
+  // Descent, as edges rather than a sentence. The parents are named even when
+  // their ids are not known, so a construct assembled from something that is
+  // later deleted still says what it was built from.
+  // Ids where the caller knows them, so the lineage links rather than only
+  // naming. Falling back to names alone keeps a record of descent for callers
+  // that cannot supply ids, which is better than none.
+  let parents: { id?: string | null; name: string }[] = [];
+  try {
+    const parsed = parentsJson ? JSON.parse(parentsJson) : null;
+    if (Array.isArray(parsed)) {
+      parents = parsed
+        .filter((p): p is { id?: string; name: string } => !!p && typeof p.name === 'string')
+        .map(p => ({ id: p.id ?? null, name: p.name }));
+    }
+  } catch { /* fall through to names */ }
+  if (parents.length === 0 && parts) {
+    parents = parts.split(',').map(p => p.trim()).filter(Boolean).map(name => ({ name }));
+  }
+  await recordLineage(built.id, parents, method, session.id);
 
   revalidatePath('/sequences');
   return { id: built.id };

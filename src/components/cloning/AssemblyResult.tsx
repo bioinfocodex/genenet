@@ -45,12 +45,17 @@ export function ProblemList({ problems }: { problems: AssemblyProblem[] }) {
 }
 
 export function ConstructPanel({
-  assembly, junctions, method, accent,
+  assembly, junctions, method, accent, parents,
 }: {
   assembly: Assembly;
   junctions: JunctionRow[];
   method: string;
   accent: string;
+  /**
+   * The library records the parts came from, when the panel knows them. Ids
+   * make the saved lineage clickable; without them it records names only.
+   */
+  parents?: { id?: string; name: string }[];
 }) {
   const [name, setName] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
@@ -70,6 +75,9 @@ export function ConstructPanel({
       fd.append('sequence', assembly.sequence);
       fd.append('method', method);
       fd.append('parts', partNames);
+      fd.append('parents', JSON.stringify(
+        parents ?? assembly.order.map(o => ({ name: o.name })),
+      ));
       fd.append('topology', assembly.topology);
       const r = await saveConstruct(fd);
       if ('error' in r) setError(r.error);
