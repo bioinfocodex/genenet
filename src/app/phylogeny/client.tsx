@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo, useRef } from 'react';
 import { GitBranch, Download, AlertTriangle, Image as ImageIcon, FileCode } from 'lucide-react';
-import { alignMultiple } from '@/lib/alignment';
+import { alignProgressive } from '@/lib/msa';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import {
   distanceMatrix, neighbourJoining, upgma, toNewick, bootstrapTree,
@@ -80,7 +80,12 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
         // One alignment, then distances from it. Bootstrap resamples this
         // alignment's columns, so the support values have to describe the same
         // alignment the tree came from.
-        const msa = alignMultiple(chosen.map(c => ({ name: c.name, sequence: c.sequence })));
+        //
+        // Progressive along a guide tree, not the older centre-star method:
+        // where several sequences share an indel, centre-star spreads it across
+        // different columns for each of them, and every column it misplaces is
+        // a column the distances are then measured from.
+        const msa = alignProgressive(chosen.map(c => ({ name: c.name, sequence: c.sequence })));
         const taxa = msa.names.map((name, i) => ({ id: String(i), name, sequence: msa.rows[i] }));
         const dm = distanceMatrix(taxa, model);
         const identity = msa.identity;
