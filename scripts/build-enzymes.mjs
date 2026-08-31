@@ -28,15 +28,15 @@ for (const line of readFileSync(src, 'latin1').split('\n')) {
   if (!line.trim() || /^[ \t]/.test(line)) continue;
   const p = line.replace(/\n$/, '').split('\t');
   if (p.length < 5) continue;
-  const [name, , site, , suppliers] = p;
+  const [name, prototype, site, methylation, suppliers] = p;
   if (!/^[A-Za-z][A-Za-z0-9.]*$/.test(name)) continue;
   if (!suppliers.trim()) continue;                 // not purchasable
   if (/^\(-?\d+\/-?\d+\)/.test(site)) continue;    // Type IIB: cuts both sides
-  rows.push({ name, site });
+  rows.push({ name, prototype: prototype.trim(), site, methylation: methylation.trim() });
 }
 
 const enzymes = [];
-for (const { name, site } of rows) {
+for (const { name, prototype, site, methylation } of rows) {
   let pattern, cutTop, cutBottom;
 
   const iis = site.match(/^([ACGTRYSWKMBDHVN]+)\((-?\d+)\/(-?\d+)\)$/);
@@ -74,7 +74,15 @@ for (const { name, site } of rows) {
     overhang, overhangType,
     overhangLength: Math.abs(span),
     typeIIS: !!iis,
-  });
+      // The enzyme this one is an isoschizomer of. Empty when it is itself the
+      // prototype, so grouping uses `prototype || name`.
+      prototype,
+      // REBASE's own methylation column: which base within the site the
+      // enzyme's cognate methyltransferase modifies. Not the same question as
+      // "is this blocked in a dam+ strain", which depends on the sequence
+      // around the site and is computed rather than tabulated.
+      methylation,
+    });
 }
 
 enzymes.sort((a, b) => a.name.localeCompare(b.name, 'en'));
@@ -84,7 +92,9 @@ const body = enzymes.map(e =>
   `  ${JSON.stringify(e.name)}: { name: ${JSON.stringify(e.name)}, pattern: ${JSON.stringify(e.pattern)}, ` +
   `cutBefore: ${e.cutBefore}, cutBottom: ${e.cutBottom}, overhang: ${JSON.stringify(e.overhang)}, ` +
   `overhangType: '${e.overhangType}', overhangLength: ${e.overhangLength}` +
-  (e.typeIIS ? ', typeIIS: true' : '') + ' },'
+  (e.typeIIS ? ', typeIIS: true' : '') +
+  (e.prototype ? `, prototype: ${JSON.stringify(e.prototype)}` : '') +
+  (e.methylation ? `, methylation: ${JSON.stringify(e.methylation)}` : '') + ' },'
 ).join('\n');
 
 writeFileSync(out, `// GENERATED FILE -- do not edit by hand.
@@ -107,3 +117,5 @@ console.log(`    Type IIS: ${enzymes.filter(e => e.typeIIS).length}`);
 console.log(`    blunt: ${enzymes.filter(e => e.overhangType === 'blunt').length}`);
 console.log(`    5' overhang: ${enzymes.filter(e => e.overhangType === '5prime').length}`);
 console.log(`    3' overhang: ${enzymes.filter(e => e.overhangType === '3prime').length}`);
+console.log(`    with a prototype (isoschizomers): ${enzymes.filter(e => e.prototype).length}`);
+console.log(`    with methylation recorded: ${enzymes.filter(e => e.methylation).length}`);

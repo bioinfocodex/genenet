@@ -14,6 +14,8 @@ import {
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import { locatePrimers } from '@/lib/primers';
 import { annotate } from '@/lib/annotation';
+import { blockedSites, type BlockedSite } from '@/lib/methylation';
+import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
 import CrisprPanel from './sequences/CrisprPanel';
@@ -870,7 +872,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             </div>
           )}
 
-          {leftTab === 'sites' && <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} />}
+          {leftTab === 'sites' && <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} />}
           {leftTab === 'orfs'  && <ORFsPanel sequence={sequence} />}
           {leftTab === 'translate' && <TranslatePanel sequence={sequence} />}
           {leftTab === 'pcr' && (
@@ -1669,11 +1671,35 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
 
 // ─── RE Sites Panel ──────────────────────────────────────────────────────────
 
-function RESitesPanel({ reSitesByEnzyme }: { reSitesByEnzyme: Map<string, ReSite[]> }) {
+function RESitesPanel({
+  reSitesByEnzyme, sequence, circular,
+}: {
+  reSitesByEnzyme: Map<string, ReSite[]>;
+  sequence: string;
+  circular: boolean;
+}) {
   const [showAll, setShowAll] = useState(false);
-  const entries = [...reSitesByEnzyme.entries()].sort((a, b) => a[1].length - b[1].length);
-  const uniqueCutters = entries.filter(([, s]) => s.length === 1);
-  const displayed = showAll ? entries : uniqueCutters;
+  const [setName, setSetName] = useState('all');
+  const entries = useMemo(
+    () => [...reSitesByEnzyme.entries()].sort((a, b) => a[1].length - b[1].length),
+    [reSitesByEnzyme],
+  );
+  const uniqueCutters = useMemo(() => entries.filter(([, s]) => s.length === 1), [entries]);
+
+  // Which of these sites carry a methyl group that stops the enzyme binding.
+  // Only enzymes that have sites here can be blocked at one.
+  const blocked = useMemo(
+    () => blockedSites(sequence, entries.map(([n]) => n), { circular }),
+    [sequence, circular, entries],
+  );
+
+  const inSet = useMemo(() => {
+    if (setName === 'all') return null;
+    const set = STARTER_SETS.find(s => s.name === setName);
+    return set ? new Set(resolveSet(set)) : null;
+  }, [setName]);
+
+  const displayed = (showAll ? entries : uniqueCutters).filter(([n]) => !inSet || inSet.has(n));
 
   return (
     <div>
@@ -1682,10 +1708,60 @@ function RESitesPanel({ reSitesByEnzyme }: { reSitesByEnzyme: Map<string, ReSite
           <strong style={{ color: 'var(--accent-green)' }}>{uniqueCutters.length} unique cutters</strong>
           <span style={{ color: 'var(--text-muted)' }}> · {entries.length} enzymes total with sites</span>
         </p>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <select
+              value={setName}
+              onChange={e => setSetName(e.target.value)}
+              className="input-control"
+              style={{ fontSize: '0.76rem', padding: '0.3rem 0.5rem' }}
+              title="Narrow to a set of enzymes"
+            >
+              <option value="all">All enzymes</option>
+              {STARTER_SETS.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+            </select>
         <button onClick={() => setShowAll(!showAll)} style={{ padding: '0.3rem 0.75rem', border: '1px solid var(--glass-border)', borderRadius: '6px', background: showAll ? 'var(--accent-blue-15)' : 'white', color: showAll ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit' }}>
           {showAll ? 'Unique only' : 'Show all'}
         </button>
+          </div>
       </div>
+        {(() => {
+          // Warn about what is on screen. A note for an enzyme the filter has
+          // hidden is noise, and a documented block is worth more than a dozen
+          // "check the chart" notes -- so the known ones come first and the
+          // rest are counted rather than listed.
+          const shown = new Set(displayed.map(([n]) => n));
+          const relevant = blocked.filter(b => shown.has(b.enzyme));
+          const known = relevant.filter(b => b.known);
+          const unsure = relevant.filter(b => !b.known);
+          if (relevant.length === 0) return null;
+          return (
+            <div style={{
+              padding: '0.75rem 1rem', marginBottom: '0.9rem', borderRadius: 7,
+              background: known.length ? 'rgba(217,119,6,0.06)' : 'var(--bg-primary)',
+              border: `1px solid ${known.length ? 'rgba(217,119,6,0.25)' : 'var(--glass-border)'}`,
+            }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: known.length ? '#a3560a' : 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                Methylation
+              </div>
+              {known.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {known.slice(0, 6).map((b, i) => (
+                    <li key={i} style={{ fontSize: '0.79rem', lineHeight: 1.5, color: '#a3560a' }}>{b.message}</li>
+                  ))}
+                </ul>
+              )}
+              {unsure.length > 0 && (
+                <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', margin: known.length ? '0.5rem 0 0' : 0, lineHeight: 1.5 }}>
+                  {unsure.length} other site{unsure.length === 1 ? '' : 's'} here
+                  {unsure.length === 1 ? ' overlaps' : ' overlap'} a Dam or Dcm sequence
+                  ({[...new Set(unsure.map(b => b.enzyme))].slice(0, 6).join(', ')}
+                  {new Set(unsure.map(b => b.enzyme)).size > 6 ? '…' : ''}).
+                  Whether those enzymes mind is a property of the enzyme — check the supplier&rsquo;s chart.
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
       {displayed.length === 0 ? (
         <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No restriction sites found.</p>
@@ -1710,6 +1786,21 @@ function RESitesPanel({ reSitesByEnzyme }: { reSitesByEnzyme: Map<string, ReSite
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: sites[0].color, display: 'inline-block' }} />
                         {enz}
                       </span>
+                      {(() => {
+                        const iso = isoschizomersOf(enz);
+                        if (iso.identical.length === 0) return null;
+                        return (
+                          <span
+                            title={`Same site, same cut: ${iso.identical.join(', ')}` +
+                              (iso.neoschizomers.length
+                                ? `\nSame site, cut elsewhere (different ends): ${iso.neoschizomers.join(', ')}`
+                                : '')}
+                            style={{ fontSize: '0.62rem', marginLeft: '0.35rem', color: 'var(--text-muted)', cursor: 'help' }}
+                          >
+                            +{iso.identical.length}
+                          </span>
+                        );
+                      })()}
                       {isUnique && <span style={{ fontSize: '0.62rem', marginLeft: '0.35rem', color: 'var(--accent-green)', background: 'rgba(5,150,105,0.08)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>unique</span>}
                     </td>
                     <td style={{ padding: '0.45rem 0.75rem', fontFamily: 'monospace', color: 'var(--accent-blue)', fontSize: '0.8rem' }}>{enzObj?.pattern ?? '—'}</td>

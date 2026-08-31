@@ -20,6 +20,18 @@ export interface Enzyme {
   overhangLength?: number;
   /** Cuts outside its recognition site. */
   typeIIS?: boolean;
+  /**
+   * The enzyme this one is an isoschizomer of, from REBASE. Empty when it is
+   * itself the prototype, so grouping is by `prototype || name`.
+   */
+  prototype?: string;
+  /**
+   * REBASE's methylation column: which base inside the site the enzyme's own
+   * methyltransferase modifies, written as position(type). This is not the
+   * same question as whether a site is blocked in a dam+ strain, which depends
+   * on the bases either side of it and is worked out in lib/methylation.ts.
+   */
+  methylation?: string;
 }
 
 /**
