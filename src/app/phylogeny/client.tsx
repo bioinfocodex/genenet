@@ -1,7 +1,8 @@
 'use client';
-import { useState, useMemo } from 'react';
-import { GitBranch, Download, AlertTriangle } from 'lucide-react';
+import { useState, useMemo, useRef } from 'react';
+import { GitBranch, Download, AlertTriangle, Image as ImageIcon, FileCode } from 'lucide-react';
 import { alignMultiple } from '@/lib/alignment';
+import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import {
   distanceMatrix, neighbourJoining, upgma, toNewick, bootstrapTree,
   type DistanceModel, type TreeNode,
@@ -60,6 +61,8 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
   const [method, setMethod] = useState<Method>('nj');
   const [useLengths, setUseLengths] = useState(true);
   const [replicates, setReplicates] = useState(100);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -121,7 +124,21 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
     a.href = URL.createObjectURL(blob);
     a.download = 'tree.nwk';
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  const saveImage = async (kind: 'svg' | 'png') => {
+    if (!svgRef.current) return;
+    setExporting(kind);
+    try {
+      // White behind it: a transparent PNG dropped into a document with a dark
+      // theme becomes an invisible tree.
+      if (kind === 'svg') downloadSvg(svgRef.current, 'tree.svg', { background: '#ffffff' });
+      else await downloadPng(svgRef.current, 'tree.png', { background: '#ffffff', scale: 3 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not export the tree.');
+    }
+    setExporting(null);
   };
 
   const laid = result ? layout(result.tree, useLengths) : null;
@@ -218,7 +235,13 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
                   <input type="checkbox" checked={useLengths} onChange={e => setUseLengths(e.target.checked)} />
                   Branch lengths to scale
                 </label>
-                <button onClick={download} className="btn btn-secondary" style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <button onClick={() => saveImage('svg')} disabled={exporting !== null} className="btn btn-secondary" style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }} title="Vector, for figures">
+                  <FileCode size={13} /> {exporting === 'svg' ? 'Saving…' : 'SVG'}
+                </button>
+                <button onClick={() => saveImage('png')} disabled={exporting !== null} className="btn btn-secondary" style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }} title="Raster at 3x, for slides">
+                  <ImageIcon size={13} /> {exporting === 'png' ? 'Saving…' : 'PNG'}
+                </button>
+                <button onClick={download} className="btn btn-secondary" style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }} title="Tree data, for FigTree or iTOL">
                   <Download size={13} /> Newick
                 </button>
               </div>
@@ -241,7 +264,7 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
             )}
 
             <div style={{ overflowX: 'auto', marginTop: '0.9rem' }}>
-              <svg width={W} height={H} style={{ minWidth: W }}>
+              <svg ref={svgRef} width={W} height={H} style={{ minWidth: W }}>
                 {laid.rows.map((r, i) => {
                   const isTip = !r.node.children?.length;
                   return (
