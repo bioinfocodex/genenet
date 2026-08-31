@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import type { PrimerPair } from '@/lib/primer-design';
+import { checkOligo, dimer } from '@/lib/secondary-structure';
 
 /**
  * The oligos to order.
@@ -19,6 +20,27 @@ export default function PrimerTable({ pairs, accent }: { pairs: PrimerPair[]; ac
     { p: p.forward, pairWarnings: p.warnings },
     { p: p.reverse, pairWarnings: [] as string[] },
   ]);
+
+  // Structure is checked on the whole oligo, tail included. The tail does not
+  // anneal to the template on the first cycles, but it is physically present
+  // and folds like any other DNA — a hairpin that ties up the 3' end does not
+  // care that the bases holding it there were added for cloning.
+  const structure = rows.map(r => checkOligo(r.p.sequence));
+
+  // Cross-dimers between the two primers of a pair: the classic primer-dimer,
+  // which no amount of checking each oligo alone will find.
+  const crossWarnings = pairs.flatMap(pair => {
+    const d = dimer(pair.forward.sequence, pair.reverse.sequence);
+    if (!d || d.dG > -6) return [];
+    return [{
+      names: `${pair.forward.name} + ${pair.reverse.name}`,
+      dG: d.dG,
+      text: d.involves3Prime
+        ? `${pair.forward.name} and ${pair.reverse.name} pair at ${d.dG.toFixed(1)} kcal/mol with a 3' end in the helix. This is the primer-dimer that takes over a reaction: it extends, and the short product then amplifies faster than the template.`
+        : `${pair.forward.name} and ${pair.reverse.name} pair at ${d.dG.toFixed(1)} kcal/mol over ${d.length} bp, away from the 3' ends. It will not extend, but it competes for the oligos.`,
+      diagram: d.diagram,
+    }];
+  });
 
   const copyAll = () => {
     const text = rows.map(r => `${r.p.name}\t${r.p.sequence}`).join('\n');
@@ -40,7 +62,7 @@ export default function PrimerTable({ pairs, accent }: { pairs: PrimerPair[]; ac
         <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.76rem', minWidth: 520 }}>
           <thead>
             <tr>
-              {['Primer', 'Sequence (5′→3′)', 'Anneal', 'Tm'].map(h => (
+              {['Primer', 'Sequence (5′→3′)', 'Anneal', 'Tm', 'Structure'].map(h => (
                 <th key={h} style={{
                   textAlign: h === 'Tm' || h === 'Anneal' ? 'right' : 'left',
                   padding: '0.3rem 0.6rem', color: 'var(--text-muted)', fontWeight: 600,
@@ -65,16 +87,47 @@ export default function PrimerTable({ pairs, accent }: { pairs: PrimerPair[]; ac
                   {p.tm.toFixed(0)} °C
                   {p.warnings.length > 0 && <span style={{ color: '#a3560a' }} title={p.warnings.join('\n')}> &#9888;</span>}
                 </td>
+                <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap', fontSize: '0.72rem' }}>
+                  {structure[i].warnings.length === 0 ? (
+                    <span style={{ color: 'var(--text-muted)' }}>clear</span>
+                  ) : (
+                    <span
+                      style={{ color: structure[i].warnings.some(w => w.includes("3'")) ? '#b91c1c' : '#a3560a', fontWeight: 600 }}
+                      title={structure[i].warnings.join('\n\n')}
+                    >
+                      {structure[i].hairpin && structure[i].hairpin!.dG <= -3 ? 'hairpin' : 'dimer'}
+                      {' '}
+                      {Math.min(
+                        structure[i].hairpin?.dG ?? 0,
+                        structure[i].selfDimer?.dG ?? 0,
+                      ).toFixed(1)}
+                    </span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {rows.some(r => r.p.warnings.length > 0) || pairs.some(p => p.warnings.length > 0) ? (
-        <ul style={{ margin: '0.8rem 0 0', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+      {(rows.some(r => r.p.warnings.length > 0) || pairs.some(p => p.warnings.length > 0)
+        || structure.some(s => s.warnings.length > 0) || crossWarnings.length > 0) ? (
+        <ul style={{ margin: '0.8rem 0 0', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          {/* A cross-dimer is the one that ruins a reaction outright, so it leads. */}
+          {crossWarnings.map((w, i) => (
+            <li key={`x-${i}`} style={{ fontSize: '0.78rem', color: '#b91c1c', lineHeight: 1.5 }}>
+              {w.text}
+              <pre style={{
+                margin: '0.35rem 0 0', fontFamily: 'monospace', fontSize: '0.68rem',
+                color: 'var(--text-secondary)', overflowX: 'auto', lineHeight: 1.35,
+              }}>{w.diagram.join('\n')}</pre>
+            </li>
+          ))}
           {pairs.flatMap(p => p.warnings).map((w, i) => (
             <li key={`pair-${i}`} style={{ fontSize: '0.78rem', color: '#a3560a', lineHeight: 1.5 }}>{w}</li>
+          ))}
+          {rows.flatMap((r, i) => structure[i].warnings.map(w => `${r.p.name}: ${w}`)).map((w, i) => (
+            <li key={`s-${i}`} style={{ fontSize: '0.78rem', color: '#a3560a', lineHeight: 1.5 }}>{w}</li>
           ))}
           {rows.flatMap(r => r.p.warnings.map(w => `${r.p.name}: ${w}`)).map((w, i) => (
             <li key={`p-${i}`} style={{ fontSize: '0.78rem', color: '#a3560a', lineHeight: 1.5 }}>{w}</li>

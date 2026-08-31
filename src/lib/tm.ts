@@ -12,9 +12,9 @@
  * in cal/(mol·K) for each stacked pair read 5'->3' on the top strand.
  */
 
-interface NN { dH: number; dS: number }
+export interface NN { dH: number; dS: number }
 
-const STACK: Record<string, NN> = {
+export const STACK: Record<string, NN> = {
   AA: { dH: -7.9, dS: -22.2 }, TT: { dH: -7.9, dS: -22.2 },
   AT: { dH: -7.2, dS: -20.4 },
   TA: { dH: -7.2, dS: -21.3 },
