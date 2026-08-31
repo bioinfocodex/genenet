@@ -252,12 +252,13 @@ export function assemble(input: Fragment[], opts: AssemblyOptions): AssemblyResu
       if (mode === 'overlap') {
         if (last && topology === 'linear') { seq += cur.frag.seq; break; }
         const j = joins(cur, next);
-        // The shared homology is written once, as part of this fragment.
+        // Each fragment keeps the homology at its start and gives up the copy
+        // at its end, so every arm is written exactly once. On a circle that
+        // is already the whole molecule: the last fragment's trailing arm is
+        // the first fragment's leading arm, and appending it again would put a
+        // duplicate copy in the product.
         seq += cur.frag.seq.slice(0, cur.frag.seq.length - j.shared.length);
-        if (!last || topology === 'circular') {
-          junctions.push({ from: cur.frag.name, to: next.frag.name, at: seq.length + 1, shared: j.shared, kind: 'overlap' });
-        }
-        if (last && topology === 'circular') seq += j.shared;
+        junctions.push({ from: cur.frag.name, to: next.frag.name, at: seq.length + 1, shared: j.shared, kind: 'overlap' });
       } else {
         seq += cur.frag.seq;
         if (last && topology === 'linear') break;
