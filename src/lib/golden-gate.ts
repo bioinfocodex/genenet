@@ -261,7 +261,11 @@ export function goldenGate(
     all.push(...pieces);
   }
 
-  const parts = all.filter(p => !p.carriesSite && p.seq.length > 0);
+  // A part is bounded by two enzyme cuts. A piece running to the end of a
+  // linear input is not one, however clean it looks: it carries a blunt end
+  // that cannot join anything directionally, and counting it inflates the part
+  // list and the overhang set with ends the reaction will never make.
+  const parts = all.filter(p => !p.carriesSite && !p.fromTerminus && p.seq.length > 0);
 
   // A donor that releases exactly one part is named for the donor. The index
   // only earns its place when there is something to tell apart.
@@ -274,7 +278,7 @@ export function goldenGate(
     const donor = p.id.split('#')[0];
     if (releasedPerDonor.get(donor) === 1) p.name = donor;
   }
-  const discarded = all.filter(p => p.carriesSite || p.seq.length === 0);
+  const discarded = all.filter(p => p.carriesSite || p.fromTerminus || p.seq.length === 0);
 
   const problems: AssemblyProblem[] = [];
   for (const name of noSite) {

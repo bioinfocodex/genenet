@@ -177,6 +177,42 @@ export async function updatePrimer(formData: FormData) {
 
 // ─── Simulation Save ──────────────────────────────────────────────────────────
 
+/**
+ * Save an assembled construct as a sequence in its own right.
+ *
+ * The point of simulating an assembly is that the product becomes a real
+ * record -- mappable, digestible, sequenceable-against -- rather than a number
+ * on a results panel. The parts it came from are recorded in the description,
+ * because a construct whose provenance is lost is a construct nobody trusts.
+ */
+export type SaveConstructResult = { error: string } | { id: string };
+
+export async function saveConstruct(formData: FormData): Promise<SaveConstructResult> {
+  const session = await requireUser();
+
+  const name = (formData.get('name') as string | null)?.trim();
+  const sequence = (formData.get('sequence') as string | null)?.toUpperCase().replace(/\s/g, '');
+  const method = (formData.get('method') as string | null)?.trim() ?? 'assembly';
+  const parts = (formData.get('parts') as string | null)?.trim() ?? '';
+  const topology = (formData.get('topology') as string | null) ?? 'circular';
+
+  if (!name || !sequence) return { error: 'A construct needs a name and a sequence.' };
+
+  const built = await prisma.geneSequence.create({
+    data: {
+      name,
+      description: `Assembled by ${method}${parts ? ` from ${parts}` : ''}.`,
+      type: topology === 'circular' ? 'plasmid' : 'gene',
+      sequence,
+      size: sequence.length,
+      features: '[]',
+    },
+  });
+
+  revalidatePath('/sequences');
+  return { id: built.id };
+}
+
 export async function saveSimulation(formData: FormData) {
   const session = await requireUser();
 

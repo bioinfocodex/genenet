@@ -201,6 +201,18 @@ describe('a whole assembly', () => {
     );
   });
 
+  test('a linear donor contributes only the piece between its two cuts', () => {
+    // The ends of a linear input are not ends the enzyme made. They are blunt,
+    // they cannot ligate directionally, and treating them as parts inflates
+    // both the part list and the overhang set.
+    const linear = filler(31, 120) + 'GGTCTC' + 'A' + 'AATG' + filler(32, 300) +
+                   'GCTT' + 'T' + revComp('GGTCTC') + filler(33, 120);
+    const r = goldenGate([{ name: 'linear-donor', sequence: linear, circular: false }], 'BsaI', { topology: 'linear' });
+    assert.equal(r.parts.length, 1, `expected one real part, got ${r.parts.length}`);
+    assert.equal(r.parts[0].left.overhang, 'AATG');
+    assert.ok(r.discarded.every(p => p.carriesSite || p.fromTerminus));
+  });
+
   test('an internal site in a part is found, because it changes the outcome', () => {
     // A spacer carrying a stray BsaI site is cut too, so the part comes apart.
     // This is what domestication exists to prevent, and it is worth detecting

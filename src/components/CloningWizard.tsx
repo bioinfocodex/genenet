@@ -6,6 +6,10 @@ import {
   findInsertFragment, findVectorBackbone,
   areEndsCompatible, designPrimers,
 } from '@/lib/restrictionEnzymes';
+import { fragmentOf } from '@/lib/assembly';
+import { assembleByHomology, type OverlapMethod } from '@/lib/homology-cloning';
+import { goldenGate } from '@/lib/golden-gate';
+import { ConstructPanel, ProblemList, type JunctionRow } from './cloning/AssemblyResult';
 import MultiLaneGel from './MultiLaneGel';
 import PlasmidMap from './PlasmidMap';
 import Link from 'next/link';
@@ -26,7 +30,6 @@ const ENZYME_NAMES = Object.keys(ENZYMES);
 
 // Golden Gate type IIS enzymes (cut outside recognition site)
 const GOLDEN_GATE_ENZYMES = ['BsaI', 'BsmBI', 'BbsI', 'SapI', 'BtgZI'];
-const GG_OVERHANG_LEN: Record<string, number> = { BsaI: 4, BsmBI: 4, BbsI: 4, SapI: 3, BtgZI: 4 };
 
 // ─── Method selector ─────────────────────────────────────────────────────────
 
@@ -503,90 +506,108 @@ export default function CloningWizard({ sequences }: { sequences: SeqRecord[] })
 
 function GoldenGatePanel({ sequences }: { sequences: SeqRecord[] }) {
   const [enzyme, setEnzyme] = useState('BsaI');
-  const [fragments, setFragments] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string[]>([]);
   const [newFrag, setNewFrag] = useState('');
+  const accent = '#0e7c66';
 
-  const addFrag = () => {
-    if (!newFrag) return;
-    setFragments(prev => [...prev, newFrag]);
-    setNewFrag('');
-  };
+  const chosen = picked.map(id => sequences.find(s => s.id === id)).filter(Boolean) as SeqRecord[];
 
-  const ovhLen = GG_OVERHANG_LEN[enzyme] ?? 4;
-  const totalSize = fragments.reduce((sum, id) => {
-    const s = sequences.find(x => x.id === id);
-    return sum + (s?.size ?? 0);
-  }, 0);
+  const result = useMemo(() => {
+    if (chosen.length < 2) return null;
+    try {
+      return goldenGate(
+        chosen.map(s => ({ name: s.name, sequence: s.sequence, circular: s.type === 'plasmid' })),
+        enzyme,
+      );
+    } catch {
+      return null;
+    }
+  }, [chosen, enzyme]);
+
+  const junctions: JunctionRow[] = result?.assemblies[0]?.junctions.map(j => ({
+    from: j.from, to: j.to, shared: j.shared, detail: `${j.shared.length} nt overhang`,
+  })) ?? [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: '4px solid #f59e0b' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>🔩 Golden Gate Assembly</h2>
-        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-          One-pot seamless assembly using a Type IIS restriction enzyme. The enzyme cuts outside its recognition site,
-          generating defined {ovhLen}-nt overhangs. Fragments with compatible overhangs ligate directionally.
+      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: `4px solid ${accent}` }}>
+        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>🔩 Golden Gate</h2>
+        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>
+          A Type IIS enzyme cuts outside its own site, so the overhang is whatever you put there.
+          Parts join in one defined order and the sites end up on the pieces you throw away.
         </p>
       </div>
 
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', alignItems: 'flex-end' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-            <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Type IIS Enzyme</label>
-            <select value={enzyme} onChange={e => setEnzyme(e.target.value)} className="input-control" style={{ padding: '0.5rem 0.75rem', fontSize: '0.88rem' }}>
-              {GOLDEN_GATE_ENZYMES.map(e => <option key={e} value={e}>{e} ({GG_OVERHANG_LEN[e] ?? 4}-nt overhang)</option>)}
-            </select>
-          </div>
-        </div>
-
-        <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem' }}>Assembly Fragments</h3>
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-          <select value={newFrag} onChange={e => setNewFrag(e.target.value)} className="input-control" style={{ flex: 1, padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}>
-            <option value="">— select fragment —</option>
-            {sequences.map(s => <option key={s.id} value={s.id}>{s.name} ({s.size} bp)</option>)}
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <select value={enzyme} onChange={e => setEnzyme(e.target.value)} className="input-control" style={{ fontSize: '0.85rem', padding: '0.5rem' }}>
+            {GOLDEN_GATE_ENZYMES.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
-          <button className="btn btn-secondary" onClick={addFrag} disabled={!newFrag} style={{ fontSize: '0.82rem' }}>+ Add</button>
+          <select value={newFrag} onChange={e => setNewFrag(e.target.value)} className="input-control" style={{ flex: 1, minWidth: 180, padding: '0.5rem', fontSize: '0.85rem' }}>
+            <option value="">— select part —</option>
+            {sequences.filter(s => !picked.includes(s.id)).map(s => (
+              <option key={s.id} value={s.id}>{s.name} ({s.size} bp)</option>
+            ))}
+          </select>
+          <button className="btn btn-secondary" onClick={() => { if (newFrag) { setPicked(p => [...p, newFrag]); setNewFrag(''); } }} disabled={!newFrag} style={{ fontSize: '0.82rem' }}>+ Add</button>
         </div>
 
-        {fragments.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '1rem' }}>
-            {fragments.map((id, i) => {
-              const s = sequences.find(x => x.id === id);
-              return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.85rem', background: 'white', borderRadius: '7px', border: '1px solid var(--glass-border)' }}>
-                  <span style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#f59e0b', background: '#f59e0b18', padding: '0.1rem 0.4rem', borderRadius: '3px', fontWeight: 700 }}>{i + 1}</span>
-                  <span style={{ fontWeight: 600, fontSize: '0.88rem', flex: 1 }}>{s?.name ?? id}</span>
-                  <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{s?.size} bp</span>
-                  <span style={{ fontSize: '0.72rem', color: '#22c55e', background: '#22c55e18', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
-                    ovh: NNNN…
-                  </span>
-                  <button onClick={() => setFragments(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.8rem' }}>✕</button>
-                </div>
-              );
-            })}
+        {picked.map((id, i) => {
+          const s = sequences.find(x => x.id === id);
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.45rem 0.75rem', background: 'white', borderRadius: '6px', border: '1px solid var(--glass-border)', marginBottom: '0.3rem' }}>
+              <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: accent, background: `${accent}18`, padding: '0.1rem 0.35rem', borderRadius: '3px', fontWeight: 700 }}>{i + 1}</span>
+              <span style={{ flex: 1, fontWeight: 600, fontSize: '0.88rem' }}>{s?.name ?? id}</span>
+              <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{s?.size} bp</span>
+              <button onClick={() => setPicked(p => p.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+            </div>
+          );
+        })}
+
+        {picked.length < 2 && (
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.75rem 0 0' }}>
+            Add at least two parts. Each needs {enzyme} sites arranged so that cutting releases it
+            without them — the pieces that keep a site are the ones discarded.
+          </p>
+        )}
+
+        {result && (
+          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--glass-border)', display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.82rem' }}>
+            <span><span style={{ color: 'var(--text-muted)' }}>Released </span>{result.parts.length}</span>
+            <span><span style={{ color: 'var(--text-muted)' }}>Discarded </span>{result.discarded.length}</span>
+            {result.overhangs.length > 0 && (
+              <span style={{ fontFamily: 'monospace' }}>
+                <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-sans)' }}>Overhangs </span>
+                {result.overhangs.join(' · ')}
+              </span>
+            )}
           </div>
         )}
-
-        {fragments.length >= 2 && (
-          <GGProtocol enzyme={enzyme} fragmentCount={fragments.length} totalSize={totalSize} ovhLen={ovhLen} />
-        )}
       </div>
-    </div>
-  );
-}
 
-function GGProtocol({ enzyme, fragmentCount, totalSize, ovhLen }: { enzyme: string; fragmentCount: number; totalSize: number; ovhLen: number }) {
-  const steps = [
-    { icon: '🧬', title: 'Design overhangs', details: [`Each fragment needs unique ${ovhLen}-nt overhangs flanking the ${enzyme} site.`, `Overhangs must be distinct — check fidelity at neb.com/tools/gg-fidelity.`, `Ensure no ${enzyme} site exists inside any fragment (or remove it by silent mutation).`] },
-    { icon: '🔩', title: `One-pot reaction (${enzyme})`, details: [`${fragmentCount} fragment(s) + linearized vector: 75 ng each`, `${enzyme}: 1 µL (10 U/µL, NEB)`, `T4 DNA Ligase: 1 µL (400 U/µL, NEB)`, `10× T4 DNA Ligase Buffer: 2 µL`, `H₂O: up to 20 µL`, `→ Thermocycler: 37°C 1 min / 16°C 1 min × 25–50 cycles, then 60°C 5 min`] },
-    { icon: '🦠', title: 'Transformation', details: ['Transform 2 µL into 25 µL chemically competent cells.', 'Plate on LB + antibiotic.', `Expected correct clone rate: >80% with ${ovhLen}-nt verified overhangs.`] },
-    { icon: '🔬', title: 'Verification', details: [`Colony PCR across junctions.`, `Expect construct: ~${totalSize.toLocaleString()} bp total.`, 'Sanger sequencing of all junctions.'] },
-  ];
-  return (
-    <div>
-      <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem', color: '#f59e0b' }}>Assembly Protocol</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        {steps.map((s, i) => <ProtocolStep key={i} step={s} />)}
-      </div>
+      {result && result.overhangIssues.length > 0 && (
+        <div className="glass-panel" style={{ padding: '1.1rem 1.35rem', border: '1px solid rgba(217,119,6,0.35)', background: 'rgba(217,119,6,0.05)' }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#a3560a', marginBottom: '0.5rem' }}>
+            Overhang set
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            {result.overhangIssues.map((i, k) => (
+              <li key={k} style={{ fontSize: '0.85rem', lineHeight: 1.55, color: 'var(--text-secondary)' }}>{i.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {result && <ProblemList problems={result.problems} />}
+
+      {result?.assemblies[0] && (
+        <ConstructPanel
+          assembly={result.assemblies[0]}
+          junctions={junctions}
+          method={`Golden Gate (${enzyme})`}
+          accent={accent}
+        />
+      )}
     </div>
   );
 }
@@ -594,50 +615,8 @@ function GGProtocol({ enzyme, fragmentCount, totalSize, ovhLen }: { enzyme: stri
 // ─── In-Fusion Panel ──────────────────────────────────────────────────────────
 
 function InFusionPanel({ sequences }: { sequences: SeqRecord[] }) {
-  const [insertId, setInsertId] = useState('');
-  const [vectorId, setVectorId] = useState('');
-  const [enzyme, setEnzyme] = useState('EcoRI');
-
-  const insert = sequences.find(s => s.id === insertId);
-  const vector = sequences.find(s => s.id === vectorId);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: '4px solid #22c55e' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>🔀 In-Fusion® Cloning</h2>
-        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-          Seamless ligation-independent cloning. PCR-amplify your insert with 15-bp overhangs matching the linearised vector ends. The In-Fusion enzyme fuses them via 5′→3′ exonuclease activity — no restriction sites needed.
-        </p>
-      </div>
-
-      <div className="glass-panel" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-          <SeqSelect label="Insert (PCR product)" sequences={sequences} value={insertId} onChange={setInsertId} accent="var(--accent-green)" />
-          <SeqSelect label="Linearised Vector" sequences={sequences.filter(s => s.type === 'plasmid')} value={vectorId} onChange={setVectorId} accent="var(--accent-blue)" />
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '1.25rem' }}>
-          <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Linearisation enzyme (for vector)</label>
-          <select value={enzyme} onChange={e => setEnzyme(e.target.value)} className="input-control" style={{ maxWidth: 240, padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}>
-            {Object.keys(ENZYMES).map(e => <option key={e} value={e}>{e}</option>)}
-          </select>
-        </div>
-
-        {insert && vector && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <InfoBanner color="green" text={`Design forward primer: 5′-[last 15 bp of vector]-${insert.sequence.slice(0, 18).toUpperCase()}…-3′`} />
-            <InfoBanner color="green" text={`Design reverse primer: 5′-[RC of first 15 bp of vector]-[RC of last 18 bp of insert]…-3′`} />
-            {[
-              { icon: '🔬', title: 'Linearise vector', details: [`Digest ${vector.name} with ${enzyme}`, 'Gel-purify backbone band', 'Elute in 30 µL EB'] },
-              { icon: '🧬', title: 'PCR amplify insert', details: [`Template: ${insert.name}`, '15-bp vector-homology tails on each primer', 'High-fidelity polymerase (Q5, Phusion)', 'Gel-purify or column-purify PCR product'] },
-              { icon: '🔀', title: 'In-Fusion reaction', details: ['Vector: 100 ng', `Insert: ${Math.round(100 * insert.size / vector.size)} ng (2:1 molar ratio)`, 'In-Fusion HD Enzyme: 2 µL', '5× In-Fusion HD Buffer: 4 µL', 'H₂O to 20 µL', '→ 50°C × 15 min, then ice'] },
-              { icon: '🦠', title: 'Transform Stellar cells', details: ['Add 2.5 µL to 25 µL Stellar competent cells', 'Incubate on ice 30 min', 'Heat shock 42°C × 30 s', 'SOC recovery 1 h at 37°C', `Plate on selection. Expected size: ~${(insert.size + vector.size).toLocaleString()} bp`] },
-            ].map((s, i) => <ProtocolStep key={i} step={s} />)}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return <HomologyPanel sequences={sequences} method="infusion" accent="#a855f7" icon="🔀"
+    blurb="Seamless ligation-independent cloning. The In-Fusion enzyme fuses fragments through 15 bp of shared sequence at the ends that meet — no restriction sites needed." />;
 }
 
 // ─── Gateway Panel ────────────────────────────────────────────────────────────
@@ -687,48 +666,97 @@ function GatewayPanel({ sequences }: { sequences: SeqRecord[] }) {
 // ─── Gibson Assembly Panel ───────────────────────────────────────────────────
 
 function GibsonPanel({ sequences }: { sequences: SeqRecord[] }) {
-  const [fragments, setFragments] = useState<string[]>([]);
+  return <HomologyPanel sequences={sequences} method="gibson" accent="#06b6d4" icon="🧩"
+    blurb="Isothermal multi-fragment assembly. Each fragment shares homology with its neighbour; the enzyme mix chews back, anneals and repairs in one 50 °C reaction." />;
+}
+
+/**
+ * Gibson, In-Fusion and NEBuilder share a panel because they share a mechanism.
+ * What differs is how much homology each wants, which the module knows.
+ */
+function HomologyPanel({ sequences, method, accent, icon, blurb }: {
+  sequences: SeqRecord[]; method: OverlapMethod; accent: string; icon: string; blurb: string;
+}) {
+  const [picked, setPicked] = useState<string[]>([]);
   const [newFrag, setNewFrag] = useState('');
-  const addFrag = () => { if (newFrag) { setFragments(p => [...p, newFrag]); setNewFrag(''); } };
-  const totalSize = fragments.reduce((s, id) => s + (sequences.find(x => x.id === id)?.size ?? 0), 0);
+  const [topology, setTopology] = useState<'circular' | 'linear'>('circular');
+
+  const chosen = picked.map(id => sequences.find(s => s.id === id)).filter(Boolean) as SeqRecord[];
+
+  const result = useMemo(() => {
+    if (chosen.length < 2) return null;
+    try {
+      return assembleByHomology(
+        chosen.map(s => fragmentOf(s.id, s.name, s.sequence)),
+        method,
+        { topology },
+      );
+    } catch {
+      return null;
+    }
+  }, [chosen, method, topology]);
+
+  const junctions: JunctionRow[] = result?.checks.map(c => ({
+    from: c.from, to: c.to, shared: c.overlap,
+    detail: `${c.length} bp · Tm ${c.tm.toFixed(0)} °C · GC ${Math.round(c.gc * 100)}%`,
+    warnings: c.warnings,
+  })) ?? [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: '4px solid #06b6d4' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>🧩 Gibson Assembly</h2>
-        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-          Isothermal, enzyme-based multi-fragment assembly. Each fragment shares ~20–40 bp overlaps with its neighbours. The enzyme mix (T5 exonuclease, Phusion polymerase, Taq ligase) joins them in a single 50°C reaction.
-        </p>
+      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: `4px solid ${accent}` }}>
+        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>{icon} {result?.spec.name ?? method}</h2>
+        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>{blurb}</p>
+        {result && (
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.5rem 0 0' }}>{result.spec.note}</p>
+        )}
       </div>
+
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-          <select value={newFrag} onChange={e => setNewFrag(e.target.value)} className="input-control" style={{ flex: 1, padding: '0.5rem', fontSize: '0.85rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <select value={newFrag} onChange={e => setNewFrag(e.target.value)} className="input-control" style={{ flex: 1, minWidth: 180, padding: '0.5rem', fontSize: '0.85rem' }}>
             <option value="">— select fragment —</option>
-            {sequences.map(s => <option key={s.id} value={s.id}>{s.name} ({s.size} bp)</option>)}
+            {sequences.filter(s => !picked.includes(s.id)).map(s => (
+              <option key={s.id} value={s.id}>{s.name} ({s.size} bp)</option>
+            ))}
           </select>
-          <button className="btn btn-secondary" onClick={addFrag} disabled={!newFrag} style={{ fontSize: '0.82rem' }}>+ Add</button>
+          <button className="btn btn-secondary" onClick={() => { if (newFrag) { setPicked(p => [...p, newFrag]); setNewFrag(''); } }} disabled={!newFrag} style={{ fontSize: '0.82rem' }}>+ Add</button>
+          <select value={topology} onChange={e => setTopology(e.target.value as 'circular' | 'linear')} className="input-control" style={{ fontSize: '0.82rem', padding: '0.5rem' }}>
+            <option value="circular">Circular product</option>
+            <option value="linear">Linear product</option>
+          </select>
         </div>
-        {fragments.map((id, i) => {
+
+        {picked.map((id, i) => {
           const s = sequences.find(x => x.id === id);
           return (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.45rem 0.75rem', background: 'white', borderRadius: '6px', border: '1px solid var(--glass-border)', marginBottom: '0.3rem' }}>
-              <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: '#06b6d4', background: '#06b6d418', padding: '0.1rem 0.35rem', borderRadius: '3px', fontWeight: 700 }}>{i + 1}</span>
+              <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: accent, background: `${accent}18`, padding: '0.1rem 0.35rem', borderRadius: '3px', fontWeight: 700 }}>{i + 1}</span>
               <span style={{ flex: 1, fontWeight: 600, fontSize: '0.88rem' }}>{s?.name ?? id}</span>
               <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{s?.size} bp</span>
-              <button onClick={() => setFragments(p => p.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+              <button onClick={() => setPicked(p => p.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
             </div>
           );
         })}
-        {fragments.length >= 2 && (
-          <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {[
-              { icon: '🧬', title: 'Design overlaps', details: ['Each fragment needs 20–40 bp homology to its neighbour.', 'Add overlaps via PCR primers (homology arms on primer tails).', 'Check that no overlap contains secondary structure (Tm > 48°C preferred).'] },
-              { icon: '🧩', title: 'Gibson Assembly reaction', details: [`${fragments.length} fragment(s), ~50 ng each`, 'NEBuilder® HiFi DNA Assembly Master Mix (NEB): 10 µL', 'Total DNA volume: 10 µL (dilute if needed)', '→ 50°C × 15–60 min (HiFi); or 50°C × 1 h (classic Gibson)', `Expected construct: ~${totalSize.toLocaleString()} bp`] },
-              { icon: '🦠', title: 'Transform', details: ['Use 2 µL of reaction in 25 µL NEB 5-alpha cells.', 'Plate on LB + antibiotic selection.'] },
-            ].map((s, i) => <ProtocolStep key={i} step={s} />)}
-          </div>
+
+        {picked.length < 2 && (
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.75rem 0 0' }}>
+            Add at least two fragments. They need shared sequence at the ends that should meet —
+            the homology is found, not assumed.
+          </p>
         )}
       </div>
+
+      {result && <ProblemList problems={result.problems} />}
+
+      {result?.assemblies[0] && (
+        <ConstructPanel
+          assembly={result.assemblies[0]}
+          junctions={junctions}
+          method={result.spec.name}
+          accent={accent}
+        />
+      )}
     </div>
   );
 }
