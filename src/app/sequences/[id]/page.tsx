@@ -8,6 +8,8 @@ import { ancestryOf, descendantsOf } from '@/lib/lineage';
 import { historyFor } from '@/lib/history';
 import SequenceLineage from '@/components/SequenceLineage';
 import RecordHistory from '@/components/RecordHistory';
+import FeatureCandidates from '@/components/FeatureCandidates';
+import { candidatesForSequence, fullLibrary } from '@/lib/feature-library';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,10 +26,12 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   if (!seq) notFound();
 
   // Where it came from, what came from it, and what has been done to it since.
-  const [ancestry, descendants, history] = await Promise.all([
+  const [ancestry, descendants, history, candidates, library] = await Promise.all([
     ancestryOf(seq.id),
     descendantsOf(seq.id),
     historyFor('GeneSequence', seq.id),
+    candidatesForSequence(seq.id),
+    fullLibrary(),
   ]);
 
   return (
@@ -89,6 +93,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         size={seq.size}
         seqType={seq.type}
         initialFeatures={normaliseFeatures(seq.features)}
+        library={library}
         initialPrimers={seq.primers.map(p => ({
           id: p.id,
           name: p.name,
@@ -104,6 +109,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           the sequence is what people open the page for, and provenance is
           what they come back for. */}
       <div style={{ marginTop: '1.5rem' }}>
+        <FeatureCandidates sequenceId={seq.id} candidates={candidates} />
         <SequenceLineage ancestry={ancestry} descendants={descendants} />
         <RecordHistory entries={history} />
       </div>

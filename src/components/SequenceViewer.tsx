@@ -14,6 +14,7 @@ import {
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import { locatePrimers } from '@/lib/primers';
 import { annotate } from '@/lib/annotation';
+import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
@@ -68,6 +69,12 @@ interface Props {
   seqType: string;
   initialFeatures: SequenceFeature[];
   initialPrimers?: SavedPrimer[];
+  /**
+   * Everything this installation can recognise, shipped and learned together.
+   * Passed in because annotation runs here, in the browser, and the learned
+   * half lives in the database.
+   */
+  library?: LibraryFeature[];
 }
 
 // ─── Auto-suggest feature type from name ─────────────────────────────────────
@@ -130,7 +137,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, initialFeatures, initialPrimers = [] }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, initialFeatures, initialPrimers = [], library }: Props) {
   const router = useRouter();
   const [leftTab, setLeftTab] = useState<LeftTab>('map');
   const [features, setFeatures] = useState<SequenceFeature[]>(initialFeatures);
@@ -412,7 +419,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     // Circular when the record says so, because a part sitting across the
     // origin is otherwise invisible -- and an origin of replication is exactly
     // the sort of thing that ends up there.
-    const detected = annotate(sequence, { circular: seqType === 'plasmid' });
+    const detected = annotate(sequence, { circular: seqType === 'plasmid', extra: library });
     const newFeats: SequenceFeature[] = detected
       .filter(d => !features.some(f => f.name === d.name && Math.abs(f.start - d.start) < 50))
       .map(d => ({

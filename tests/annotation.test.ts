@@ -194,3 +194,45 @@ describe('learning from an imported file', () => {
     assert.ok(annotate(seq, { extra: [entry] }).some(h => h.name === 'house MCS'));
   });
 });
+
+describe('a learned part behaves like a shipped one', () => {
+  test('once added, it is found in a sequence that carries no annotations', () => {
+    // The whole point of learning: the second plasmid with the same part gets
+    // it recognised without anyone annotating it by hand.
+    const housePart = filler(70, 45);
+    const donor = filler(71, 100) + housePart + filler(72, 100);
+    const other = filler(73, 200) + housePart + filler(74, 200);
+
+    // Nothing knows it yet.
+    assert.equal(annotate(other).length, 0);
+
+    const [candidate] = candidatesFrom(donor, [
+      { name: 'house part', type: 'misc_feature', start: 101, end: 145 },
+    ]);
+    assert.equal(candidate.worthAdding, true);
+
+    const learned = toLibraryFeature(candidate);
+    const hits = annotate(other, { extra: [learned] });
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].name, 'house part');
+    assert.equal(hits[0].identity, 1);
+  });
+
+  test('a learned part is found in a variant too, as a shipped one would be', () => {
+    const housePart = filler(75, 45);
+    const donor = filler(76, 100) + housePart + filler(77, 100);
+    const [candidate] = candidatesFrom(donor, [
+      { name: 'house part', type: 'misc_feature', start: 101, end: 145 },
+    ]);
+    const learned = toLibraryFeature(candidate);
+
+    const varied = housePart.split('');
+    varied[5] = varied[5] === 'A' ? 'G' : 'A';
+    varied[30] = varied[30] === 'C' ? 'T' : 'C';
+    const other = filler(78, 150) + varied.join('') + filler(79, 150);
+
+    const hits = annotate(other, { extra: [learned] });
+    assert.equal(hits.length, 1, 'tolerance should apply to learned parts as well');
+    assert.ok(hits[0].identity < 1);
+  });
+});

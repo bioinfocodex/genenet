@@ -690,3 +690,31 @@ model SequenceLineage {
   @@index([childId])
   @@index([parentId])
 }
+
+/**
+ * A part the lab has taught the system to recognise.
+ *
+ * Kept apart from the shipped library rather than merged into it, so it is
+ * always clear which parts came with the software and which came from a file
+ * somebody imported. The uniqueness is on name and sequence together: two parts
+ * may share a name when one is a variant of the other, and keeping both is the
+ * point -- what must not happen is the same bases stored twice.
+ */
+model LibraryPart {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  color       String
+  sequence    String
+  note        String?
+
+  /** Which sequence it was taken from, when it came from an import. */
+  sourceId    String?
+  sourceName  String?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  @@unique([name, sequence])
+  @@index([name])
+}

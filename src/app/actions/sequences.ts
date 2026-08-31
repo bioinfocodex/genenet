@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { calcTm, calcGC, parseFasta, parseGenBank } from '@/lib/simulation';
 import { requireUser } from '@/lib/auth-guard';
 import { recordLineage } from '@/lib/lineage';
+import { addParts } from '@/lib/feature-library';
 import {
   parseSequenceText, countFastaRecords, type ImportedSequence,
 } from '@/lib/sequence-import';
@@ -258,4 +259,41 @@ export async function saveSimulation(formData: FormData) {
   });
 
   if (geneSequenceId) revalidatePath(`/sequences/${geneSequenceId}`);
+}
+
+export type AddPartsResult = { added: number } | { error: string };
+
+/**
+ * Teach the library the parts a person picked out of an imported file.
+ *
+ * Accepting is deliberate rather than automatic: an annotation is only as good
+ * as the file it came from, and a library quietly filled from every import
+ * would soon recognise things that are not there.
+ */
+export async function addFeaturesToLibrary(formData: FormData): Promise<AddPartsResult> {
+  const session = await requireUser();
+
+  const sequenceId = (formData.get('sequenceId') as string | null) ?? null;
+  const raw = (formData.get('parts') as string | null) ?? '[]';
+
+  let parts: { name: string; type: string; color: string; sequence: string }[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return { error: 'Nothing to add.' };
+    parts = parsed.filter(
+      (p): p is { name: string; type: string; color: string; sequence: string } =>
+        !!p && typeof p.name === 'string' && typeof p.sequence === 'string' && p.sequence.length >= 10,
+    );
+  } catch {
+    return { error: 'Could not read the selection.' };
+  }
+  if (parts.length === 0) return { error: 'Nothing was selected.' };
+
+  const source = sequenceId
+    ? await prisma.geneSequence.findUnique({ where: { id: sequenceId }, select: { id: true, name: true } })
+    : null;
+
+  const added = await addParts(parts, source, session.id);
+  revalidatePath(`/sequences/${sequenceId ?? ''}`);
+  return { added };
 }
