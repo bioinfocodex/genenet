@@ -79,6 +79,14 @@ export interface AssemblyProblem {
 export interface AssemblyResult {
   assemblies: Assembly[];
   problems: AssemblyProblem[];
+  /**
+   * Arrangements the search actually tried.
+   *
+   * Reported because it is the honest measure of how hard the input was, and
+   * because it is what a regression in the symmetry-breaking would show up in.
+   * Wall-clock time measures the machine; this measures the algorithm.
+   */
+  steps: number;
 }
 
 export interface AssemblyOptions {
@@ -207,7 +215,7 @@ export function assemble(input: Fragment[], opts: AssemblyOptions): AssemblyResu
   const problems: AssemblyProblem[] = [];
   const fragments = input.filter(f => f.seq.length > 0);
   if (fragments.length === 0) {
-    return { assemblies: [], problems: [{ kind: 'no-assembly', message: 'No fragments were given.' }] };
+    return { assemblies: [], problems: [{ kind: 'no-assembly', message: 'No fragments were given.' }], steps: 0 };
   }
 
   // Both orientations of every fragment, unless it is a palindrome, in which
@@ -383,5 +391,5 @@ export function assemble(input: Fragment[], opts: AssemblyOptions): AssemblyResu
     });
   }
 
-  return { assemblies: found, problems };
+  return { assemblies: found, problems, steps };
 }

@@ -256,35 +256,48 @@ describe('problem reporting', () => {
 });
 
 describe('the search stays bounded', () => {
-  test('fragments that all share one end do not hang the search', () => {
-    // Eight identical ends generate an exponential number of paths that all
-    // collapse to a couple of molecules. Before the budget existed this took
-    // nearly three seconds, which in a browser is a frozen tab.
+  /**
+   * These count arrangements tried, not milliseconds. Wall-clock assertions
+   * measure the machine rather than the algorithm, and a shared CI runner is a
+   * slower machine than a laptop -- an earlier version of this file asserted
+   * under 300 ms and failed in CI while passing locally.
+   */
+  test('fragments that all share one end do not explode the search', () => {
     const many = Array.from({ length: 8 }, (_, i) => ({
       id: 'S' + i, name: 'S' + i, seq: 'ACGT'.repeat(50),
       left: sticky("5'", 'GATC'), right: sticky("5'", 'GATC'),
     }));
-    const t0 = Date.now();
     const r = assemble(many, { mode: 'overhang', topology: 'circular' });
-    const ms = Date.now() - t0;
-    assert.ok(ms < 1500, `search took ${ms}ms`);
+    // Every ordering joins, so this is the worst case the pruning can face.
+    // Fixing the first fragment keeps it near fourteen thousand; exploring
+    // rotations and mirrors separately would multiply that by sixteen.
+    assert.ok(r.steps < 50_000, `search tried ${r.steps} arrangements`);
     assert.ok(
       r.problems.some(p => p.kind === 'search-truncated' || p.kind === 'ambiguous-end'),
       'a pathological set should be explained, not silently truncated',
     );
   });
 
-  test('a well-formed assembly is nowhere near the budget', () => {
+  test('a well-formed assembly is found almost immediately', () => {
     const oh = ['GGAG', 'TTCG', 'TGCC', 'ACGA', 'GTCA', 'CCTT'];
     const parts = oh.map((_, i) => ({
       id: 'F' + i, name: 'F' + i, seq: 'ACGTTGCA'.repeat(20),
       left: sticky("5'", revComp(oh[i])),
       right: sticky("5'", oh[(i + 1) % oh.length]),
     }));
-    const t0 = Date.now();
     const r = assemble(parts, { mode: 'overhang', topology: 'circular' });
-    assert.ok(Date.now() - t0 < 300);
+    // Distinct overhangs leave exactly one continuation at each step, so the
+    // path is forced: six fragments should cost about six decisions.
+    assert.ok(r.steps < 100, `search tried ${r.steps} arrangements for six forced joins`);
     assert.equal(r.problems.some(p => p.kind === 'search-truncated'), false);
-    assert.ok(r.assemblies.length >= 1);
+    assert.equal(r.assemblies.length, 1);
+  });
+
+  test('the step count is reported even when nothing assembles', () => {
+    const lone = { id: 'L', name: 'L', seq: 'ACGTACGT', left: sticky("5'", 'AAAA'), right: sticky("5'", 'AAAA') };
+    const other = { id: 'M', name: 'M', seq: 'TTTTTTTT', left: sticky("5'", 'CCCC'), right: sticky("5'", 'CCCC') };
+    const r = assemble([lone, other], { mode: 'overhang', topology: 'circular' });
+    assert.equal(r.assemblies.length, 0);
+    assert.equal(typeof r.steps, 'number');
   });
 });
