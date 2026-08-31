@@ -10,6 +10,7 @@ import { fragmentOf } from '@/lib/assembly';
 import { assembleByHomology, type OverlapMethod } from '@/lib/homology-cloning';
 import { goldenGate } from '@/lib/golden-gate';
 import { gatewayReaction } from '@/lib/gateway';
+import { topoCloning, TOPO_METHODS, type TopoMethod } from '@/lib/topo';
 import { ConstructPanel, ProblemList, type JunctionRow } from './cloning/AssemblyResult';
 import MultiLaneGel from './MultiLaneGel';
 import PlasmidMap from './PlasmidMap';
@@ -844,46 +845,96 @@ function HomologyPanel({ sequences, method, accent, icon, blurb }: {
 // ─── TA / GC Cloning Panel ────────────────────────────────────────────────────
 
 function TAPanel({ sequences }: { sequences: SeqRecord[] }) {
+  const [method, setMethod] = useState<TopoMethod>('topo-ta');
   const [insertId, setInsertId] = useState('');
-  const [type, setType] = useState<'TA' | 'GC'>('TA');
+  const [vectorId, setVectorId] = useState('');
+  const accent = '#ea580c';
+
   const insert = sequences.find(s => s.id === insertId);
+  const vector = sequences.find(s => s.id === vectorId);
+
+  const result = useMemo(() => {
+    if (!insert || !vector) return null;
+    try {
+      return topoCloning(
+        { name: insert.name, sequence: insert.sequence },
+        { name: vector.name, sequence: vector.sequence },
+        method,
+      );
+    } catch {
+      return null;
+    }
+  }, [insert, vector, method]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: '4px solid #f97316' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>🔗 TA / GC Cloning</h2>
-        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-          Direct cloning of PCR products. Taq polymerase adds a 3′ A-overhang (TA cloning) or GC extensions (GC cloning) that pair with the linearised vector. No restriction enzymes needed.
+      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: `4px solid ${accent}` }}>
+        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>🔗 TA and TOPO</h2>
+        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>
+          Taq leaves a single 3&prime; A on a PCR product and the vector carries a 3&prime; T. An A pairs
+          with a T at both ends, so unless the reaction is made directional the insert goes in
+          either way round &mdash; which is the method, not a fault.
         </p>
       </div>
+
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
-          {(['TA', 'GC'] as const).map(t => (
-            <button key={t} onClick={() => setType(t)} style={{ padding: '0.45rem 1.1rem', borderRadius: '8px', border: `2px solid ${type === t ? '#f97316' : 'var(--glass-border)'}`, background: type === t ? '#f9731615' : 'white', color: type === t ? '#f97316' : 'var(--text-muted)', cursor: 'pointer', fontWeight: type === t ? 700 : 400, fontFamily: 'inherit', fontSize: '0.88rem' }}>
-              {t} Cloning
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          {(Object.keys(TOPO_METHODS) as TopoMethod[]).map(m => (
+            <button
+              key={m}
+              onClick={() => setMethod(m)}
+              className={method === m ? 'btn btn-primary' : 'btn btn-secondary'}
+              style={{ fontSize: '0.8rem' }}
+            >
+              {TOPO_METHODS[m].name}
             </button>
           ))}
         </div>
-        <SeqSelect label="PCR Insert" sequences={sequences} value={insertId} onChange={setInsertId} accent="#f97316" />
-        {insert && (
-          <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {(type === 'TA' ? [
-              { icon: '🔬', title: 'Generate A-tailed PCR product', details: [`Amplify ${insert.name} with Taq polymerase (adds 3′ A)`, 'Do NOT use proofreading polymerase (removes A-tail)', 'Run on gel — confirm single band'] },
-              { icon: '🔗', title: 'TA Ligation', details: ['Fresh PCR product: 1–4 µL', 'pCR™2.1-TOPO® vector: 1 µL (or equivalent TA vector)', 'Salt solution: 1 µL', 'H₂O to 6 µL', '→ Mix gently. Incubate 5 min room temperature'] },
-              { icon: '🦠', title: 'Transform One Shot® cells', details: ['Add 2 µL to competent cells. Ice 30 min. Heat shock 42°C 30 s.', 'Plate on LB + Amp + X-gal (blue-white screening)', 'White colonies = insert-containing plasmid', 'Screen by colony PCR or miniprep + digest'] },
-            ] : [
-              { icon: '🔬', title: 'Prepare blunt PCR product', details: [`Amplify ${insert.name} with proofreading polymerase`, 'GC cloning adds GC extensions to vector — blunt product required'] },
-              { icon: '🔗', title: 'GC cloning reaction', details: ['PCR product: 1 µL', 'GC Cloning vector: 1 µL', 'Solution I (Mighty Mix or equivalent): 4 µL', '→ 16°C × 30 min'] },
-              { icon: '🦠', title: 'Transform', details: ['Standard transformation into DH5α or equivalent', 'Colony PCR to verify insert size'] },
-            ]).map((s, i) => <ProtocolStep key={i} step={s} />)}
-          </div>
-        )}
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 1rem', lineHeight: 1.55 }}>
+          {TOPO_METHODS[method].note} Vector ends: {TOPO_METHODS[method].vectorEnd}.
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem' }}>
+          <SeqSelect label="PCR product" sequences={sequences} value={insertId} onChange={setInsertId} accent={accent} />
+          <SeqSelect label="Vector" sequences={sequences} value={vectorId} onChange={setVectorId} accent={accent} />
+        </div>
       </div>
+
+      {result && result.problems.length > 0 && (
+        <div className="glass-panel" style={{ padding: '1.1rem 1.35rem', border: '1px solid rgba(220,38,38,0.35)', background: 'rgba(220,38,38,0.05)' }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#b91c1c', marginBottom: '0.5rem' }}>
+            This will not clone as set up
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            {result.problems.map((p, i) => <li key={i} style={{ fontSize: '0.85rem', lineHeight: 1.55, color: 'var(--text-secondary)' }}>{p}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {result && result.notes.length > 0 && (
+        <div className="glass-panel" style={{ padding: '1rem 1.3rem', background: 'rgba(37,99,235,0.04)', border: '1px solid rgba(37,99,235,0.18)' }}>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            {result.notes.map((n, i) => <li key={i} style={{ fontSize: '0.83rem', lineHeight: 1.55, color: 'var(--text-secondary)' }}>{n}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {result?.orientations.map((o, i) => (
+        <ConstructPanel
+          key={i}
+          assembly={o.assembly}
+          junctions={o.assembly.junctions.map(j => ({
+            from: j.from, to: j.to,
+            shared: j.shared || '(blunt)',
+            detail: j.kind === 'blunt' ? 'blunt join' : `${j.shared.length} nt overhang`,
+          }))}
+          method={`${result.spec.name} — insert ${o.sense}`}
+          accent={o.sense === 'forward' ? accent : '#94a3b8'}
+        />
+      ))}
     </div>
   );
 }
-
-// ─── Shared SeqSelect ─────────────────────────────────────────────────────────
 
 function SeqSelect({ label, sequences, value, onChange, accent }: { label: string; sequences: SeqRecord[]; value: string; onChange: (v: string) => void; accent: string }) {
   return (
