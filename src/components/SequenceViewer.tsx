@@ -5,7 +5,7 @@ import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
   findORFs, reverseComplement,
-  autoDetectFeatures, reverseTranslate,
+  reverseTranslate,
   calcTm, calcGC,
   simulatePCR, ligateFragments,
   LADDER_1KB, gelPosition, calculateFragments,
@@ -13,6 +13,7 @@ import {
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import { locatePrimers } from '@/lib/primers';
+import { annotate } from '@/lib/annotation';
 import type { SequenceFeature } from '@/lib/features';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
@@ -408,11 +409,14 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   };
 
   const handleAutoDetect = () => {
-    const detected = autoDetectFeatures(sequence);
+    // Circular when the record says so, because a part sitting across the
+    // origin is otherwise invisible -- and an origin of replication is exactly
+    // the sort of thing that ends up there.
+    const detected = annotate(sequence, { circular: seqType === 'plasmid' });
     const newFeats: SequenceFeature[] = detected
       .filter(d => !features.some(f => f.name === d.name && Math.abs(f.start - d.start) < 50))
       .map(d => ({
-        id: `auto-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        id: `auto-${crypto.randomUUID()}`,
         name: d.name, start: d.start, end: d.end,
         color: d.color, type: d.type, strand: d.strand,
       }));
