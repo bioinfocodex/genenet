@@ -2,8 +2,10 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMatrix, pairwiseDistanceMatrix, neighbourJoining, upgma, toNewick, cladeOf, patristicDistance,
+  bootstrapTree, splitsOf,
   type DistanceMatrix, type TreeNode,
 } from '../src/lib/phylogenetics.ts';
+import { alignMultiple } from '../src/lib/alignment.ts';
 
 /** The worked example from Saitou & Nei, as reproduced on Wikipedia. */
 const ADDITIVE: DistanceMatrix = {
@@ -227,5 +229,139 @@ describe('distances from pairwise alignments', () => {
       assert.equal(d[i][i], 0);
       for (let j = 0; j < d.length; j++) assert.equal(d[i][j], d[j][i]);
     }
+  });
+});
+
+describe('bootstrap support', () => {
+  // A signal every replicate should see: two pairs, near-identical within,
+  // far apart between. Support for the true split must be high.
+  const L = 300;
+  const rand = (() => { let a = 7; return () => (a = (a * 1103515245 + 12345) % 2147483648) / 2147483648; })();
+  const base = Array.from({ length: L }, () => 'ACGT'[Math.floor(rand() * 4)]).join('');
+  const flip = (s: string, n: number) => {
+    const c = s.split('');
+    for (let k = 0; k < n; k++) {
+      const p = Math.floor(rand() * c.length);
+      c[p] = 'ACGT'.split('').filter(b => b !== c[p])[Math.floor(rand() * 3)];
+    }
+    return c.join('');
+  };
+  const other = flip(base, 60);
+  const taxa = [
+    { id: '1', name: 'a1', sequence: flip(base, 3) },
+    { id: '2', name: 'a2', sequence: flip(base, 3) },
+    { id: '3', name: 'b1', sequence: flip(other, 3) },
+    { id: '4', name: 'b2', sequence: flip(other, 3) },
+  ];
+
+  test('a real grouping gets high support', () => {
+    const { tree } = bootstrapTree(taxa, { replicates: 100, seed: 42 });
+    const supports: number[] = [];
+    const walk = (n: TreeNode) => {
+      if (n.support !== undefined) supports.push(n.support);
+      n.children?.forEach(walk);
+    };
+    walk(tree);
+    assert.ok(supports.length > 0, 'no internal branch was annotated');
+    assert.ok(Math.max(...supports) > 80, `expected strong support, got ${supports.join(', ')}`);
+  });
+
+  test('support is a percentage', () => {
+    const { tree } = bootstrapTree(taxa, { replicates: 50, seed: 1 });
+    const walk = (n: TreeNode) => {
+      if (n.support !== undefined) {
+        assert.ok(n.support >= 0 && n.support <= 100, `out of range: ${n.support}`);
+      }
+      n.children?.forEach(walk);
+    };
+    walk(tree);
+  });
+
+  test('the same seed gives the same answer twice', () => {
+    const a = bootstrapTree(taxa, { replicates: 40, seed: 99 });
+    const b = bootstrapTree(taxa, { replicates: 40, seed: 99 });
+    assert.deepEqual([...a.bySplit.entries()].sort(), [...b.bySplit.entries()].sort());
+  });
+
+  test('noise does not earn support', () => {
+    // Four sequences with no structure: whatever tree comes out, its branches
+    // should not be strongly reproducible.
+    const noise = ['n1', 'n2', 'n3', 'n4'].map((name, i) => ({
+      id: String(i), name,
+      sequence: Array.from({ length: L }, () => 'ACGT'[Math.floor(rand() * 4)]).join(''),
+    }));
+    const { tree } = bootstrapTree(noise, { replicates: 100, seed: 5 });
+    const supports: number[] = [];
+    const walk = (n: TreeNode) => { if (n.support !== undefined) supports.push(n.support); n.children?.forEach(walk); };
+    walk(tree);
+    assert.ok(
+      supports.every(s => s < 80),
+      `random sequences produced a well-supported branch: ${supports.join(', ')}`,
+    );
+  });
+
+  test('unaligned input is refused', () => {
+    assert.throws(() => bootstrapTree([
+      { id: '1', name: 'a', sequence: 'ACGTACGT' },
+      { id: '2', name: 'b', sequence: 'ACGT' },
+    ], { replicates: 5 }), /aligned/);
+  });
+
+  test('support reaches the Newick output', () => {
+    const { tree } = bootstrapTree(taxa, { replicates: 20, seed: 3 });
+    assert.match(toNewick(tree), /\)\d+:/, 'a Newick label should carry the support value');
+  });
+
+  test('splits ignore where the tree is rooted', () => {
+    // The same four taxa split two ways; both spellings are one branch.
+    const all = ['w', 'x', 'y', 'z'];
+    const t1: TreeNode = { length: 0, children: [
+      { length: 0.1, children: [{ name: 'w', length: 0.1 }, { name: 'x', length: 0.1 }] },
+      { length: 0.1, children: [{ name: 'y', length: 0.1 }, { name: 'z', length: 0.1 }] },
+    ] };
+    const t2: TreeNode = { length: 0, children: [
+      { length: 0.1, children: [{ name: 'y', length: 0.1 }, { name: 'z', length: 0.1 }] },
+      { length: 0.1, children: [{ name: 'x', length: 0.1 }, { name: 'w', length: 0.1 }] },
+    ] };
+    assert.deepEqual([...splitsOf(t1, all)].sort(), [...splitsOf(t2, all)].sort());
+  });
+});
+
+describe('multiple alignment keeps rows in register', () => {
+  test('every pair reads close to its optimal pairwise identity', () => {
+    // The centre-star merge previously threaded only the centre through new
+    // gaps, so every row after the first drifted: pairs that are 96% identical
+    // read as 32%. This pins that down.
+    const rand = (() => { let a = 3; return () => (a = (a * 1103515245 + 12345) % 2147483648) / 2147483648; })();
+    const base = Array.from({ length: 400 }, () => 'ACGT'[Math.floor(rand() * 4)]).join('');
+    const flip = (s: string, n: number) => {
+      const c = s.split('');
+      for (let k = 0; k < n; k++) { const p = Math.floor(rand() * c.length); c[p] = 'ACGT'.split('').filter(b => b !== c[p])[0]; }
+      return c.join('');
+    };
+    const far = flip(base, 80);
+    const input = [
+      { name: 'p1', sequence: flip(base, 5) },
+      { name: 'p2', sequence: flip(base, 6) },
+      { name: 'q1', sequence: flip(far, 5) },
+      { name: 'q2', sequence: flip(far, 6) },
+    ];
+    const m = alignMultiple(input);
+    assert.equal(new Set(m.rows.map(r => r.length)).size, 1, 'all rows must be the same width');
+
+    const idIn = (i: number, j: number) => {
+      let same = 0, n = 0;
+      for (let k = 0; k < m.rows[0].length; k++) {
+        const a = m.rows[i][k], b = m.rows[j][k];
+        if (a === '-' || b === '-') continue;
+        n++; if (a === b) same++;
+      }
+      return same / n;
+    };
+    // The close pairs must still read as close inside the alignment.
+    assert.ok(idIn(0, 1) > 0.9, `p1/p2 read as ${(idIn(0, 1) * 100).toFixed(1)}% inside the MSA`);
+    assert.ok(idIn(2, 3) > 0.9, `q1/q2 read as ${(idIn(2, 3) * 100).toFixed(1)}% inside the MSA`);
+    // And the distant pairs must still read as distant.
+    assert.ok(idIn(0, 2) < idIn(0, 1), 'cross-group identity should be below within-group');
   });
 });

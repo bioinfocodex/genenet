@@ -1,9 +1,9 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { GitBranch, Download, AlertTriangle } from 'lucide-react';
-import { alignPair } from '@/lib/alignment';
+import { alignMultiple } from '@/lib/alignment';
 import {
-  pairwiseDistanceMatrix, neighbourJoining, upgma, toNewick,
+  distanceMatrix, neighbourJoining, upgma, toNewick, bootstrapTree,
   type DistanceModel, type TreeNode,
 } from '@/lib/phylogenetics';
 
@@ -26,6 +26,7 @@ interface Result {
   sitesUsed: number;
   identity: number;
   saturated: string[];
+  replicates: number;
 }
 
 /** Tip coordinates for a rectangular phylogram. */
@@ -58,6 +59,7 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
   const [model, setModel] = useState<DistanceModel>('jc69');
   const [method, setMethod] = useState<Method>('nj');
   const [useLengths, setUseLengths] = useState(true);
+  const [replicates, setReplicates] = useState(100);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -72,21 +74,13 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
     // Yield so the button paints before the alignment blocks the thread.
     setTimeout(() => {
       try {
-        // Each pair aligned on its own: a distance method needs every pair
-        // measured well, not every sequence forced into one frame. One
-        // sequence placed badly in a progressive alignment otherwise reads as
-        // saturated against everything and hangs off a long false branch.
-        const taxa = chosen.map((s, i) => ({ id: String(i), name: s.name, sequence: s.sequence }));
-        const dm = pairwiseDistanceMatrix(taxa, model);
-
-        // Mean pairwise identity, as a check on whether these belong together.
-        let idSum = 0, idN = 0;
-        for (let i = 0; i < taxa.length; i++) {
-          for (let j = i + 1; j < taxa.length; j++) {
-            idSum += alignPair(taxa[i].sequence, taxa[j].sequence).identity; idN++;
-          }
-        }
-        const identity = idN ? idSum / idN : 0;
+        // One alignment, then distances from it. Bootstrap resamples this
+        // alignment's columns, so the support values have to describe the same
+        // alignment the tree came from.
+        const msa = alignMultiple(chosen.map(c => ({ name: c.name, sequence: c.sequence })));
+        const taxa = msa.names.map((name, i) => ({ id: String(i), name, sequence: msa.rows[i] }));
+        const dm = distanceMatrix(taxa, model);
+        const identity = msa.identity;
 
         // An infinite distance means two sequences are no more alike than
         // chance. A tree cannot place them, so say so rather than drawing one.
@@ -105,10 +99,13 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
           return;
         }
 
-        const tree = method === 'nj' ? neighbourJoining(dm) : upgma(dm);
+        const tree = replicates > 0
+          ? bootstrapTree(taxa, { replicates, model, method }).tree
+          : (method === 'nj' ? neighbourJoining(dm) : upgma(dm));
+
         setResult({
           tree, newick: toNewick(tree), names: dm.names, d: dm.d,
-          sitesUsed: dm.sitesUsed, identity, saturated,
+          sitesUsed: dm.sitesUsed, identity, saturated, replicates,
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not build a tree from those sequences.');
@@ -179,6 +176,14 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
               <option value="upgma">UPGMA</option>
             </select>
           </Field>
+          <Field label="Bootstrap">
+            <select className="input-control" value={replicates} onChange={e => setReplicates(Number(e.target.value))} style={{ fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}>
+              <option value={0}>Off</option>
+              <option value={100}>100 replicates</option>
+              <option value={500}>500 replicates</option>
+              <option value={1000}>1000 replicates</option>
+            </select>
+          </Field>
           <button onClick={build} disabled={running || chosen.length < 3} className="btn btn-primary" style={{ fontSize: '0.83rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <GitBranch size={14} /> {running ? 'Building…' : 'Build tree'}
           </button>
@@ -224,7 +229,16 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
               identity={result.identity}
               taxa={result.names.length}
               model={model}
+              replicates={result.replicates}
             />
+            {result.replicates > 0 && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.5rem 0 0', lineHeight: 1.6 }}>
+                Numbers on the branches are bootstrap support out of 100: how often that grouping
+                survived when the alignment&rsquo;s columns were resampled. Above 70 is usually read as
+                well supported; below that the branch is better treated as unresolved than as an
+                answer.
+              </p>
+            )}
 
             <div style={{ overflowX: 'auto', marginTop: '0.9rem' }}>
               <svg width={W} height={H} style={{ minWidth: W }}>
@@ -241,11 +255,25 @@ export default function PhylogenyClient({ sequences }: { sequences: Seq[] }) {
                         const ys = kids.map(k => k.y);
                         return <line x1={sx(r.x)} y1={sy(Math.min(...ys))} x2={sx(r.x)} y2={sy(Math.max(...ys))} stroke="var(--text-secondary)" strokeWidth={1.5} />;
                       })() : null}
-                      {isTip && (
+                      {isTip ? (
                         <text x={sx(r.x) + 6} y={sy(r.y) + 4} fontSize={11} fill="var(--text-primary)">
                           {r.node.name}
                         </text>
-                      )}
+                      ) : r.node.support !== undefined ? (
+                        // Below 70 is conventionally treated as unresolved, so
+                        // it is greyed rather than presented with the same
+                        // weight as a branch the data insists on.
+                        <text
+                          x={sx(r.x) - 3}
+                          y={sy(r.y) - 4}
+                          fontSize={9}
+                          textAnchor="end"
+                          fill={r.node.support >= 70 ? 'var(--text-secondary)' : 'var(--text-muted)'}
+                          fontWeight={r.node.support >= 70 ? 700 : 400}
+                        >
+                          {Math.round(r.node.support)}
+                        </text>
+                      ) : null}
                     </g>
                   );
                 })}
@@ -310,7 +338,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Stats({ sites, identity, taxa, model }: { sites: number; identity: number; taxa: number; model: DistanceModel }) {
+function Stats({ sites, identity, taxa, model, replicates }: { sites: number; identity: number; taxa: number; model: DistanceModel; replicates: number }) {
   const thin = sites < 100;
   return (
     <div style={{ display: 'flex', gap: '1.4rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
@@ -321,6 +349,7 @@ function Stats({ sites, identity, taxa, model }: { sites: number; identity: numb
       </span>
       <span><span style={{ color: 'var(--text-muted)' }}>Alignment identity </span>{Math.round(identity * 100)}%</span>
       <span><span style={{ color: 'var(--text-muted)' }}>Model </span>{model === 'p' ? 'p-distance' : model === 'jc69' ? 'Jukes–Cantor' : 'Kimura 2-P'}</span>
+      <span><span style={{ color: 'var(--text-muted)' }}>Bootstrap </span>{replicates > 0 ? `${replicates} replicates` : 'off'}</span>
       {thin && (
         <span style={{ color: 'var(--accent-orange)' }}>
           Few usable columns &mdash; the branch lengths carry little weight.

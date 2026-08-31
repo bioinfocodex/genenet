@@ -335,3 +335,150 @@ export function patristicDistance(root: TreeNode, a: string, b: string): number 
   if (da === null || db === null) return null;
   return da + db - 2 * node.length;
 }
+
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
+
+/**
+ * Felsenstein's bootstrap.
+ *
+ * Resample the alignment's columns with replacement, rebuild the tree, and
+ * count how often each grouping in the original tree reappears. A branch
+ * supported by 95 replicates in 100 is one the data insists on; a branch
+ * supported by 40 is one the drawing invented, and without this number the two
+ * look identical on the page.
+ *
+ * Columns are the unit because sites are what vary independently. Resampling
+ * sequences, or resampling before alignment, measures nothing meaningful.
+ *
+ * Comparison is by split, not by clade. Neighbour-joining produces an unrooted
+ * tree; where this code puts the root is arbitrary, so the same biological
+ * grouping can be written as two different clades. Counting clades would
+ * undercount support on exactly the branches people care about.
+ */
+
+/** Deterministic generator, so the same input gives the same support twice. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * One internal branch, written so the two halves of the split are
+ * interchangeable: the same branch always produces the same key regardless of
+ * where the tree happens to be rooted.
+ */
+function canonicalSplit(side: string[], all: string[]): string {
+  const inSide = new Set(side);
+  const a = [...side].sort().join(',');
+  const b = all.filter(n => !inSide.has(n)).sort().join(',');
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Every non-trivial split in a tree. */
+export function splitsOf(root: TreeNode, all: string[]): Set<string> {
+  const out = new Set<string>();
+  const walk = (n: TreeNode): string[] => {
+    if (!n.children?.length) return n.name ? [n.name] : [];
+    const below = n.children.flatMap(walk);
+    // A split separating one tip, or none, says nothing: every tree has it.
+    if (below.length > 1 && below.length < all.length - 1) {
+      out.add(canonicalSplit(below, all));
+    }
+    return below;
+  };
+  walk(root);
+  return out;
+}
+
+export interface BootstrapOptions {
+  replicates?: number;
+  model?: DistanceModel;
+  method?: 'nj' | 'upgma';
+  /** Fixed so a result can be reproduced; change it to resample differently. */
+  seed?: number;
+}
+
+export interface BootstrapResult {
+  /** The original tree, with `support` set on every internal node. */
+  tree: TreeNode;
+  replicates: number;
+  /** Support keyed by canonical split, for reporting. */
+  bySplit: Map<string, number>;
+}
+
+/**
+ * Build a tree from `taxa` and attach bootstrap support to its branches.
+ * `taxa` must be aligned: bootstrap resamples columns, so the columns have to
+ * mean the same thing in every sequence.
+ */
+export function bootstrapTree(taxa: Taxon[], opts: BootstrapOptions = {}): BootstrapResult {
+  const replicates = Math.max(1, Math.min(1000, opts.replicates ?? 100));
+  const model = opts.model ?? 'jc69';
+  const method = opts.method ?? 'nj';
+  const build = method === 'nj' ? neighbourJoining : upgma;
+
+  const names = taxa.map(t => t.name);
+  const seqs = taxa.map(t => t.sequence.toUpperCase());
+  const width = seqs[0]?.length ?? 0;
+  if (seqs.some(s => s.length !== width)) {
+    throw new Error('Bootstrap needs aligned sequences: columns must line up before they can be resampled.');
+  }
+
+  const reference = build(distanceMatrix(taxa, model));
+  const refSplits = splitsOf(reference, names);
+  const counts = new Map<string, number>();
+  for (const s of refSplits) counts.set(s, 0);
+
+  const rand = mulberry32(opts.seed ?? 20260101);
+
+  for (let r = 0; r < replicates; r++) {
+    // Draw `width` columns with replacement -- the same columns for every
+    // sequence, which is what keeps the replicate an alignment.
+    const pickCols = new Array(width);
+    for (let k = 0; k < width; k++) pickCols[k] = Math.floor(rand() * width);
+
+    const resampled = taxa.map((t, i) => {
+      let s = '';
+      for (const c of pickCols) s += seqs[i][c];
+      return { id: t.id, name: t.name, sequence: s };
+    });
+
+    let tree: TreeNode;
+    try {
+      tree = build(distanceMatrix(resampled, model));
+    } catch {
+      // A replicate can be degenerate -- every column identical, or a pair
+      // saturated. Skip it rather than letting one draw abort the run.
+      continue;
+    }
+    const got = splitsOf(tree, names);
+    for (const s of refSplits) if (got.has(s)) counts.set(s, counts.get(s)! + 1);
+  }
+
+  // Annotate the reference tree in place. A split is labelled once: the two
+  // children of the root describe the same branch, because where the root sits
+  // is arbitrary, and printing the number on both sides reads as two findings
+  // when it is one.
+  const labelled = new Set<string>();
+  const annotate = (n: TreeNode): string[] => {
+    if (!n.children?.length) return n.name ? [n.name] : [];
+    const below = n.children.flatMap(annotate);
+    if (below.length > 1 && below.length < names.length - 1) {
+      const key = canonicalSplit(below, names);
+      const c = counts.get(key);
+      if (c !== undefined && !labelled.has(key)) {
+        n.support = (c / replicates) * 100;
+        labelled.add(key);
+      }
+    }
+    return below;
+  };
+  annotate(reference);
+
+  return { tree: reference, replicates, bySplit: counts };
+}

@@ -338,17 +338,24 @@ export function alignMultiple(
     seqs.reduce((sum, t, j) => i === j ? sum : sum + alignPair(s.sequence, t.sequence, opts).score, 0));
   const centre = scores.indexOf(Math.max(...scores));
 
+  // The profile: the centre with whatever gaps have accumulated, plus every
+  // sequence already threaded through those same columns.
   let centreRow = seqs[centre].sequence.toUpperCase();
+  const ungapped = centreRow;
   const others: { index: number; row: string }[] = [];
 
   for (let i = 0; i < seqs.length; i++) {
     if (i === centre) continue;
-    const al = alignPair(centreRow.replace(/-/g, ''), seqs[i].sequence, opts);
-    // Re-thread existing rows through any new gaps in the centre.
-    const merged = mergeGaps(centreRow, al.alignedA);
+    // Always against the bare centre, so every pairwise alignment is optimal
+    // and comparable; the gaps are reconciled afterwards.
+    const al = alignPair(ungapped, seqs[i].sequence, opts);
+    const merged = mergeProfile(centreRow, al.alignedA, al.alignedB);
     centreRow = merged.centre;
-    for (const o of others) o.row = applyGapMap(o.row, merged.map);
-    others.push({ index: i, row: padTo(al.alignedB, merged.map) });
+    // Existing rows follow the columns the merge kept for them; the new row is
+    // threaded through the columns the merge kept for it. Skipping this second
+    // step is what silently pushes every row after the first out of register.
+    for (const o of others) o.row = project(o.row, merged.oldIdx);
+    others.push({ index: i, row: merged.added });
   }
 
   const rows: string[] = [];
@@ -372,28 +379,49 @@ export function alignMultiple(
   return { names, rows: padded, consensus, identity: width ? agreed / width : 0 };
 }
 
-/** Where gaps were inserted into the centre, so other rows can follow. */
-function mergeGaps(oldCentre: string, newCentre: string): { centre: string; map: number[] } {
-  const map: number[] = [];
-  let oi = 0;
-  let out = '';
-  for (const ch of newCentre) {
-    if (ch === '-') { out += '-'; map.push(-1); }
-    else {
-      while (oi < oldCentre.length && oldCentre[oi] === '-') { out += '-'; map.push(oi); oi++; }
-      out += ch; map.push(oi); oi++;
-    }
+/**
+ * Reconcile two gapped spellings of the same centre sequence.
+ *
+ * `centreGapped` is the centre as the profile currently holds it; `alignedC`
+ * is the centre as this new pairwise alignment spells it. Both contain the
+ * same residues in the same order, differing only in where gaps sit. The merge
+ * emits one column list covering both, and records for every column which
+ * position it takes from each side, so existing rows and the new row can both
+ * be threaded through it.
+ */
+function mergeProfile(centreGapped: string, alignedC: string, alignedB: string): {
+  centre: string; added: string; oldIdx: number[];
+} {
+  const oldIdx: number[] = [];
+  const newIdx: number[] = [];
+  let i = 0, j = 0;
+
+  while (i < centreGapped.length || j < alignedC.length) {
+    const oldGap = i < centreGapped.length && centreGapped[i] === '-';
+    const newGap = j < alignedC.length && alignedC[j] === '-';
+    if (oldGap) { oldIdx.push(i++); newIdx.push(-1); continue; }
+    if (newGap) { oldIdx.push(-1); newIdx.push(j++); continue; }
+    if (i >= centreGapped.length) { oldIdx.push(-1); newIdx.push(j++); continue; }
+    if (j >= alignedC.length) { oldIdx.push(i++); newIdx.push(-1); continue; }
+    // Both sit on a residue, and it is the same residue.
+    oldIdx.push(i++); newIdx.push(j++);
   }
-  while (oi < oldCentre.length) { out += oldCentre[oi]; map.push(oi); oi++; }
-  return { centre: out, map };
+
+  let centre = '';
+  for (let k = 0; k < oldIdx.length; k++) {
+    centre += oldIdx[k] >= 0 ? centreGapped[oldIdx[k]] : '-';
+  }
+  let added = '';
+  for (let k = 0; k < newIdx.length; k++) {
+    added += newIdx[k] >= 0 ? alignedB[newIdx[k]] : '-';
+  }
+  return { centre, added, oldIdx };
 }
 
-function applyGapMap(row: string, map: number[]): string {
+/** Re-thread a row through a new column list. */
+function project(row: string, idx: number[]): string {
   let out = '';
-  for (const idx of map) out += idx === -1 || idx >= row.length ? '-' : row[idx];
+  for (const k of idx) out += k >= 0 && k < row.length ? row[k] : '-';
   return out;
 }
 
-function padTo(row: string, map: number[]): string {
-  return row.length >= map.length ? row.slice(0, map.length) : row.padEnd(map.length, '-');
-}
