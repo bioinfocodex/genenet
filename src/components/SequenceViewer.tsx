@@ -53,9 +53,9 @@ type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'orfs' | 'translate' |
 
 const PRESET_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
 const FEATURE_TYPES = [
-  'gene', 'CDS', 'promoter', 'terminator', 'primer_bind', 'rep_origin',
-  'regulatory', 'misc_feature', 'RBS', 'enhancer', 'reporter',
-  'selectable_marker', 'tag',
+  'gene', 'CDS', 'exon', 'intron', 'promoter', 'terminator', 'primer_bind',
+  'rep_origin', 'regulatory', 'misc_feature', 'RBS', 'enhancer', 'reporter',
+  'selectable_marker', 'tag', "5'UTR", "3'UTR",
 ];
 const RE_COLORS = ['#ef4444','#3b82f6','#22c55e','#a855f7','#f59e0b','#06b6d4','#f97316','#ec4899','#84cc16','#78716c','#0ea5e9','#d946ef'];
 

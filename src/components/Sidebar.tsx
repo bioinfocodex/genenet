@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, CheckSquare, Dna, Settings, Users, Database, Scissors,
   BookOpen, FolderKanban, FileText, FlaskConical, Layers, Activity, TestTube,
-  ChevronDown, ChevronRight, Thermometer, ImageIcon, Box, ShieldAlert, Download,
+  ChevronDown, ChevronRight, Thermometer, ImageIcon, Box, ShieldAlert, Download, GitBranch,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -36,6 +36,7 @@ export default function Sidebar({ userRole = 'MEMBER', userName = '' }: Props) {
       { name: 'Cloning Wizard', path: '/sequences/clone', icon: Scissors },
       { name: 'Gel Sims',       path: '/gels',            icon: Layers },
       { name: 'Gel Images',     path: '/gels/images',     icon: ImageIcon },
+      { name: 'Phylogeny',      path: '/phylogeny',       icon: GitBranch },
       { name: 'Collections',    path: '/collections',     icon: Layers },
     ]},
     { group: 'Storage', items: [
