@@ -9,6 +9,7 @@ import {
 import { fragmentOf } from '@/lib/assembly';
 import { assembleByHomology, type OverlapMethod } from '@/lib/homology-cloning';
 import { goldenGate } from '@/lib/golden-gate';
+import { gatewayReaction } from '@/lib/gateway';
 import { ConstructPanel, ProblemList, type JunctionRow } from './cloning/AssemblyResult';
 import MultiLaneGel from './MultiLaneGel';
 import PlasmidMap from './PlasmidMap';
@@ -622,48 +623,127 @@ function InFusionPanel({ sequences }: { sequences: SeqRecord[] }) {
 // ─── Gateway Panel ────────────────────────────────────────────────────────────
 
 function GatewayPanel({ sequences }: { sequences: SeqRecord[] }) {
-  const [insertId, setInsertId] = useState('');
   const [reaction, setReaction] = useState<'BP' | 'LR'>('BP');
-  const insert = sequences.find(s => s.id === insertId);
+  const [firstId, setFirstId] = useState('');
+  const [secondId, setSecondId] = useState('');
+  const accent = '#7c3aed';
+
+  const first = sequences.find(s => s.id === firstId);
+  const second = sequences.find(s => s.id === secondId);
+
+  const result = useMemo(() => {
+    if (!first || !second) return null;
+    try {
+      return gatewayReaction(
+        { name: first.name, sequence: first.sequence, circular: first.type === 'plasmid' },
+        { name: second.name, sequence: second.sequence, circular: second.type === 'plasmid' },
+        reaction,
+      );
+    } catch {
+      return null;
+    }
+  }, [first, second, reaction]);
+
+  const inLabel = reaction === 'BP' ? 'attB PCR product or clone' : 'Entry clone (attL)';
+  const vecLabel = reaction === 'BP' ? 'Donor vector (attP)' : 'Destination vector (attR)';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: '4px solid #a855f7' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>🚪 Gateway® Cloning</h2>
-        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-          Invitrogen Gateway technology uses site-specific recombination between att sites. A BP reaction moves your insert from a PCR product (with attB sites) into a donor vector (attP) to create an entry clone. An LR reaction transfers from an entry clone (attL) to a destination vector (attR).
+      <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: `4px solid ${accent}` }}>
+        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>🚪 Gateway</h2>
+        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>
+          Site-specific recombination rather than ligation. Two molecules exchange the segment
+          between their att sites, and no nucleotide is gained or lost. attB1 reacts only with
+          attP1 &mdash; the two att families differ by a single base, and that is what makes the
+          direction fixed.
         </p>
       </div>
 
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+        <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
           {(['BP', 'LR'] as const).map(r => (
-            <button key={r} onClick={() => setReaction(r)} style={{ padding: '0.45rem 1.1rem', borderRadius: '8px', border: `2px solid ${reaction === r ? '#a855f7' : 'var(--glass-border)'}`, background: reaction === r ? '#a855f715' : 'white', color: reaction === r ? '#a855f7' : 'var(--text-muted)', cursor: 'pointer', fontWeight: reaction === r ? 700 : 400, fontFamily: 'inherit', fontSize: '0.88rem' }}>
-              {r} Reaction
+            <button
+              key={r}
+              onClick={() => setReaction(r)}
+              className={reaction === r ? 'btn btn-primary' : 'btn btn-secondary'}
+              style={{ fontSize: '0.82rem' }}
+            >
+              {r} reaction
             </button>
           ))}
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
+            {reaction === 'BP'
+              ? 'attB × attP → attL + attR — makes an entry clone'
+              : 'attL × attR → attB + attP — makes an expression clone'}
+          </span>
         </div>
 
-        <SeqSelect label="Insert sequence" sequences={sequences} value={insertId} onChange={setInsertId} accent="#a855f7" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem' }}>
+          <SeqSelect label={inLabel} sequences={sequences} value={firstId} onChange={setFirstId} accent={accent} />
+          <SeqSelect label={vecLabel} sequences={sequences} value={secondId} onChange={setSecondId} accent={accent} />
+        </div>
 
-        {insert && (
-          <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {(reaction === 'BP' ? [
-              { icon: '🧬', title: 'Generate attB PCR product', details: [`Add attB1: GGGGACAAGTTTGTACAAAAAAGCAGGCT to 5′ of forward primer`, `Add attB2: GGGGACCACTTTGTACAAGAAAGCTGGGT to 5′ of reverse primer`, `PCR amplify ${insert.name} with attB-tailed primers`, 'Confirm band by gel electrophoresis'] },
-              { icon: '🔄', title: 'BP Clonase™ reaction', details: ['attB PCR product: 10–150 ng', 'Donor vector (pDONR™): 150 ng', 'BP Clonase™ II enzyme mix: 2 µL', 'TE buffer (pH 8.0) to 10 µL', '→ 25°C overnight (16 h) or 1 h for most constructs', '→ Add 1 µL Proteinase K, 37°C 10 min'] },
-              { icon: '🦠', title: 'Transform & select entry clone', details: ['Transform 1 µL into ccdB-sensitive cells (DH5α)', 'Plate on LB + kanamycin (pDONR221 uses KanR)', 'Screen by colony PCR or miniprep + digest', `Entry clone: attL1–${insert.name}–attL2`] },
-            ] : [
-              { icon: '🔀', title: 'LR Clonase™ reaction', details: ['Entry clone (attL): 50–150 ng', 'Destination vector (attR): 150 ng', 'LR Clonase™ II enzyme mix: 2 µL', 'TE buffer (pH 8.0) to 10 µL', '→ 25°C overnight (16 h)', '→ Add 1 µL Proteinase K, 37°C 10 min'] },
-              { icon: '🦠', title: 'Transform expression host', details: ['Transform 1 µL into appropriate E. coli strain', 'Plate on LB + dest-vector antibiotic (usually AmpR)', 'Negative selection by ccdB gene in destination backbone', `Expression clone: attB1–${insert.name}–attB2 in dest vector`] },
-            ]).map((s, i) => <ProtocolStep key={i} step={s} />)}
-          </div>
+        {(!first || !second) && (
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.9rem 0 0' }}>
+            Pick both molecules. Each needs a matched pair of att sites — site 1 and site 2 — and
+            the sites are found in your own sequences rather than assumed.
+          </p>
         )}
       </div>
+
+      {result && result.problems.length > 0 && (
+        <div className="glass-panel" style={{ padding: '1.1rem 1.35rem', border: '1px solid rgba(220,38,38,0.35)', background: 'rgba(220,38,38,0.05)' }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#b91c1c', marginBottom: '0.5rem' }}>
+            This will not recombine
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            {result.problems.map((p, i) => (
+              <li key={i} style={{ fontSize: '0.85rem', lineHeight: 1.55, color: 'var(--text-secondary)' }}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {result?.product && result.byproduct && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {[
+            { p: result.product, label: reaction === 'BP' ? 'Entry clone' : 'Expression clone', primary: true },
+            { p: result.byproduct, label: 'Byproduct — removed by selection', primary: false },
+          ].map(({ p, label, primary }) => (
+            <div key={label} className="glass-panel" style={{
+              padding: '1.35rem',
+              borderLeft: `4px solid ${primary ? accent : 'var(--glass-border)'}`,
+              opacity: primary ? 1 : 0.75,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <h3 style={{ fontSize: '0.95rem', margin: 0 }}>{label}</h3>
+                <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  {p.sequence.length.toLocaleString()} bp · {p.circular ? 'circular' : 'linear'} · {p.sites}
+                </span>
+              </div>
+              {primary && (
+                <textarea
+                  readOnly
+                  value={p.sequence}
+                  onFocus={e => e.currentTarget.select()}
+                  style={{
+                    width: '100%', height: 90, marginTop: '0.75rem', fontFamily: 'monospace', fontSize: '0.68rem',
+                    padding: '0.5rem', border: '1px solid var(--glass-border)', borderRadius: 6,
+                    background: 'var(--bg-primary)', color: 'var(--text-primary)', resize: 'vertical',
+                  }}
+                />
+              )}
+            </div>
+          ))}
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+            Both products together account for every base of both inputs. If they did not, an att
+            site would be sitting somewhere the model did not expect, and it would say so instead.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
-
-// ─── Gibson Assembly Panel ───────────────────────────────────────────────────
 
 function GibsonPanel({ sequences }: { sequences: SeqRecord[] }) {
   return <HomologyPanel sequences={sequences} method="gibson" accent="#06b6d4" icon="🧩"
