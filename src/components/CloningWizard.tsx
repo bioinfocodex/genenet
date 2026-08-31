@@ -11,6 +11,8 @@ import { assembleByHomology, type OverlapMethod } from '@/lib/homology-cloning';
 import { goldenGate } from '@/lib/golden-gate';
 import { gatewayReaction } from '@/lib/gateway';
 import { topoCloning, TOPO_METHODS, type TopoMethod } from '@/lib/topo';
+import { homologyPrimers, goldenGatePrimers, gatewayPrimers, topoPrimers } from '@/lib/primer-design';
+import PrimerTable from './cloning/PrimerTable';
 import { ConstructPanel, ProblemList, type JunctionRow } from './cloning/AssemblyResult';
 import MultiLaneGel from './MultiLaneGel';
 import PlasmidMap from './PlasmidMap';
@@ -530,6 +532,23 @@ function GoldenGatePanel({ sequences }: { sequences: SeqRecord[] }) {
     from: j.from, to: j.to, shared: j.shared, detail: `${j.shared.length} nt overhang`,
   })) ?? [];
 
+  // Primers that would add the site and the designed overhangs to a part that
+  // does not carry them yet. Each part takes the overhang the assembly gave it
+  // on the left and the next one's on the right.
+  const ggPrimers = useMemo(() => {
+    const asm = result?.assemblies[0];
+    if (!asm || asm.junctions.length === 0) return [];
+    return asm.order.map((o, i) => {
+      const src = chosen.find(c => c.name === o.name || c.id === o.fragmentId);
+      if (!src) return null;
+      const left = asm.junctions[(i - 1 + asm.junctions.length) % asm.junctions.length].shared;
+      const right = asm.junctions[i % asm.junctions.length].shared;
+      try {
+        return goldenGatePrimers({ name: o.name, sequence: src.sequence }, enzyme, left, right);
+      } catch { return null; }
+    }).filter(Boolean) as ReturnType<typeof goldenGatePrimers>[];
+  }, [result, chosen, enzyme]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div className="glass-panel" style={{ padding: '1.5rem', borderLeft: `4px solid ${accent}` }}>
@@ -610,6 +629,8 @@ function GoldenGatePanel({ sequences }: { sequences: SeqRecord[] }) {
           accent={accent}
         />
       )}
+
+      {ggPrimers.length > 0 && <PrimerTable pairs={ggPrimers} accent={accent} />}
     </div>
   );
 }
@@ -644,6 +665,12 @@ function GatewayPanel({ sequences }: { sequences: SeqRecord[] }) {
       return null;
     }
   }, [first, second, reaction]);
+
+  // For a BP reaction the insert usually still needs its attB tails adding.
+  const gwPrimers = useMemo(() => {
+    if (reaction !== 'BP' || !first) return [];
+    return [gatewayPrimers({ name: first.name, sequence: first.sequence })];
+  }, [reaction, first]);
 
   const inLabel = reaction === 'BP' ? 'attB PCR product or clone' : 'Entry clone (attL)';
   const vecLabel = reaction === 'BP' ? 'Donor vector (attP)' : 'Destination vector (attR)';
@@ -742,6 +769,8 @@ function GatewayPanel({ sequences }: { sequences: SeqRecord[] }) {
           </p>
         </div>
       )}
+
+      {gwPrimers.length > 0 && <PrimerTable pairs={gwPrimers} accent={accent} />}
     </div>
   );
 }
@@ -776,6 +805,19 @@ function HomologyPanel({ sequences, method, accent, icon, blurb }: {
       return null;
     }
   }, [chosen, method, topology]);
+
+  // Primers that would create the homology, for fragments that do not have it
+  // yet. Ordered as the assembly ordered them, so each tail names the right
+  // neighbour.
+  const primerPairs = useMemo(() => {
+    const asm = result?.assemblies[0];
+    if (!asm) return [];
+    const ordered = asm.order
+      .map(o => chosen.find(c => c.id === o.fragmentId))
+      .filter(Boolean) as SeqRecord[];
+    if (ordered.length < 2) return [];
+    return homologyPrimers(ordered.map(s => ({ name: s.name, sequence: s.sequence })), result!.spec.ideal[0]);
+  }, [result, chosen]);
 
   const junctions: JunctionRow[] = result?.checks.map(c => ({
     from: c.from, to: c.to, shared: c.overlap,
@@ -838,6 +880,8 @@ function HomologyPanel({ sequences, method, accent, icon, blurb }: {
           accent={accent}
         />
       )}
+
+      {primerPairs.length > 0 && <PrimerTable pairs={primerPairs} accent={accent} />}
     </div>
   );
 }
@@ -852,6 +896,11 @@ function TAPanel({ sequences }: { sequences: SeqRecord[] }) {
 
   const insert = sequences.find(s => s.id === insertId);
   const vector = sequences.find(s => s.id === vectorId);
+
+  const tpPrimers = useMemo(() => {
+    if (!insert) return [];
+    return [topoPrimers({ name: insert.name, sequence: insert.sequence }, method === 'topo-directional')];
+  }, [insert, method]);
 
   const result = useMemo(() => {
     if (!insert || !vector) return null;
@@ -932,6 +981,8 @@ function TAPanel({ sequences }: { sequences: SeqRecord[] }) {
           accent={o.sense === 'forward' ? accent : '#94a3b8'}
         />
       ))}
+
+      {tpPrimers.length > 0 && <PrimerTable pairs={tpPrimers} accent={accent} />}
     </div>
   );
 }
