@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useMemo, useTransition, useRef } from 'react';
+import React, { useState, useMemo, useTransition, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
@@ -58,6 +58,43 @@ export interface SavedPrimer {
 }
 
 type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold';
+
+/**
+ * The ways of looking at this sequence, in the order they are offered.
+ *
+ * A complete list: anything reachable that is a view of the sequence is here,
+ * so the bar can always say where you are. Tools are not views and are not
+ * here — see TOOL_NAMES.
+ */
+const VIEW_TABS: [LeftTab, string][] = [
+  ['map', 'Map'],
+  ['sequence', 'Sequence'],
+  ['feature', 'Features'],
+  ['sites', 'Enzymes'],
+  ['orfs', 'ORFs'],
+  ['translate', 'Translation'],
+];
+
+/**
+ * Panels that do something rather than show something.
+ *
+ * Named once, here, so the tab that appears while one is open reads the same
+ * as the menu entry that opened it. Five of these used to have one name in the
+ * View menu and another in the sidebar — "ORFs" and "Find ORFs", "RE Sites"
+ * and "RE Analysis" — which made two entries look like two features.
+ */
+const TOOL_NAMES: Partial<Record<LeftTab, string>> = {
+  design: 'Primer Design',
+  pcr: 'PCR Simulation',
+  ligation: 'Ligation',
+  gel: 'Virtual Gel',
+  mutagenesis: 'Mutagenesis',
+  dimer: 'Primer Dimer',
+  sanger: 'Sanger Alignment',
+  crispr: 'CRISPR Guides',
+  aigen: 'AI Annotation',
+  fold: '3D Fold',
+};
 
 const PRESET_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
 const FEATURE_TYPES = [
@@ -145,7 +182,27 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, initialFeatures, initialPrimers = [], library }: Props) {
   const router = useRouter();
-  const [leftTab, setLeftTab] = useState<LeftTab>('map');
+  /*
+   * Where you are, and how to get back.
+   *
+   * Six of these sixteen panels are views of the sequence; ten are tools that
+   * happen to render in the same column. The tab bar used to list three and
+   * highlight "Map" whichever of the other thirteen was open — so opening
+   * Primer Design showed the Primer Design Studio with Map lit up. A
+   * navigation that reports the wrong place is worse than one that reports
+   * nothing.
+   *
+   * Views are permanent tabs. A tool appears as one more tab while it is open,
+   * selected and closable, and closing it returns to the view you were last
+   * looking at rather than to a hardcoded default.
+   */
+  const [leftTab, setLeftTabRaw] = useState<LeftTab>('map');
+  const [lastView, setLastView] = useState<LeftTab>('map');
+
+  const setLeftTab = useCallback((t: LeftTab) => {
+    if (VIEW_TABS.some(([v]) => v === t)) setLastView(t);
+    setLeftTabRaw(t);
+  }, []);
   const [features, setFeatures] = useState<SequenceFeature[]>(initialFeatures);
   const [primers, setPrimers] = useState<SavedPrimer[]>(initialPrimers);
 
@@ -765,16 +822,36 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         <div style={{ flex: 1, minWidth: 0 }}>
 
           {/* View tabs */}
-          <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--glass-border)', marginBottom: '1.25rem' }}>
-            {([
-              ['map',      'Map'],
-              ['sequence', 'Sequence'],
-              ['feature',  'Feature'],
-            ] as [LeftTab, string][]).map(([t, label]) => (
-              <button key={t} onClick={() => setLeftTab(t)} style={{ padding: '0.5rem 1.5rem', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: leftTab === t ? 600 : 400, color: leftTab === t ? 'var(--accent-blue)' : 'var(--text-muted)', borderBottom: `2px solid ${leftTab === t ? 'var(--accent-blue)' : 'transparent'}`, fontFamily: 'inherit', transition: 'all 0.15s', letterSpacing: '0.01em' }}>
+          <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--glass-border)', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'stretch' }}>
+            {VIEW_TABS.map(([t, label]) => (
+              <button key={t} onClick={() => setLeftTab(t)} style={{ padding: '0.5rem 1.1rem', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: leftTab === t ? 600 : 400, color: leftTab === t ? 'var(--accent-blue)' : 'var(--text-muted)', borderBottom: `2px solid ${leftTab === t ? 'var(--accent-blue)' : 'transparent'}`, fontFamily: 'inherit', transition: 'all 0.15s', letterSpacing: '0.01em' }}>
                 {label}
               </button>
             ))}
+
+            {/*
+              A tool gets its own tab while it is open, so the bar never claims
+              you are somewhere you are not, and there is always a way back to
+              the view you came from.
+            */}
+            {TOOL_NAMES[leftTab] && (
+              <span style={{
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                padding: '0.5rem 0.7rem 0.5rem 1.1rem', fontSize: '0.85rem', fontWeight: 600,
+                color: 'var(--accent-blue)', borderBottom: '2px solid var(--accent-blue)',
+                marginLeft: 'auto',
+              }}>
+                {TOOL_NAMES[leftTab]}
+                <button
+                  onClick={() => setLeftTabRaw(lastView)}
+                  title={`Close and go back to ${VIEW_TABS.find(([v]) => v === lastView)?.[1] ?? 'Map'}`}
+                  aria-label="Close this tool"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
+                >
+                  &times;
+                </button>
+              </span>
+            )}
           </div>
 
           {/* Tab content */}
