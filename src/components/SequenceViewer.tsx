@@ -1508,7 +1508,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             />
           )}
           {leftTab === 'mutagenesis' && <MutagenesisPanel sequence={sequence} selection={selection} />}
-          {leftTab === 'gel'  && <VirtualGelPanel sequence={sequence} allReSites={allReSites} reSitesByEnzyme={reSitesByEnzyme} seqType={seqType} />}
+          {leftTab === 'gel'  && <VirtualGelPanel sequence={sequence} reSitesByEnzyme={reSitesByEnzyme} seqType={seqType} />}
           {leftTab === 'fold' && <FoldPanel sequence={sequence} selection={selection} />}
         </div>
 
@@ -4091,7 +4091,7 @@ function MutagenesisPanel({ sequence, selection }: { sequence: string; selection
 
 // ─── Virtual Gel Panel ────────────────────────────────────────────────────────
 
-function VirtualGelPanel({ sequence, allReSites, reSitesByEnzyme, seqType }: { sequence: string; allReSites: ReSite[]; reSitesByEnzyme: Map<string, ReSite[]>; seqType: string }) {
+function VirtualGelPanel({ sequence, reSitesByEnzyme, seqType }: { sequence: string; reSitesByEnzyme: Map<string, ReSite[]>; seqType: string }) {
   const [selectedEnzymes, setSelectedEnzymes] = useState<string[]>([]);
   const [ran, setRan] = useState(false);
 
