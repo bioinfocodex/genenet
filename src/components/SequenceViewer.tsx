@@ -21,6 +21,7 @@ import type { SequenceFeature } from '@/lib/features';
 import { placePrimers } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
+import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
@@ -164,6 +165,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * views of one thing disagreeing about what the user had asked for. The
    * choice belongs to the sequence, not to a panel.
    */
+  const [showOrfs, setShowOrfs] = useState(false);
+  const [orfIncludeAnnotated, setOrfIncludeAnnotated] = useState(false);
   const [enzymeSet, setEnzymeSet] = useState('all');
   const [mapMaxCuts, setMapMaxCuts] = useState(1);
   const [mapMinSite, setMapMinSite] = useState(6);
@@ -363,6 +366,27 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   // ORFs count (lazy, for sidebar stats)
   const orfsCount = useMemo(() => findORFs(sequence, 100).length, [sequence]);
   const orfs = useMemo(() => findORFs(sequence, 100), [sequence]);
+
+  /*
+   * Which reading frames the map draws.
+   *
+   * Off by default. Six-frame translation of a plasmid finds frames
+   * everywhere, and turning them on unasked would undo the decluttering the
+   * rest of this map is about. The default once on is the useful question:
+   * frames with no CDS already over them.
+   */
+  const mapOrfs = useMemo(
+    () => (showOrfs
+      ? chooseMapOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated })
+      : []),
+    [showOrfs, orfIncludeAnnotated, orfs, features],
+  );
+
+  const orfSummary = useMemo(
+    () => summariseOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated }),
+    [orfs, features, orfIncludeAnnotated],
+  );
+
 
   /*
    * One answer to "where does this primer sit", shared by the maps and the
@@ -836,6 +860,36 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   <option value={4}>4 bp and up</option>
                 </select>
 
+                {/*
+                  Reading frames are opt-in. Six-frame translation finds them
+                  everywhere, so drawing them unasked would undo the
+                  decluttering the rest of this map is for. The count next to
+                  the switch is what makes it worth reaching for: it says how
+                  many frames have no CDS over them before anyone turns it on.
+                */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                       title="Open reading frames with no coding feature annotated over them">
+                  <input type="checkbox" checked={showOrfs} onChange={e => setShowOrfs(e.target.checked)} />
+                  ORFs
+                  {orfSummary.unannotated > 0 && (
+                    <span style={{
+                      fontSize: '0.68rem', fontWeight: 700, padding: '0.05rem 0.32rem', borderRadius: 8,
+                      background: 'rgba(217,119,6,0.15)', color: '#a3560a',
+                    }}>
+                      {orfSummary.unannotated} unannotated
+                    </span>
+                  )}
+                </label>
+
+                {showOrfs && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                         title="Also draw frames that already have a CDS over them, faintly">
+                    <input type="checkbox" checked={orfIncludeAnnotated}
+                           onChange={e => setOrfIncludeAnnotated(e.target.checked)} />
+                    incl. annotated
+                  </label>
+                )}
+
                 <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}
                       title={siteCounts.drawn < siteCounts.eligible
                         ? 'Too many to label legibly, so they are thinned evenly round the molecule rather than truncated on one side'
@@ -845,12 +899,13 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                     : siteCounts.drawn < siteCounts.eligible
                       ? `${siteCounts.drawn} of ${siteCounts.eligible} matching sites drawn — too many to label`
                       : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} drawn of ${allReSites.length.toLocaleString()} cuts found`}
+                  {showOrfs && ` · ${orfSummary.drawn} of ${orfSummary.total.toLocaleString()} reading frames`}
                 </span>
               </div>
               <div ref={mapRef}>
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={placedPrimers} enzymeDisplay={enzymeDisplay} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={placedPrimers} enzymeDisplay={enzymeDisplay} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
+                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={placedPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={placedPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
               }
               </div>
 

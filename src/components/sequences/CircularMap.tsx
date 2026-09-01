@@ -3,6 +3,7 @@ import type { SequenceFeature } from '../SequenceViewer';
 import type { ReSite } from './LinearMap'; // reused type
 import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
 import { bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
+import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
 
 interface CircularMapProps {
   sequence: string;
@@ -17,6 +18,8 @@ interface CircularMapProps {
   enzymeDisplay?: ChooseOptions;
   /** Primers already located on this sequence. */
   primers?: PlacedPrimer[];
+  /** Reading frames worth drawing, already chosen. */
+  orfs?: MapOrf[];
 }
 
 // Fixed layout. Outside the component because none of it varies per render.
@@ -27,7 +30,7 @@ const R_IN = 210;
 const R_BB = (R_OUT + R_IN) / 2;
 const TRACK_W = 18;
 
-export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature, enzymeDisplay, primers = [] }: CircularMapProps) {
+export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature, enzymeDisplay, primers = [], orfs = [] }: CircularMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -91,6 +94,27 @@ export default function CircularMap({ sequence, features, reSites, selection, on
 
   const R_PRIMER = R_OUT + (fwdTracks.numTracks * TRACK_W) + 10;
   const R_PRIMER_TOP = R_PRIMER + Math.max(0, primerRows.count - 1) * 9;
+
+  /*
+   * ORFs sit outside the primers on their own rows. Reading frames overlap
+   * each other constantly — that is what six-frame translation means — so they
+   * are stacked rather than drawn on one line, and the stack height has to be
+   * known before the enzyme labels choose a radius.
+   */
+  const orfRows = useMemo(() => {
+    const edges: number[] = [];
+    const rowOf = new Map<string, number>();
+    for (const o of orfs) {
+      let row = edges.findIndex(edge => o.start > edge);
+      if (row === -1) { row = edges.length; edges.push(0); }
+      edges[row] = o.end;
+      rowOf.set(`${o.frame}:${o.start}`, row);
+    }
+    return { rowOf, count: edges.length };
+  }, [orfs]);
+
+  const R_ORF = R_PRIMER_TOP + (primerRows.count ? 12 : 4);
+  const R_ORF_TOP = R_ORF + Math.max(0, orfRows.count - 1) * 8;
   const R_RULER = R_IN - (revTracks.numTracks * TRACK_W) - 12;
   const R_GC_OUT = R_RULER - 14;
   const R_GC_IN = R_GC_OUT - 40;
@@ -231,8 +255,8 @@ export default function CircularMap({ sequence, features, reSites, selection, on
   const handleMouseUp = () => setDragStart(null);
 
   // Label positions for enzymes
-  // Outside the primer ring, whatever height that turned out to need.
-  const R_RE_LBL = R_PRIMER_TOP + 22;
+  // Outside everything drawn on rings, whatever height they turned out to need.
+  const R_RE_LBL = R_ORF_TOP + 22;
 
   return (
     <div style={{ background: 'var(--bg-secondary)', borderRadius: '12px', padding: '1rem', border: '1px solid var(--glass-border)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -363,6 +387,40 @@ export default function CircularMap({ sequence, features, reSites, selection, on
                  </text>
                )}
              </g>
+          );
+        })}
+
+        {/* Open reading frames */}
+        {orfs.map((o, i) => {
+          /*
+           * Thin arcs, coloured by frame. Only the frames chosen upstream get
+           * here — by default the ones with no annotated CDS over them, since
+           * an ORF under a gene someone already drew is not news.
+           */
+          const row = orfRows.rowOf.get(`${o.frame}:${o.start}`) ?? 0;
+          const r = R_ORF + row * 8;
+          const a1 = toAngle(o.start);
+          const a2 = toAngle(o.end + 1);
+          const large = (a2 - a1) > Math.PI ? 1 : 0;
+          const sweep = o.strand === '+' ? 1 : 0;
+          const from = o.strand === '+' ? a1 : a2;
+          const to = o.strand === '+' ? a2 : a1;
+          const colour = frameColour(o.frame);
+
+          return (
+            <g key={`orf-${o.frame}-${o.start}-${i}`} style={{ cursor: 'help' }}>
+              <title>{orfTitle(o)}</title>
+              <path
+                d={`M ${CX + r * Math.cos(from)} ${CY + r * Math.sin(from)} A ${r} ${r} 0 ${large} ${sweep} ${CX + r * Math.cos(to)} ${CY + r * Math.sin(to)}`}
+                fill="none"
+                stroke={colour}
+                strokeWidth={o.coveredBy ? 2 : 3.5}
+                // An ORF already annotated is drawn faintly: present if someone
+                // asked for it, never competing with the one that is news.
+                opacity={o.coveredBy ? 0.3 : 0.85}
+                strokeLinecap="round"
+              />
+            </g>
           );
         })}
 

@@ -3,6 +3,7 @@ import type { SequenceFeature } from '../SequenceViewer';
 
 import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
 import { bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
+import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
 
 export interface ReSite {
   enzyme: string;
@@ -22,6 +23,8 @@ interface LinearMapProps {
   enzymeDisplay?: ChooseOptions;
   /** Primers already located on this sequence. */
   primers?: PlacedPrimer[];
+  /** Reading frames worth drawing, already chosen. */
+  orfs?: MapOrf[];
   isCircular: boolean;
   selection?: { start: number; end: number } | null;
   onSelect?: (s: { start: number; end: number }) => void;
@@ -41,7 +44,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
   return map;
 }
 
-export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay, primers = [] }: LinearMapProps) {
+export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay, primers = [], orfs = [] }: LinearMapProps) {
   const len = sequence.length;
   const W = 800;
   const padL = 20; const padR = 40;
@@ -77,7 +80,21 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
   const primerH = primerRows.count * 13;
   const featStartY = primerY + primerH + (primerRows.count ? 8 : 2);
   const featH = maxRow * 24;
-  const rulerY = featStartY + featH + 12;
+
+  /*
+   * ORFs get a band under the features. Grouped by frame rather than packed by
+   * position: on a linear map the row a reading frame sits in is information —
+   * two ORFs on one row are in the same frame — and packing them by whatever
+   * fits would throw that away.
+   */
+  const orfFrames = useMemo(() => {
+    const present = [...new Set(orfs.map(o => o.frame))].sort((a, b) => b - a);
+    return { order: present, rowOf: new Map(present.map((f, i) => [f, i])) };
+  }, [orfs]);
+
+  const orfY = featStartY + featH + (orfs.length ? 10 : 0);
+  const orfH = orfFrames.order.length * 12;
+  const rulerY = orfY + orfH + 12;
   const svgH = rulerY + 30;
 
   const [dragStart, setDragStart] = useState<number | null>(null);
@@ -202,6 +219,32 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
               </g>
             );
           })}
+
+          {/* Open reading frames */}
+          {orfs.map((o, i) => {
+            const row = orfFrames.rowOf.get(o.frame) ?? 0;
+            const y = orfY + row * 12;
+            const x1 = toX(o.start), x2 = toX(o.end + 1);
+            const w = Math.max(2, x2 - x1);
+            const head = Math.min(7, w * 0.25);
+            const colour = frameColour(o.frame);
+            const shape = o.strand === '+'
+              ? `${x1},${y - 3.5} ${x1 + w - head},${y - 3.5} ${x1 + w},${y} ${x1 + w - head},${y + 3.5} ${x1},${y + 3.5}`
+              : `${x1 + w},${y - 3.5} ${x1 + head},${y - 3.5} ${x1},${y} ${x1 + head},${y + 3.5} ${x1 + w},${y + 3.5}`;
+            return (
+              <g key={`orf-${i}`} style={{ cursor: 'help' }}>
+                <title>{orfTitle(o)}</title>
+                <polygon points={shape} fill={colour} opacity={o.coveredBy ? 0.3 : 0.8} />
+              </g>
+            );
+          })}
+          {/* Frame labels, so a row means something */}
+          {orfFrames.order.map((f, i) => (
+            <text key={`fl-${f}`} x={2} y={orfY + i * 12 + 3} fontSize={7.5}
+                  fill={frameColour(f)} fontWeight="700" fontFamily="monospace">
+              {f > 0 ? `+${f}` : f}
+            </text>
+          ))}
 
           {/* RE sites */}
           {(() => {
