@@ -244,6 +244,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
   }), [mapMinSite, mapMaxCuts, enzymeSetNames]);
 
+  const [showExport, setShowExport] = useState(false);
+
   const mapRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState<'svg' | 'png' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -256,6 +258,16 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * in — which is what `inlineSvg` does inside these two.
    */
   const exportMap = async (kind: 'svg' | 'png') => {
+    /*
+     * SVG and PNG are read off the live drawing, so there has to be one. Asked
+     * for from the Export dialog while some other view is open, switch to the
+     * map and let it mount rather than refusing — the person asked for a
+     * picture of their sequence, not for a lecture about which tab they are on.
+     */
+    if (leftTab !== 'map') {
+      setLeftTab('map');
+      await new Promise(r => setTimeout(r, 200));
+    }
     const svg = mapRef.current?.querySelector('svg');
     if (!svg) { setExportError('The map is not on screen to export.'); return; }
     setExportError(null);
@@ -694,9 +706,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Import GenBank / FASTA…', action: () => importFileRef.current?.click() },
       { label: '──────────', action: () => {}, divider: true },
-      { label: 'Export FASTA', action: exportFasta },
-      { label: 'Export GenBank', action: exportGenBank },
-      { label: 'Export SnapGene .dna', action: () => { window.location.href = `/api/sequence/${id}/export`; } },
+      { label: 'Export…', action: () => setShowExport(true) },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Open in AI Suite', action: () => { window.open(`http://localhost:8501/?id=${id}`, '_blank'); } },
     ],
@@ -1648,6 +1658,62 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       )}
 
       {/* ── Add RE Site Modal ── */}
+      {/*
+        One place to get this sequence out.
+        
+        The formats used to be scattered: two in the File menu, a third on a
+        button in the page header, and two more on the map toolbar — five ways
+        out of one record, in three places, with nothing saying how they
+        differ. The hard part of exporting is choosing the format, so each one
+        says what it is for rather than only what it is called.
+      */}
+      {showExport && (
+        <ModalOverlay onClose={() => setShowExport(false)}>
+          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.3rem' }}>Export {seqName}</h3>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 1.1rem', lineHeight: 1.55 }}>
+            {sequence.length.toLocaleString()} bp &middot; {features.length} feature{features.length === 1 ? '' : 's'} &middot;{' '}
+            {primers.length} primer{primers.length === 1 ? '' : 's'}
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {([
+              ['GenBank', 'Sequence and every feature. What to send when the annotations matter.',
+                () => { exportGenBank(); setShowExport(false); }],
+              ['SnapGene .dna', 'Opens in SnapGene with the features and their colours. For a collaborator who has not switched.',
+                () => { window.location.href = `/api/sequence/${id}/export`; setShowExport(false); }],
+              ['FASTA', 'Sequence only, no features. What most alignment and analysis tools want.',
+                () => { exportFasta(); setShowExport(false); }],
+              ['Map as SVG', 'Vector, for a figure that will be scaled or edited. Exports the current map view.',
+                () => { setShowExport(false); void exportMap('svg'); }],
+              ['Map as PNG', 'Raster at 3×, for slides and documents that will not take an SVG.',
+                () => { setShowExport(false); void exportMap('png'); }],
+            ] as [string, string, () => void][]).map(([label, why, act]) => (
+              <button
+                key={label}
+                onClick={act}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.15rem',
+                  textAlign: 'left', width: '100%', padding: '0.7rem 0.9rem', borderRadius: 8,
+                  border: '1px solid var(--glass-border)', background: 'white', cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                <span style={{ fontSize: '0.88rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Download size={13} /> {label}
+                </span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>{why}</span>
+              </button>
+            ))}
+          </div>
+
+          <div style={{ marginTop: '1.1rem', display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={() => setShowExport(false)} className="btn btn-secondary" style={{ fontSize: '0.82rem' }}>
+              Cancel
+            </button>
+          </div>
+        </ModalOverlay>
+      )}
+
       {showAddREModal && (
         <ModalOverlay onClose={() => setShowAddREModal(false)}>
           <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1.25rem' }}>Add Custom RE Site</div>
