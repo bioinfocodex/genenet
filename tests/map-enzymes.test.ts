@@ -122,3 +122,32 @@ test('cut counts are per enzyme, not per site', () => {
   assert.equal(counts.get('EcoRI'), 2);
   assert.equal(counts.get('BamHI'), 1);
 });
+
+test('restricting to a set draws only that set', () => {
+  const sites = [
+    site('EcoRI', 100), site('BamHI', 500), site('BsaI', 900), site('BsmBI', 1300),
+  ];
+  const counts = countCuts(sites);
+  const gg = chooseMapEnzymes(sites, counts, { restrictTo: ['BsaI', 'BsmBI', 'BbsI'] });
+  assert.deepEqual(gg.map(s => s.enzyme), ['BsaI', 'BsmBI']);
+});
+
+test('restricting is not the same as preferring', () => {
+  // Two isoschizomers at one site, one of them in the set. Preferring picks
+  // the label; restricting would have dropped the other site entirely.
+  const sites = [site('SnaBI', 100), site('Eco105I', 100), site('BamHI', 900)];
+  const counts = countCuts(sites);
+
+  const preferred = chooseMapEnzymes(sites, counts, { prefer: ['Eco105I'] });
+  assert.equal(preferred.length, 2, 'preferring keeps every site');
+  assert.equal(preferred[0].enzyme, 'Eco105I');
+
+  const restricted = chooseMapEnzymes(sites, counts, { restrictTo: ['Eco105I'] });
+  assert.equal(restricted.length, 1, 'restricting drops the site nothing in the set cuts');
+  assert.equal(restricted[0].enzyme, 'Eco105I');
+});
+
+test('a set whose members cut nowhere gives an empty map, not every site', () => {
+  const sites = [site('EcoRI', 100), site('BamHI', 500)];
+  assert.deepEqual(chooseMapEnzymes(sites, countCuts(sites), { restrictTo: ['NotI'] }), []);
+});

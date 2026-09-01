@@ -48,6 +48,16 @@ export interface ChooseOptions {
   maxCuts?: number;
   /** Names to prefer as the label when several share a site. */
   prefer?: string[];
+  /**
+   * Draw only these enzymes.
+   *
+   * Distinct from `prefer`, which only decides whose name is shown at a site
+   * several enzymes share. Narrowing to a working set — the Golden Gate
+   * enzymes, the ones in the freezer — is a different act from choosing what
+   * to call a site, and conflating them would mean picking a set silently
+   * dropped every site none of its members cut.
+   */
+  restrictTo?: string[];
   /** Hard ceiling, so a pathological sequence cannot fill the ring. */
   maxLabels?: number;
 }
@@ -88,10 +98,12 @@ export function chooseMapEnzymes(
   cutCounts: Map<string, number>,
   opts: ChooseOptions = {},
 ): MapSite[] {
-  const { minSiteLength = 6, maxCuts = 1, prefer = [], maxLabels = 60 } = opts;
+  const { minSiteLength = 6, maxCuts = 1, prefer = [], restrictTo, maxLabels = 60 } = opts;
   const preferred = new Set(prefer);
+  const allowed = restrictTo ? new Set(restrictTo) : null;
 
   const eligible = sites.filter(s =>
+    (!allowed || allowed.has(s.enzyme)) &&
     s.recognitionLen >= minSiteLength &&
     (cutCounts.get(s.enzyme) ?? Infinity) <= maxCuts);
 

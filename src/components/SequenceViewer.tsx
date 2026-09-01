@@ -20,6 +20,7 @@ import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
 import { placePrimers } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
+import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
@@ -155,6 +156,30 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * exact match, because every primer this application designs for cloning
    * carries a 5' tail that is not in the template.
    */
+  /*
+   * How enzymes are shown, shared by the map and the sites panel.
+   *
+   * The set filter used to be local state inside the panel, so narrowing to
+   * "Golden Gate" changed a list and left the map showing everything — the two
+   * views of one thing disagreeing about what the user had asked for. The
+   * choice belongs to the sequence, not to a panel.
+   */
+  const [enzymeSet, setEnzymeSet] = useState('all');
+  const [mapMaxCuts, setMapMaxCuts] = useState(1);
+  const [mapMinSite, setMapMinSite] = useState(6);
+
+  const enzymeSetNames = useMemo(() => {
+    if (enzymeSet === 'all') return null;
+    const set = STARTER_SETS.find(x => x.name === enzymeSet);
+    return set ? resolveSet(set) : null;
+  }, [enzymeSet]);
+
+  const enzymeDisplay = useMemo(() => ({
+    minSiteLength: mapMinSite,
+    maxCuts: mapMaxCuts,
+    ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
+  }), [mapMinSite, mapMaxCuts, enzymeSetNames]);
+
   const mapRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState<'svg' | 'png' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -316,6 +341,24 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     });
     return map;
   }, [allReSites]);
+
+  /**
+   * What the map is actually drawing, so the filtering is never silent.
+   *
+   * Both numbers, because they answer different questions. `drawn` is what is
+   * on screen; `eligible` is how many passed the filters. When the label cap
+   * bites they differ, and saying only "60 drawn" would hide a second round of
+   * thinning behind the first — which is the thing this counter exists to
+   * prevent.
+   */
+  const siteCounts = useMemo(() => {
+    const counts = countCuts(allReSites);
+    return {
+      drawn: chooseMapEnzymes(allReSites, counts, enzymeDisplay).length,
+      eligible: chooseMapEnzymes(allReSites, counts, { ...enzymeDisplay, maxLabels: Infinity }).length,
+    };
+  }, [allReSites, enzymeDisplay]);
+
 
   // ORFs count (lazy, for sidebar stats)
   const orfsCount = useMemo(() => findORFs(sequence, 100).length, [sequence]);
@@ -745,10 +788,69 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
               {exportError && (
                 <div style={{ fontSize: '0.78rem', color: '#b91c1c', marginBottom: '0.6rem' }}>{exportError}</div>
               )}
+
+              {/*
+                What the map is showing, and the controls for it.
+                
+                A map that quietly draws 41 of 5,080 sites is making a large
+                decision on the reader's behalf without saying so. The count
+                states it, and the three controls are the decision itself:
+                which enzymes, how often they may cut, and how long a site has
+                to be. Defaults are SnapGene's.
+              */}
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.85rem', fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                <span>Enzymes</span>
+                <select
+                  value={enzymeSet}
+                  onChange={e => setEnzymeSet(e.target.value)}
+                  className="input-control"
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
+                  title="Narrow the map to a working set. Shared with the Sites panel."
+                >
+                  <option value="all">All</option>
+                  {STARTER_SETS.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
+                </select>
+
+                <select
+                  value={mapMaxCuts}
+                  onChange={e => setMapMaxCuts(Number(e.target.value))}
+                  className="input-control"
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
+                  title="An enzyme cutting many times is not a cloning site"
+                >
+                  <option value={1}>cutting once</option>
+                  <option value={2}>up to twice</option>
+                  <option value={3}>up to 3 times</option>
+                  <option value={99}>however often</option>
+                </select>
+
+                <select
+                  value={mapMinSite}
+                  onChange={e => setMapMinSite(Number(e.target.value))}
+                  className="input-control"
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
+                  title="A four-cutter lands every few hundred bases"
+                >
+                  <option value={6}>6 bp sites and up</option>
+                  <option value={5}>5 bp and up</option>
+                  <option value={4}>4 bp and up</option>
+                </select>
+
+                <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}
+                      title={siteCounts.drawn < siteCounts.eligible
+                        ? 'Too many to label legibly, so they are thinned evenly round the molecule rather than truncated on one side'
+                        : undefined}>
+                  {siteCounts.drawn === 0
+                    ? `nothing to draw from ${allReSites.length.toLocaleString()} cuts found`
+                    : siteCounts.drawn < siteCounts.eligible
+                      ? `${siteCounts.drawn} of ${siteCounts.eligible} matching sites drawn — too many to label`
+                      : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} drawn of ${allReSites.length.toLocaleString()} cuts found`}
+                </span>
+              </div>
               <div ref={mapRef}>
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={placedPrimers} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={placedPrimers} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
+                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={placedPrimers} enzymeDisplay={enzymeDisplay} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={placedPrimers} enzymeDisplay={enzymeDisplay} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
               }
               </div>
 
@@ -954,7 +1056,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             </div>
           )}
 
-          {leftTab === 'sites' && <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} />}
+          {leftTab === 'sites' && <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} />}
           {leftTab === 'orfs'  && <ORFsPanel sequence={sequence} />}
           {leftTab === 'translate' && <TranslatePanel sequence={sequence} />}
           {leftTab === 'pcr' && (
@@ -1754,14 +1856,16 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
 // ─── RE Sites Panel ──────────────────────────────────────────────────────────
 
 function RESitesPanel({
-  reSitesByEnzyme, sequence, circular,
+  reSitesByEnzyme, sequence, circular, setName, onSetName,
 }: {
   reSitesByEnzyme: Map<string, ReSite[]>;
   sequence: string;
   circular: boolean;
+  /** Shared with the map, so the two never disagree about what was asked for. */
+  setName: string;
+  onSetName: (name: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const [setName, setSetName] = useState('all');
   const entries = useMemo(
     () => [...reSitesByEnzyme.entries()].sort((a, b) => a[1].length - b[1].length),
     [reSitesByEnzyme],
@@ -1793,7 +1897,7 @@ function RESitesPanel({
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <select
               value={setName}
-              onChange={e => setSetName(e.target.value)}
+              onChange={e => onSetName(e.target.value)}
               className="input-control"
               style={{ fontSize: '0.76rem', padding: '0.3rem 0.5rem' }}
               title="Narrow to a set of enzymes"
