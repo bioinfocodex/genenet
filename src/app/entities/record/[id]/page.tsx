@@ -24,6 +24,14 @@ export default async function EntityRecordPage({
       project: { select: { id: true, name: true } },
       createdBy: { select: { name: true } },
       wells: { include: { plate: { select: { id: true, name: true } } } },
+      results: {
+        include: {
+          schema: { select: { id: true, name: true, fields: { orderBy: { order: 'asc' } } } },
+          values: true,
+        },
+        orderBy: { measuredAt: 'desc' },
+        take: 50,
+      },
     },
   });
   if (!entity) notFound();
@@ -125,6 +133,64 @@ export default async function EntityRecordPage({
                 {w.plate.name} · {w.label}
               </Link>
             ))}
+          </div>
+        </div>
+      )}
+
+      {entity.results.length > 0 && (
+        <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1rem', margin: '0 0 0.7rem' }}>
+            Readings ({entity.results.length})
+          </h2>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.79rem', minWidth: 420 }}>
+              <thead>
+                <tr>
+                  {['Assay', 'Measured', 'Values'].map(h => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '0.3rem 0.6rem', color: 'var(--text-muted)',
+                      fontWeight: 600, fontSize: '0.67rem', textTransform: 'uppercase',
+                      letterSpacing: '0.04em', borderBottom: '1px solid var(--glass-border)',
+                      whiteSpace: 'nowrap',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {entity.results.map(r => {
+                  const reading = new Map(r.values.map(v => [v.fieldId, v]));
+                  return (
+                    <tr key={r.id}>
+                      <td style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap' }}>
+                        <Link href={`/results/${r.schema.id}`} style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>
+                          {r.schema.name}
+                        </Link>
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {r.measuredAt.toLocaleDateString()}
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem' }}>
+                        {r.schema.fields.map(f => {
+                          const def: FieldDefinition = {
+                            id: f.id, key: f.key, label: f.label, type: f.type as FieldType,
+                            options: f.options ? (JSON.parse(f.options) as string[]) : null,
+                            unit: f.unit,
+                          };
+                          const shown = formatValue(def, reading.get(f.id));
+                          if (shown === '\u2014') return null;
+                          return (
+                            <span key={f.id} style={{ marginRight: '0.8rem', whiteSpace: 'nowrap' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>{f.label} </span>
+                              <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{shown}</strong>
+                            </span>
+                          );
+                        })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
