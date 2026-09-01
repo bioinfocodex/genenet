@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trimRead, findOverlap, assembleReads } from '../src/lib/contig.ts';
+import { trimRead, findOverlap, assembleReads, END_ZONE } from '../src/lib/contig.ts';
 import { revComp } from '../src/lib/alignment.ts';
 import { makeSeq } from './support/sequences.ts';
 
@@ -156,4 +156,74 @@ test('quality trimming happens before assembly, so bad ends do not block a join'
   ]);
   assert.equal(contigs.length, 1);
   assert.equal(contigs[0].consensus, TEMPLATE.slice(0, 540));
+});
+
+test('untrimmed ends do not stop reads joining', () => {
+  // The case the browser exposed. A read that has not been quality-trimmed
+  // carries miscalled A/C/G/T at both ends — not N, so nothing but a quality
+  // score identifies them. A strict suffix-against-prefix overlap test finds
+  // nothing, and four reads tiling a plasmid come back as four contigs.
+  const junk = (n: number, seed: number) => makeSeq(n, 900 + seed);
+  const reads = [
+    { name: 'A', sequence: junk(18, 1) + TEMPLATE.slice(0, 400) + junk(25, 2) },
+    { name: 'B', sequence: junk(18, 3) + TEMPLATE.slice(300, 700) + junk(25, 4) },
+    { name: 'C', sequence: junk(18, 5) + TEMPLATE.slice(600, 900) + junk(25, 6) },
+  ];
+  const { contigs } = assembleReads(reads);
+  assert.equal(contigs.length, 1, 'all three reads belong to one contig');
+  assert.equal(contigs[0].reads.length, 3);
+});
+
+test('a reversed read with untrimmed ends still joins', () => {
+  const junk = (n: number, seed: number) => makeSeq(n, 950 + seed);
+  const { contigs } = assembleReads([
+    { name: 'F', sequence: junk(18, 1) + TEMPLATE.slice(0, 400) + junk(25, 2) },
+    { name: 'R', sequence: revComp(junk(18, 3) + TEMPLATE.slice(300, 700) + junk(25, 4)) },
+  ]);
+  assert.equal(contigs.length, 1);
+  assert.equal(contigs[0].reads.filter(r => r.flipped).length, 1);
+});
+
+test('reads sharing only a short stretch in the middle are not joined', () => {
+  // The guard on the dovetail: two unrelated reads that happen to share a
+  // patch in their interiors are not overlapping reads, and joining them
+  // would build a chimera.
+  const a = makeSeq(400, 71);
+  const b = makeSeq(400, 72);
+  const shared = TEMPLATE.slice(0, 60);
+  const { contigs } = assembleReads([
+    { name: 'x', sequence: a.slice(0, 170) + shared + a.slice(230) },
+    { name: 'y', sequence: b.slice(0, 170) + shared + b.slice(230) },
+  ]);
+  assert.equal(contigs.length, 2, 'a shared patch buried in both interiors is not a join');
+});
+
+test('disagreements record how far they sit from the nearest read end', () => {
+  const reads = [
+    { name: 'A', sequence: TEMPLATE.slice(0, 400) },
+    { name: 'B', sequence: (() => {
+      const s = TEMPLATE.slice(200, 600).split('');
+      s[100] = s[100] === 'A' ? 'C' : 'A';   // template 300: deep inside both reads
+      return s.join('');
+    })() },
+  ];
+  const c = assembleReads(reads).contigs[0];
+  const d = c.disagreements.find(x => x.position === 301);
+  assert.ok(d, 'the planted mismatch is reported');
+  assert.ok(d.fromReadEnd >= END_ZONE, `sits ${d.fromReadEnd} from a read end`);
+  assert.equal(c.interiorConflicts.some(x => x.position === 301), true);
+});
+
+test('a conflict inside a read end zone is counted separately from an interior one', () => {
+  const a = TEMPLATE.slice(0, 400);
+  const b = TEMPLATE.slice(200, 600).split('');
+  b[5] = b[5] === 'A' ? 'C' : 'A';           // 5 bases into read B
+  const c = assembleReads([
+    { name: 'A', sequence: a },
+    { name: 'B', sequence: b.join('') },
+  ]).contigs[0];
+
+  assert.equal(c.endZoneConflicts, 1);
+  assert.equal(c.interiorConflicts.length, 0,
+    'a disagreement 5 bases into a read is end-of-run noise, not evidence');
 });

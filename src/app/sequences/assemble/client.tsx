@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Layers3, AlertTriangle, Check, Copy, FileUp } from 'lucide-react';
-import { assembleReads, type Contig } from '@/lib/contig';
+import { assembleReads, END_ZONE, type Contig } from '@/lib/contig';
 import { parseFastq, isFastq } from '@/lib/formats/fastq';
 import { parseAb1, isAb1 } from '@/lib/formats/ab1';
 
@@ -86,8 +86,9 @@ function CoverageBar({ contig }: { contig: Contig }) {
 function ContigPanel({ contig, n }: { contig: Contig; n: number }) {
   const [showSeq, setShowSeq] = useState(false);
   const [copied, setCopied] = useState(false);
-  const contested = contig.disagreements.filter(d => d.contested);
-  const minor = contig.disagreements.length - contested.length;
+  const interior = contig.interiorConflicts;
+  const atEnds = contig.endZoneConflicts;
+  const minor = contig.disagreements.length - interior.length - atEnds;
 
   const copy = () => {
     navigator.clipboard?.writeText(`>contig_${n}\n${contig.consensus}`);
@@ -104,7 +105,7 @@ function ContigPanel({ contig, n }: { contig: Contig; n: number }) {
         </span>
       </div>
 
-      {contested.length > 0 && (
+      {interior.length > 0 && (
         <div style={{
           margin: '0.9rem 0', padding: '0.85rem 1.1rem', borderRadius: 8,
           border: '1px solid rgba(220,38,38,0.35)', background: 'rgba(220,38,38,0.05)',
@@ -113,10 +114,10 @@ function ContigPanel({ contig, n }: { contig: Contig; n: number }) {
             fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
             color: '#b91c1c', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
           }}>
-            <AlertTriangle size={13} /> {contested.length} position{contested.length === 1 ? '' : 's'} the reads do not settle
+            <AlertTriangle size={13} /> {interior.length} conflict{interior.length === 1 ? '' : 's'} in the middle of the reads
           </div>
           <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            {contested.slice(0, 12).map(d => (
+            {interior.slice(0, 12).map(d => (
               <li key={d.position} style={{ fontSize: '0.82rem', lineHeight: 1.5, color: 'var(--text-secondary)' }}>
                 <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{d.position.toLocaleString()}</strong>
                 {' — '}
@@ -125,15 +126,41 @@ function ContigPanel({ contig, n }: { contig: Contig; n: number }) {
                 {'. Called '}<strong>{d.called}</strong>.
               </li>
             ))}
-            {contested.length > 12 && (
+            {interior.length > 12 && (
               <li style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                and {contested.length - 12} more.
+                and {interior.length - 12} more.
               </li>
             )}
           </ul>
           <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.6rem 0 0', lineHeight: 1.55 }}>
-            Two or more reads calling different bases is not the shape of a sequencing error. Open the
-            traces before trusting the consensus here &mdash; a mixed colony reads exactly like this.
+            These sit well inside every read that covers them, so they are not end-of-run noise. Open
+            the traces before trusting the consensus here &mdash; a mixed colony reads exactly like this.
+          </p>
+        </div>
+      )}
+
+      {atEnds > 0 && (
+        <div style={{
+          margin: '0.9rem 0', padding: '0.8rem 1.05rem', borderRadius: 8,
+          border: '1px solid var(--glass-border)',
+        }}>
+          {/*
+            One template string rather than JSX text around expressions: the
+            same sentence written as mixed children lost the space before
+            "bases" to JSX's whitespace trimming, and read as "within 30bases".
+          */}
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
+            {[
+              // "further" only makes sense when something was listed above it.
+              interior.length > 0
+                ? `${atEnds} further position${atEnds === 1 ? '' : 's'} disagree`
+                : `${atEnds} position${atEnds === 1 ? ' disagrees' : 's disagree'}`,
+              `within ${END_ZONE} bases of a read's end, where basecalls are unreliable by nature.`,
+              interior.length === 0
+                ? 'Nothing disagrees in the interior, so this looks like untrimmed ends rather than anything about the DNA.'
+                : 'Those are almost certainly untrimmed sequence rather than real differences.',
+              'Reads with quality scores — a .ab1 or FASTQ — get trimmed properly and lose most of this.',
+            ].join(' ')}
           </p>
         </div>
       )}
