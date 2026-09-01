@@ -1,7 +1,9 @@
 'use client';
 import { useState } from 'react';
-import { Layers3, AlertTriangle, Check, Copy } from 'lucide-react';
+import { Layers3, AlertTriangle, Check, Copy, FileUp } from 'lucide-react';
 import { assembleReads, type Contig } from '@/lib/contig';
+import { parseFastq, isFastq } from '@/lib/formats/fastq';
+import { parseAb1, isAb1 } from '@/lib/formats/ab1';
 
 /**
  * Reads in, contig out.
@@ -14,7 +16,18 @@ import { assembleReads, type Contig } from '@/lib/contig';
  */
 
 /** FASTA if it looks like FASTA, otherwise one read per blank-line-separated block. */
-function parseReads(text: string): { name: string; sequence: string }[] {
+function parseReads(text: string): { name: string; sequence: string; quality?: number[] }[] {
+  if (isFastq(text)) {
+    // FASTQ is the one pasteable format that carries quality, which is what
+    // the trimmer actually wants.
+    return parseFastq(text).reads.map(r => ({
+      name: r.name, sequence: r.sequence, quality: r.quality,
+    }));
+  }
+  return parseTextReads(text);
+}
+
+function parseTextReads(text: string): { name: string; sequence: string }[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
 
@@ -194,16 +207,69 @@ function ContigPanel({ contig, n }: { contig: Contig; n: number }) {
   );
 }
 
+interface Read { name: string; sequence: string; quality?: number[] }
+
 export default function AssembleClient() {
   const [text, setText] = useState('');
   const [minOverlap, setMinOverlap] = useState(20);
+  const [traces, setTraces] = useState<Read[]>([]);
   const [result, setResult] = useState<ReturnType<typeof assembleReads> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  /**
+   * Trace files dropped straight from the sequencing facility.
+   *
+   * These are the reads that actually benefit: a .ab1 carries the basecaller's
+   * per-base quality, so the trim is driven by what the instrument thought of
+   * each peak rather than by counting Ns.
+   */
+  const addFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setLoading(true); setError(null);
+    const added: Read[] = [];
+    const failed: string[] = [];
+
+    for (const file of Array.from(files)) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (isAb1(bytes)) {
+          const t = parseAb1(bytes);
+          if (!t) { failed.push(file.name); continue; }
+          added.push({
+            name: t.sampleName || file.name.replace(/\.ab1$/i, ''),
+            sequence: t.sequence,
+            ...(t.quality.length ? { quality: t.quality } : {}),
+          });
+          continue;
+        }
+        const asText = new TextDecoder().decode(bytes);
+        if (isFastq(asText)) {
+          for (const r of parseFastq(asText).reads) {
+            added.push({ name: r.name, sequence: r.sequence, quality: r.quality });
+          }
+          continue;
+        }
+        const fromText = parseTextReads(asText);
+        if (fromText.length) added.push(...fromText);
+        else failed.push(file.name);
+      } catch {
+        failed.push(file.name);
+      }
+    }
+
+    setTraces(t => [...t, ...added]);
+    if (failed.length) setError(`Could not read ${failed.join(', ')}. Trace files (.ab1), FASTQ and FASTA are understood.`);
+    setLoading(false);
+  };
+
+  const pasted = parseReads(text);
+  const reads: Read[] = [...traces, ...pasted];
+  const withQuality = reads.filter(r => r.quality?.length).length;
 
   const run = () => {
     setError(null); setResult(null);
-    const reads = parseReads(text);
-    if (reads.length < 2) { setError('Paste at least two reads.'); return; }
+    if (reads.length < 2) { setError('Add at least two reads.'); return; }
     try {
       setResult(assembleReads(reads, { minOverlap }));
     } catch (e) {
@@ -211,7 +277,7 @@ export default function AssembleClient() {
     }
   };
 
-  const readCount = parseReads(text).length;
+  const readCount = reads.length;
 
   return (
     <>
@@ -233,8 +299,45 @@ export default function AssembleClient() {
           }}
         />
         <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', margin: '0.45rem 0 0.9rem', lineHeight: 1.5 }}>
-          FASTA, or one read per paragraph. {readCount > 0 && <strong>{readCount} read{readCount === 1 ? '' : 's'} recognised.</strong>}
+          FASTA, FASTQ, or one read per paragraph. {readCount > 0 && <strong>{readCount} read{readCount === 1 ? '' : 's'} ready.</strong>}
         </p>
+
+        <div style={{
+          display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap',
+          padding: '0.75rem 0.9rem', marginBottom: '0.9rem', borderRadius: 8,
+          border: '1px dashed var(--glass-border)',
+        }}>
+          <label className="btn btn-secondary" style={{ fontSize: '0.8rem', cursor: 'pointer', margin: 0 }}>
+            <FileUp size={13} style={{ verticalAlign: '-2px', marginRight: '0.3rem' }} />
+            Add trace files
+            <input
+              type="file" multiple accept=".ab1,.fastq,.fq,.fasta,.fa,.seq,.txt"
+              onChange={e => { addFiles(e.target.files); e.target.value = ''; }}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            {loading ? 'Reading…'
+              : traces.length > 0
+                ? `${traces.length} file read${traces.length === 1 ? '' : 's'} loaded`
+                : '.ab1 straight from the facility, or FASTQ'}
+          </span>
+          {traces.length > 0 && (
+            <button onClick={() => setTraces([])} className="btn btn-secondary" style={{ fontSize: '0.76rem' }}>
+              Clear files
+            </button>
+          )}
+        </div>
+
+        {readCount > 0 && (
+          <p style={{ fontSize: '0.78rem', margin: '0 0 0.9rem', lineHeight: 1.55, color: withQuality > 0 ? 'var(--accent-green)' : '#a3560a' }}>
+            {withQuality === readCount
+              ? `All ${readCount} reads carry quality scores, so the ends are trimmed on what the basecaller thought of each peak.`
+              : withQuality > 0
+                ? `${withQuality} of ${readCount} reads carry quality scores. The rest are trimmed on ambiguity alone, which is blunter.`
+                : 'No quality scores in these reads — the ends are trimmed on ambiguity alone. A .ab1 or FASTQ file would trim better.'}
+          </p>
+        )}
 
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
@@ -247,7 +350,7 @@ export default function AssembleClient() {
             />
             <span style={{ color: 'var(--text-muted)' }}>bp</span>
           </label>
-          <button onClick={run} className="btn btn-primary" style={{ fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <button onClick={run} disabled={loading} className="btn btn-primary" style={{ fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Layers3 size={15} /> Assemble
           </button>
         </div>

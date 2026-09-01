@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRight, Database, Dna } from 'lucide-react';
+import { ChevronRight, Database, Dna, Download } from 'lucide-react';
 import SequenceViewer, { type SequenceFeature } from '@/components/SequenceViewer';
 import { normaliseFeatures } from '@/lib/features';
 import { ancestryOf, descendantsOf } from '@/lib/lineage';
@@ -77,7 +77,20 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
               </div>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, flexWrap: 'wrap' }}>
+            {/*
+              A plain link, not a fetch-and-blob: the browser's own download
+              handles the file, so it works with the session cookie and shows
+              the real filename without any script.
+            */}
+            <a
+              href={`/api/sequence/${seq.id}/export`}
+              className="btn btn-secondary"
+              style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+              title="A SnapGene .dna file, for a collaborator who has not switched"
+            >
+              <Download size={14} /> Export .dna
+            </a>
             <Link href="/sequences/new" className="btn btn-secondary" style={{ fontSize: '0.82rem' }}>
               + New Sequence
             </Link>

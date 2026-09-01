@@ -10,6 +10,8 @@ import {
   parseSequenceText, countFastaRecords, type ImportedSequence,
 } from '@/lib/sequence-import';
 import { isSnapGene, parseSnapGene } from '@/lib/snapgene';
+import { isAb1, parseAb1 } from '@/lib/formats/ab1';
+import { identifyUnsupported } from '@/lib/formats/proprietary';
 import { fetchAccession } from '@/lib/accession';
 
 export async function createSequence(data: FormData) {
@@ -88,17 +90,39 @@ export async function importSequence(formData: FormData) {
     const bytes = new Uint8Array(await upload.arrayBuffer());
     if (isSnapGene(bytes)) {
       parsed = parseSnapGene(bytes, upload.name.replace(/\.dna$/i, ''));
+    } else if (isAb1(bytes)) {
+      // A trace file has one read in it, and the quality goes to waste here —
+      // it is the assembler that uses it. Importing the basecalls is still
+      // worth doing: it is what someone dropping a .ab1 on this page wants.
+      const trace = parseAb1(bytes);
+      if (trace) {
+        parsed = {
+          name: trace.sampleName || upload.name.replace(/\.ab1$/i, ''),
+          description: trace.comment || 'Basecalls from a Sanger trace',
+          sequence: trace.sequence,
+          circular: false,
+          features: [],
+          format: 'plain',
+        };
+      }
     } else {
       parsed = parseSequenceText(new TextDecoder().decode(bytes));
       if (parsed && parsed.name === 'Imported sequence') {
         parsed.name = upload.name.replace(/\.[^.]+$/, '');
       }
     }
-    if (!parsed) throw new Error(`Could not read ${upload.name}. Supported: GenBank, FASTA, SnapGene .dna, or a plain sequence.`);
+    if (!parsed) {
+      // A closed format is a different failure from an unreadable one, and the
+      // person holding the file can act on the difference.
+      const known = identifyUnsupported(bytes, upload.name);
+      throw new Error(known
+        ? `${upload.name} is ${known.format}. ${known.advice}`
+        : `Could not read ${upload.name}. Supported: GenBank, EMBL, FASTA, GFF3, SnapGene .dna, ABI .ab1, or a plain sequence.`);
+    }
   } else if (raw) {
     const records = countFastaRecords(raw);
     parsed = parseSequenceText(raw);
-    if (!parsed) throw new Error('Could not read that. Paste GenBank, FASTA, or just the sequence.');
+    if (!parsed) throw new Error('Could not read that. Paste GenBank, EMBL, FASTA, GFF3, or just the sequence.');
     if (records > 1) note = ` (first of ${records} records)`;
   } else {
     throw new Error('Provide a sequence, a file, or an accession number.');

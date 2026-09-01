@@ -10,6 +10,9 @@
  * import screen can use them directly and they can be tested without a server.
  */
 
+import { parseEmbl } from './formats/embl';
+import { parseGffFile } from './formats/gff';
+
 export interface ImportedFeature {
   name: string;
   type: string;
@@ -22,6 +25,14 @@ export interface ImportedFeature {
   partial?: boolean;
   /** Set when the feature is a join(): the ranges it is assembled from. */
   segments?: { start: number; end: number }[];
+  /**
+   * Colour the source file asked for, as #rrggbb.
+   *
+   * ApE and SnapGene both record one per feature, and a lab's colour scheme is
+   * information — it is how people recognise their own constructs at a glance.
+   * Discarding it and re-deriving a colour from the feature type loses that.
+   */
+  color?: string;
 }
 
 export interface ImportedSequence {
@@ -31,7 +42,7 @@ export interface ImportedSequence {
   circular: boolean;
   features: ImportedFeature[];
   /** Which reader produced this. */
-  format: 'fasta' | 'genbank' | 'snapgene' | 'plain';
+  format: 'fasta' | 'genbank' | 'snapgene' | 'plain' | 'embl' | 'gff';
 }
 
 const IUPAC = /[^ACGTURYSWKMBDHVNacgturyswkmbdhvn]/g;
@@ -41,6 +52,10 @@ export function detectFormat(text: string): ImportedSequence['format'] | null {
   const t = text.trimStart();
   if (!t) return null;
   if (/^LOCUS\s/m.test(t.slice(0, 400))) return 'genbank';
+  // EMBL before FASTA: an EMBL file never starts with '>', but checking in the
+  // other order would let a GFF whose first line is a comment fall through.
+  if (/^ID\s{3}\S/m.test(t.slice(0, 400)) && /^(XX|AC|DE|SQ|FH|FT)\s/m.test(t.slice(0, 400))) return 'embl';
+  if (/^##gff-version\s+3/m.test(t.slice(0, 200))) return 'gff';
   if (t.startsWith('>')) return 'fasta';
   // A bare sequence: mostly nucleotide letters and whitespace.
   const head = t.slice(0, 2000);
@@ -185,6 +200,12 @@ export function parseGenBankFile(text: string): ImportedSequence | null {
       }
       void qualifiers;
 
+      // ApE writes its palette into the qualifiers of an otherwise ordinary
+      // GenBank file. Reading it means an ApE user's colours survive the
+      // import, which is most of what makes their map recognisable to them.
+      const colour = block.match(/\/ApEinfo_(?:fwd|rev)color="?(#[0-9a-fA-F]{6})/)?.[1]
+        ?? block.match(/\/color="?(#[0-9a-fA-F]{6})/)?.[1];
+
       const starts = parsed.segments.map(s => s.start);
       const ends = parsed.segments.map(s => s.end);
       features.push({
@@ -195,6 +216,7 @@ export function parseGenBankFile(text: string): ImportedSequence | null {
         strand: parsed.strand,
         ...(parsed.partial ? { partial: true } : {}),
         ...(parsed.segments.length > 1 ? { segments: parsed.segments } : {}),
+        ...(colour ? { color: colour.toLowerCase() } : {}),
       });
     }
   }
@@ -244,6 +266,8 @@ export function countFastaRecords(text: string): number {
 export function parseSequenceText(text: string): ImportedSequence | null {
   switch (detectFormat(text)) {
     case 'genbank': return parseGenBankFile(text);
+    case 'embl': return parseEmbl(text);
+    case 'gff': return parseGffFile(text);
     case 'fasta':
     case 'plain': return parseFastaFile(text);
     default: return null;
