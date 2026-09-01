@@ -25,6 +25,9 @@ import { revComp } from './alignment';
 
 export type Strand = 'forward' | 'reverse';
 
+/** Below this a match is not evidence of anything, whatever the intent. */
+export const ABSOLUTE_FLOOR = 8;
+
 export interface PrimerBinding {
   /** 0-indexed, inclusive, on the top strand — the annealing region only. */
   start: number;
@@ -76,7 +79,18 @@ export function findBindings(
 
   const primer = primerSeq.toUpperCase().replace(/[^ACGT]/g, '');
   const top = template.toUpperCase().replace(/[^ACGT]/g, '');
-  if (primer.length < minAnneal || top.length === 0) return [];
+  if (primer.length < ABSOLUTE_FLOOR || top.length === 0) return [];
+
+  /*
+   * The annealing floor guards *partial* matches, not short primers.
+   *
+   * A 30 nt oligo agreeing over its last 9 bases is chance; a 9 nt oligo
+   * someone saved as a primer and which matches in full is a deliberate short
+   * primer, and hiding it because of a threshold meant for tails would be the
+   * threshold answering a question it was not asked. So a short primer is
+   * matched at full length only — never partially.
+   */
+  const floor = Math.min(minAnneal, primer.length);
 
   // A circular template is searched across its own origin, so a primer sitting
   // over the join is found. The overlap only needs to be as long as the primer.
@@ -93,7 +107,7 @@ export function findBindings(
     // primer's 3' end on the left, so the matching part is a prefix of that.
     const asTop = strand === 'forward' ? primer : revComp(primer);
 
-    for (let n = primer.length; n >= minAnneal; n--) {
+    for (let n = primer.length; n >= floor; n--) {
       const probe = strand === 'forward'
         ? asTop.slice(asTop.length - n)     // 3'-anchored suffix
         : asTop.slice(0, n);                // 3' end is the left edge here

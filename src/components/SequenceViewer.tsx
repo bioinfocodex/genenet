@@ -1,6 +1,7 @@
 'use client';
 import React, { useState, useMemo, useTransition, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { Download } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
@@ -12,13 +13,13 @@ import {
   type ORF, type PCRResult, type LigationResult,
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
-import { locatePrimers } from '@/lib/primers';
 import { annotate } from '@/lib/annotation';
 import { blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
 import { placePrimers } from '@/lib/primer-binding';
+import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
@@ -154,6 +155,34 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * exact match, because every primer this application designs for cloning
    * carries a 5' tail that is not in the template.
    */
+  const mapRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState<'svg' | 'png' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  /**
+   * Save the map as a figure.
+   *
+   * The SVG on screen takes its colours from CSS variables on the document, so
+   * a serialised copy is black-on-black unless the computed styles are written
+   * in — which is what `inlineSvg` does inside these two.
+   */
+  const exportMap = async (kind: 'svg' | 'png') => {
+    const svg = mapRef.current?.querySelector('svg');
+    if (!svg) { setExportError('The map is not on screen to export.'); return; }
+    setExportError(null);
+    setExporting(kind);
+    const safe = (seqName || 'map').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'map';
+    const filename = `${safe}-${mapView}.${kind}`;
+    try {
+      if (kind === 'svg') downloadSvg(svg as SVGSVGElement, filename);
+      else await downloadPng(svg as SVGSVGElement, filename);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Could not export the map.');
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const placedPrimers = useMemo(
     () => placePrimers(primers, sequence, { circular: seqType === 'plasmid' }),
     [primers, sequence, seqType],
@@ -292,17 +321,28 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const orfsCount = useMemo(() => findORFs(sequence, 100).length, [sequence]);
   const orfs = useMemo(() => findORFs(sequence, 100), [sequence]);
 
-  // Primers are stored without coordinates, so where they sit on this template
-  // has to be worked out before the map can draw them. A primer that does not
-  // anneal exactly -- a mutagenesis primer, or one for a different construct --
-  // comes back unlocated rather than being placed approximately.
-  const { located: locatedPrimers, unlocated: unlocatedPrimers } = useMemo(
-    () => locatePrimers(sequence, primers),
-    [sequence, primers],
-  );
+  /*
+   * One answer to "where does this primer sit", shared by the maps and the
+   * sequence view.
+   *
+   * These used to be two: an exact-match locator here and a 3'-anchored one in
+   * the maps. A Gibson primer would then appear on the map and be listed as
+   * "does not match this sequence exactly" a few hundred pixels below it —
+   * two truths from one application about the same oligo.
+   */
   const drawablePrimers = useMemo(
-    () => locatedPrimers.map(({ primer, site }) => ({ ...primer, start: site.start, end: site.end })),
-    [locatedPrimers],
+    () => placedPrimers.map(p => ({
+      ...(primers.find(x => x.id === p.id) as SavedPrimer),
+      // The renderer draws in 1-indexed inclusive coordinates.
+      start: p.start + 1,
+      end: p.end + 1,
+    })),
+    [placedPrimers, primers],
+  );
+
+  const unlocatedPrimers = useMemo(
+    () => primers.filter(p => !placedPrimers.some(pl => pl.id === p.id)),
+    [primers, placedPrimers],
   );
 
   // Visible features (respects hiddenFeatures toggle)
@@ -673,17 +713,44 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           {/* Tab content */}
           {leftTab === 'map' && (
             <div>
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.85rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 {(['linear', 'circular'] as const).map(v => (
                   <button key={v} onClick={() => setMapView(v)} style={{ padding: '0.3rem 0.8rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: mapView === v ? 'var(--accent-blue-15)' : 'white', color: mapView === v ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: mapView === v ? 600 : 400 }}>
                     {v.charAt(0).toUpperCase() + v.slice(1)}
                   </button>
                 ))}
+
+                <span style={{ flex: 1 }} />
+
+                {/*
+                  A map is a figure. Exporting it is the difference between
+                  drawing one and being able to put it in a paper, and the
+                  alternative people fall back on is a screenshot of a browser
+                  window at whatever resolution their monitor happens to be.
+                */}
+                {([['svg', 'SVG'], ['png', 'PNG']] as const).map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    onClick={() => exportMap(kind)}
+                    disabled={exporting !== null}
+                    title={kind === 'svg'
+                      ? 'Vector, for a figure that will be scaled or edited'
+                      : 'Raster at 3× for slides and documents that will not take an SVG'}
+                    style={{ padding: '0.3rem 0.7rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: 'white', color: 'var(--text-muted)', cursor: exporting ? 'default' : 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                  >
+                    <Download size={12} /> {exporting === kind ? '…' : label}
+                  </button>
+                ))}
               </div>
+              {exportError && (
+                <div style={{ fontSize: '0.78rem', color: '#b91c1c', marginBottom: '0.6rem' }}>{exportError}</div>
+              )}
+              <div ref={mapRef}>
               {mapView === 'linear'
                 ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={placedPrimers} />
                 : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={placedPrimers} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
               }
+              </div>
 
               {/* Feature detail panel */}
               {selectedFeature && (
@@ -789,8 +856,9 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
               {molLayers.primer && unlocatedPrimers.length > 0 && (
                 <div style={{ padding: '0.4rem 0.75rem', fontSize: '0.72rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', background: 'rgba(245,158,11,0.06)' }}>
                   Not shown on the map: {unlocatedPrimers.map(p => p.name).join(', ')} &mdash;{' '}
-                  {unlocatedPrimers.length === 1 ? 'it does not' : 'they do not'} match this sequence exactly,
-                  so {unlocatedPrimers.length === 1 ? 'its position is' : 'their positions are'} not known.
+                  {unlocatedPrimers.length === 1 ? 'its 3\u2032 end does not' : 'their 3\u2032 ends do not'} anneal
+                  anywhere on this sequence, so {unlocatedPrimers.length === 1 ? 'it belongs' : 'they belong'} to
+                  a different construct.
                   Mutagenesis primers and primers carrying a tail behave this way.
                 </div>
               )}

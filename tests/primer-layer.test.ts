@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import MolbuilderRenderer from '../src/components/sequences/MolbuilderRenderer.tsx';
-import { locatePrimers } from '../src/lib/primers.ts';
+import { placePrimers } from '../src/lib/primer-binding.ts';
 
 /**
  * The regression this exists for.
@@ -24,11 +24,13 @@ const SEQ = 'ATGGCGAATTCCTTGGACCATGGTCCAAGGAATTCGCATTACGGCATGCATCCGGTATTAA';
 const LAYERS = { feat: false, enz: false, primer: true, orf: false };
 
 function render(primers: { name: string; sequence: string; direction: string }[]) {
-  const { located } = locatePrimers(SEQ, primers);
-  const drawable = located.map(({ primer, site }, i) => ({
-    id: `p${i}`, name: primer.name, sequence: primer.sequence,
-    direction: primer.direction, tm: 60, gcContent: 50,
-    start: site.start, end: site.end,
+  const withIds = primers.map((p, i) => ({ ...p, id: `p${i}` }));
+  const drawable = placePrimers(withIds, SEQ).map(p => ({
+    id: p.id, name: p.name,
+    sequence: withIds.find(x => x.id === p.id)!.sequence,
+    direction: p.strand, tm: 60, gcContent: 50,
+    // placePrimers reports 0-indexed; the renderer draws 1-indexed inclusive.
+    start: p.start + 1, end: p.end + 1,
   }));
   return renderToStaticMarkup(createElement(MolbuilderRenderer, {
     sequence: SEQ,
@@ -58,10 +60,11 @@ describe('the primer layer actually draws', () => {
   });
 
   test('with the layer off, nothing is drawn', () => {
-    const { located } = locatePrimers(SEQ, [{ name: 'Hidden', sequence: 'GGACCATGG', direction: 'forward' }]);
-    const drawable = located.map(({ primer, site }) => ({
-      id: 'x', name: primer.name, sequence: primer.sequence, direction: primer.direction,
-      tm: 60, gcContent: 50, start: site.start, end: site.end,
+    const drawable = placePrimers(
+      [{ id: 'x', name: 'Hidden', sequence: 'GGACCATGG', direction: 'forward' }], SEQ,
+    ).map(p => ({
+      id: p.id, name: p.name, sequence: 'GGACCATGG', direction: p.strand,
+      tm: 60, gcContent: 50, start: p.start + 1, end: p.end + 1,
     }));
     const html = renderToStaticMarkup(createElement(MolbuilderRenderer, {
       sequence: SEQ, features: [], primers: drawable, lineLen: 60,

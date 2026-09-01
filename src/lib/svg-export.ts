@@ -44,8 +44,21 @@ export function inlineSvg(svg: SVGSVGElement, opts: ExportOptions = {}): SVGSVGE
     }
   });
 
-  const w = Number(svg.getAttribute('width')) || svg.clientWidth || 800;
-  const h = Number(svg.getAttribute('height')) || svg.clientHeight || 600;
+  /*
+   * The viewBox first, because it is the drawing's own coordinate system.
+   *
+   * A width attribute of "100%" parses as NaN, and clientWidth is whatever the
+   * page happened to give the element — neither describes the picture. Reading
+   * the viewBox means an exported map is the size it was drawn at rather than
+   * the size the browser window made it.
+   */
+  const box = svg.getAttribute('viewBox')?.split(/[\s,]+/).map(Number);
+  const fromBox = box?.length === 4 && box.every(Number.isFinite)
+    ? { w: box[2], h: box[3] }
+    : null;
+
+  const w = fromBox?.w || Number(svg.getAttribute('width')) || svg.clientWidth || 800;
+  const h = fromBox?.h || Number(svg.getAttribute('height')) || svg.clientHeight || 600;
 
   // Layout styles belong to the page, not to a file going into a figure.
   clone.removeAttribute('style');
@@ -94,8 +107,8 @@ export function downloadSvg(svg: SVGSVGElement, filename: string, opts: ExportOp
 /**
  * Raster, for slides and documents that will not take an SVG.
  *
- * Drawn at a multiple of the on-screen size because a tree exported at 1x is
- * unreadable the moment it is scaled up in a document; 3x is roughly print
+ * Drawn at a multiple of the on-screen size because a drawing exported at 1x
+ * is unreadable the moment it is scaled up in a document; 3x is roughly print
  * resolution for a figure this size.
  */
 export function downloadPng(
@@ -125,7 +138,7 @@ export function downloadPng(
         resolve();
       }, 'image/png');
     };
-    img.onerror = () => reject(new Error('Could not render the tree to an image.'));
+    img.onerror = () => reject(new Error('Could not render the drawing to an image.'));
     // A data: URL rather than a blob: URL -- a blob URL taints the canvas in
     // some browsers, and toBlob then throws on a tainted canvas.
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);

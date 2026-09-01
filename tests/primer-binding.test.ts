@@ -68,9 +68,33 @@ test('a primer that matches nothing is reported as nothing', () => {
   assert.deepEqual(findBindings(makeSeq(24, 999), T), []);
 });
 
-test('a primer shorter than the annealing floor is refused', () => {
-  assert.deepEqual(findBindings(T.slice(0, 8), T), []);
-  assert.equal(findBindings(T.slice(0, 14), T).length, 1);
+test('a short primer matches in full or not at all', () => {
+  // The annealing floor guards partial 3' matches, not short oligos. A 9 nt
+  // primer someone deliberately saved and which matches completely is a short
+  // primer; refusing it would be the threshold answering a question it was
+  // not asked.
+  const short = T.slice(100, 109);
+  const full = findBindings(short, T);
+  assert.equal(full.length, 1);
+  assert.equal(full[0].exact, true);
+  assert.equal(full[0].annealLength, 9);
+
+  // But it is never matched partially — a 6 of 9 agreement is nothing.
+  const nearlyShort = short.slice(0, 6) + 'GGG';
+  assert.deepEqual(findBindings(nearlyShort, T), []);
+
+  // And below the absolute floor nothing is reported at all.
+  assert.deepEqual(findBindings(T.slice(0, 6), T), []);
+});
+
+test('a long primer is still held to the partial-match floor', () => {
+  // 40 nt of which only the last 9 match: chance, not annealing.
+  const junk = makeSeq(31, 555);
+  assert.deepEqual(findBindings(junk + T.slice(200, 209), T), []);
+  // Extend the match past the floor and it is found.
+  const real = findBindings(junk + T.slice(200, 214), T);
+  assert.equal(real.length, 1);
+  assert.equal(real[0].annealLength, 14);
 });
 
 test('the longest 3-prime match wins, not the first one tried', () => {
