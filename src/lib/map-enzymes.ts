@@ -23,8 +23,19 @@ import { ENZYMES } from './restrictionEnzymes';
 export interface SiteLike {
   enzyme: string;
   cutPos: number;
+  /**
+   * Where the bottom strand is cut, in the same coordinates as `cutPos`.
+   *
+   * The two are equal for a blunt cutter and differ by the overhang for every
+   * other one. Carried rather than recomputed because the offset is a property
+   * of the enzyme, and the sequence view has to draw both cuts to show what
+   * end a digest actually leaves.
+   */
+  cutBottom: number;
   recognitionStart: number;
   recognitionLen: number;
+  overhang: string;
+  overhangType: string;
   color: string;
 }
 
@@ -32,8 +43,12 @@ export interface MapSite {
   /** The name to draw. */
   enzyme: string;
   cutPos: number;
+  /** Bottom-strand cut, in the same coordinates. Equal to `cutPos` when blunt. */
+  cutBottom: number;
   recognitionStart: number;
   recognitionLen: number;
+  overhang: string;
+  overhangType: string;
   color: string;
   /** Other enzymes recognising this same stretch, best-known first. */
   alternatives: string[];
@@ -125,8 +140,11 @@ export function chooseMapEnzymes(
     out.push({
       enzyme: label,
       cutPos: chosen.cutPos,
+      cutBottom: chosen.cutBottom,
       recognitionStart: chosen.recognitionStart,
       recognitionLen: chosen.recognitionLen,
+      overhang: chosen.overhang,
+      overhangType: chosen.overhangType,
       color: chosen.color,
       alternatives: names.filter(n => n !== label).sort(),
       cuts: cutCounts.get(label) ?? group.length,
@@ -155,9 +173,22 @@ export function siteLabel(site: MapSite): string {
   return site.alternatives.length ? `${site.enzyme} +${site.alternatives.length}` : site.enzyme;
 }
 
+/** How the digest leaves the ends, in words. */
+export function endDescription(site: MapSite): string {
+  if (site.overhangType === 'blunt' || site.cutBottom === site.cutPos) return 'blunt ends';
+  const n = Math.abs(site.cutBottom - site.cutPos);
+  const kind = site.overhangType === '3prime' ? "3′" : "5′";
+  // Type IIS enzymes cut outside their site, so the overhang is whatever the
+  // target happens to be there -- known in length but not in sequence.
+  const seq = site.overhang ? ` ${site.overhang}` : '';
+  return `${n} nt ${kind} overhang${seq}`;
+}
+
 /** The full list, for a tooltip. */
 export function siteTitle(site: MapSite): string {
   const where = `cuts at ${(site.cutPos + 1).toLocaleString()}`;
-  if (!site.alternatives.length) return `${site.enzyme} — ${where}`;
-  return `${site.enzyme} — ${where}\nSame site: ${site.alternatives.join(', ')}`;
+  const ends = endDescription(site);
+  const head = `${site.enzyme} — ${where}, ${ends}`;
+  if (!site.alternatives.length) return head;
+  return `${head}\nSame site: ${site.alternatives.join(', ')}`;
 }

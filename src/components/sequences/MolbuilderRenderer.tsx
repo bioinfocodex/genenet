@@ -25,18 +25,26 @@ import type { SequenceFeature, SavedPrimer } from '@/components/SequenceViewer';
  * than once if it anneals in more than one place.
  */
 export type DrawablePrimer = SavedPrimer & { start: number; end: number };
-import type { ORF } from '@/lib/simulation';
+import type { MapSite } from '@/lib/map-enzymes';
+import { siteTitle } from '@/lib/map-enzymes';
+import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
 
 interface MolbuilderRendererProps {
   sequence: string;
   features: SequenceFeature[];
   /**
-   * Only what a label needs. Typed narrowly on purpose: demanding a full
-   * ReSite is what pushed callers into handing over the raw scan.
+   * The sites already chosen for display.
+   *
+   * This was narrowed to a name and a cut position, to stop callers handing
+   * over the raw 5,000-cut scan. MapSite is the list that has already been
+   * chosen, so it closes that door just as firmly, and it carries what
+   * drawing a cut actually needs: the recognition span to highlight, and the
+   * bottom-strand cut, without which a digest looks blunt whatever it leaves.
    */
-  enzymes?: { enzyme: string; cutPos: number }[];
+  enzymes?: MapSite[];
   primers?: DrawablePrimer[];
-  orfs?: ORF[];
+  /** Reading frames worth drawing, already chosen — not the raw six-frame scan. */
+  orfs?: MapOrf[];
   lineLen: number;
   layers: {
     feat: boolean;
@@ -102,7 +110,13 @@ export default function MolbuilderRenderer({
     const iEnd1 = i + chunkLen; // 1-indexed block end
 
     /*
-     * 1. Layer: Enzymes (1-indexed cutPos)
+     * 1. Layer: Enzymes
+     *
+     * cutPos is a 0-indexed base index and the cut falls immediately before
+     * that base, so a cut belongs to this block when it lands anywhere from
+     * its first base to just past its last. This used to compare against the
+     * 1-indexed block bounds and position at `cutPos - i1`, which drew every
+     * name and every tick one base to the left of the cut it was pointing at.
      *
      * Labels are stacked into rows by where they would actually land. Every
      * one of these is absolutely positioned at its cut, and two cuts a few
@@ -113,12 +127,19 @@ export default function MolbuilderRenderer({
      * The caller decides *which* enzymes arrive here; this decides where they
      * sit once they have.
      */
-    const activeEnz = layers.enz ? enzymes.filter(e => e.cutPos >= i1 && e.cutPos <= iEnd1) : [];
+    const cutsHere = layers.enz
+      ? enzymes.filter(e => e.cutPos >= i && e.cutPos <= i + chunkLen)
+      : [];
+    // A site can be highlighted in a block its cut does not fall in, when the
+    // recognition sequence straddles the line break.
+    const sitesHere = layers.enz
+      ? enzymes.filter(e => e.recognitionStart < i + chunkLen && e.recognitionStart + e.recognitionLen > i)
+      : [];
 
-    const enzRows: { e: { enzyme: string; cutPos: number }; row: number }[] = [];
+    const enzRows: { e: MapSite; row: number }[] = [];
     const rowEnds: number[] = [];
-    for (const e of [...activeEnz].sort((a, b) => a.cutPos - b.cutPos)) {
-      const col = e.cutPos - i1;
+    for (const e of [...cutsHere].sort((a, b) => a.cutPos - b.cutPos)) {
+      const col = e.cutPos - i;
       // A label is about 0.62ch per character and centred on its cut.
       const halfWidth = e.enzyme.length * 0.31 + 0.5;
       let row = rowEnds.findIndex(end => col - halfWidth > end);
@@ -128,17 +149,30 @@ export default function MolbuilderRenderer({
     }
     const enzHeight = Math.max(1, rowEnds.length) * 13 + 8;
 
-    const enzRow = activeEnz.length > 0 && (
+    const enzRow = cutsHere.length > 0 && (
       <div key={`enz-${i}`} style={{ height: `${enzHeight}px`, position: 'relative', borderLeft: '60px solid transparent', fontFamily: 'var(--font-mono)' }}>
         {enzRows.map(({ e, row }, idx) => (
-          <div key={`${e.enzyme}-${idx}`} title={`${e.enzyme} cuts at ${e.cutPos.toLocaleString()}`} style={{ position: 'absolute', bottom: 0, left: `${e.cutPos - i1}ch`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ef4444', whiteSpace: 'nowrap', paddingRight: '2px', lineHeight: 1.35 }}>{e.enzyme}</span>
+          <div key={`${e.enzyme}-${idx}`} title={siteTitle(e)} style={{ position: 'absolute', bottom: 0, left: `${e.cutPos - i}ch`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <span style={{ fontSize: '9px', fontWeight: 700, color: e.color, whiteSpace: 'nowrap', paddingRight: '2px', lineHeight: 1.35 }}>{e.enzyme}</span>
             {/* The tick reaches from the label down to the bases it cuts. */}
-            <div style={{ width: '1px', height: `${(rowEnds.length - row - 1) * 13 + 6}px`, background: '#ef4444' }} />
+            <div style={{ width: '1px', height: `${(rowEnds.length - row - 1) * 13 + 6}px`, background: e.color }} />
           </div>
         ))}
       </div>
     );
+
+    /*
+     * Which bases each site recognises, so they can be tinted under the
+     * letters. Naming an enzyme and being shown only a tick above the line
+     * leaves the actual question — which bases is it reading — to be counted
+     * off by hand.
+     */
+    const siteInk: (string | null)[] = new Array(chunkLen).fill(null);
+    for (const e of sitesHere) {
+      for (let c = e.recognitionStart - i; c < e.recognitionStart + e.recognitionLen - i; c++) {
+        if (c >= 0 && c < chunkLen) siteInk[c] ??= e.color;
+      }
+    }
 
     // 2. Layer: Primers (1-indexed start/end)
     const activePrimesFwd = layers.primer ? primers.filter(p => p.direction === 'forward' && p.start <= iEnd1 && p.end >= i1) : [];
@@ -180,19 +214,52 @@ export default function MolbuilderRenderer({
       );
     });
 
-    // 3b. ORFs (Forward - 0-indexed start/end from logic)
-    const activeOrfsFwd = layers.orf ? orfs.filter(o => o.strand === '+' && o.start < iEnd1 && o.end > i) : [];
-    const orfFwdRow = activeOrfsFwd.length > 0 && (
-      <div key={`orf-fwd-${i}`} style={{ height: '10px', position: 'relative', borderLeft: '60px solid transparent', marginBottom: '2px', fontFamily: 'var(--font-mono)' }}>
-        {activeOrfsFwd.map((o, idx) => {
-          const start = Math.max(0, o.start - i);
-          const end = Math.min(chunkLen, o.end - i);
-          return (
-            <div key={`${o.frame}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${end - start}ch`, height: '6px', background: '#22c55e', opacity: 0.6, borderRadius: '3px' }} />
-          );
-        })}
-      </div>
-    );
+    /*
+     * 3b. ORFs — the ones already chosen, not the whole six-frame scan.
+     *
+     * This layer used to be handed every ORF over 100 nt in all six frames,
+     * including every one lying under a CDS the feature track above already
+     * names. Turning it on filled the page with bars restating the
+     * annotation. The map answers the narrower question — is there coding
+     * sequence I have *not* annotated — and now so does this.
+     *
+     * A row per frame rather than packed by position: two ORFs on one row
+     * being in the same frame is information, and packing by whatever fits
+     * would throw it away.
+     */
+    const orfBand = (dir: '+' | '-', margin: React.CSSProperties) => {
+      const here = layers.orf
+        ? orfs.filter(o => o.strand === dir && o.start <= i + chunkLen - 1 && o.end >= i)
+        : [];
+      if (here.length === 0) return false;
+      const frames = [...new Set(here.map(o => o.frame))].sort((a, b) => (dir === '+' ? a - b : b - a));
+      return (
+        <div key={`orf-${dir}-${i}`} style={{ height: `${frames.length * 9}px`, position: 'relative', borderLeft: '60px solid transparent', fontFamily: 'var(--font-mono)', ...margin }}>
+          {here.map((o, idx) => {
+            // MapOrf reports `end` inclusive, unlike the raw scan this used to take.
+            const start = Math.max(0, o.start - i);
+            const end = Math.min(chunkLen, o.end - i + 1);
+            return (
+              <div
+                key={`${o.frame}-${o.start}-${idx}`}
+                title={orfTitle(o)}
+                style={{
+                  position: 'absolute', top: `${frames.indexOf(o.frame) * 9}px`,
+                  left: `${start}ch`, width: `${end - start}ch`, height: '6px',
+                  background: frameColour(o.frame),
+                  // Already annotated: present because someone asked, never
+                  // competing with the one that is news.
+                  opacity: o.coveredBy ? 0.35 : 0.8,
+                  borderRadius: '3px', cursor: 'help',
+                }}
+              />
+            );
+          })}
+        </div>
+      );
+    };
+    const orfFwdRow = orfBand('+', { marginBottom: '2px' });
+    const orfRevRow = orfBand('-', { marginTop: '2px' });
 
     // 4. Ruler
     const ruler = (
@@ -277,6 +344,7 @@ export default function MolbuilderRenderer({
           {chunk.split('').map((c, j) => {
             const pos = i + j;
             const isSelected = selection && pos + 1 >= selection.start && pos + 1 <= selection.end;
+            const ink = siteInk[j];
             return (
               <span 
                 key={j} 
@@ -284,7 +352,14 @@ export default function MolbuilderRenderer({
                 onMouseDown={() => handleMouseDown(pos)}
                 onMouseMove={() => handleMouseMove(pos)}
                 onMouseUp={handleMouseUp}
-                style={{ fontWeight: 600, color: NT_COL[c] || '#475569' }}
+                style={{
+                  fontWeight: ink ? 800 : 600,
+                  color: NT_COL[c] || '#475569',
+                  // Selection is set by a class, so leaving the inline
+                  // background off is what lets it win where the two meet.
+                  ...(ink && !isSelected ? { background: `${ink}2e` } : {}),
+                  ...(ink ? { boxShadow: `inset 0 -2px 0 ${ink}` } : {}),
+                }}
               >
                 {c}
               </span>
@@ -308,11 +383,15 @@ export default function MolbuilderRenderer({
             const pos = i + j;
             const b = COMP_MAP[c] || 'N';
             const isSelected = selection && pos + 1 >= selection.start && pos + 1 <= selection.end;
+            const ink = siteInk[j];
             return (
               <span 
                 key={j} 
                 className={`seq-char ${isSelected ? 'selected' : ''}`}
-                style={{ color: NT_BOT[c] || '#94a3b8' }}
+                style={{
+                  color: ink ? NT_COL[c] || '#475569' : NT_BOT[c] || '#94a3b8',
+                  ...(ink && !isSelected ? { background: `${ink}2e` } : {}),
+                }}
               >
                 {b}
               </span>
@@ -345,20 +424,6 @@ export default function MolbuilderRenderer({
       );
     });
 
-    // 7b. ORFs (Reverse)
-    const activeOrfsRev = layers.orf ? orfs.filter(o => o.strand === '-' && o.start < iEnd1 && o.end > i) : [];
-    const orfRevRow = activeOrfsRev.length > 0 && (
-      <div key={`orf-rev-${i}`} style={{ height: '10px', position: 'relative', borderLeft: '60px solid transparent', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
-        {activeOrfsRev.map((o, idx) => {
-          const start = Math.max(0, o.start - i);
-          const end = Math.min(chunkLen, o.end - i);
-          return (
-            <div key={`${o.frame}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${end - start}ch`, height: '6px', background: '#9333ea', opacity: 0.6, borderRadius: '3px' }} />
-          );
-        })}
-      </div>
-    );
-
     // 7c. Primers (Reverse: 1-indexed)
     const activePrimesRev = layers.primer ? primers.filter(p => p.direction === 'reverse' && p.start <= iEnd1 && p.end >= i1) : [];
     const primerRevRow = activePrimesRev.length > 0 && (
@@ -376,6 +441,45 @@ export default function MolbuilderRenderer({
       </div>
     );
 
+    /*
+     * The cut itself, drawn where it actually falls: down through the top
+     * strand at cutPos, along the gap between the strands, and down through
+     * the bottom strand at cutBottom.
+     *
+     * The offset between the two is the overhang. Drawing one line through
+     * both strands would show every digest as blunt — EcoRI and SmaI
+     * identical on screen, when which of the two you reach for is decided by
+     * exactly that difference.
+     */
+    const cutMarks = cutsHere.length > 0 && (
+      <div key={`cuts-${i}`} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        {cutsHere.map((e, idx) => {
+          const top = e.cutPos - i;
+          const bottom = e.cutBottom - i;
+          const lo = Math.max(0, Math.min(top, bottom));
+          const hi = Math.min(chunkLen, Math.max(top, bottom));
+          const bar = (left: number, from: string, height: string) => (
+            <div style={{
+              position: 'absolute', left: `calc(60px + ${left}ch)`, marginLeft: -1,
+              top: from, height, width: 2, background: e.color, borderRadius: 1,
+            }} />
+          );
+          return (
+            <React.Fragment key={`${e.enzyme}-${idx}`}>
+              {bar(top, '0', '50%')}
+              {hi > lo && (
+                <div style={{
+                  position: 'absolute', left: `calc(60px + ${lo}ch)`, width: `${hi - lo}ch`,
+                  top: 'calc(50% - 1px)', height: 2, background: e.color,
+                }} />
+              )}
+              {bottom >= 0 && bottom <= chunkLen && bar(bottom, '50%', '50%')}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    );
+
     blocks.push(
       <div key={`block-${i}`} className="seq-block">
         {enzRow}
@@ -384,9 +488,12 @@ export default function MolbuilderRenderer({
         {transFwdRows}
         {ruler}
         {featRow}
-        {topStrand}
-        {strandSeparator}
-        {botStrand}
+        <div style={{ position: 'relative' }}>
+          {topStrand}
+          {strandSeparator}
+          {botStrand}
+          {cutMarks}
+        </div>
         {transRevRows}
         {orfRevRow}
         {primerRevRow}

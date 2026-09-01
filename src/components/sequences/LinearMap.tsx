@@ -9,6 +9,8 @@ import { shapeFor, isSolid, labelInk, estimateTextWidth } from '@/lib/map-style'
 export interface ReSite {
   enzyme: string;
   cutPos: number;
+  /** Bottom-strand cut, same coordinates. Equal to `cutPos` for a blunt cutter. */
+  cutBottom: number;
   recognitionStart: number;
   recognitionLen: number;
   overhang: string;

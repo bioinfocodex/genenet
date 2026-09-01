@@ -1,14 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  chooseMapEnzymes, countCuts, siteLabel, siteTitle, type SiteLike,
+  chooseMapEnzymes, countCuts, siteLabel, siteTitle, endDescription, type SiteLike,
 } from '../src/lib/map-enzymes.ts';
 
 const site = (enzyme: string, recognitionStart: number, over: Partial<SiteLike> = {}): SiteLike => ({
   enzyme,
   cutPos: recognitionStart + 1,
+  cutBottom: recognitionStart + 5,   // EcoRI's stagger, as a stand-in
   recognitionStart,
   recognitionLen: 6,
+  overhang: 'AATT',
+  overhangType: '5prime',
   color: '#888',
   ...over,
 });
@@ -150,4 +153,20 @@ test('restricting is not the same as preferring', () => {
 test('a set whose members cut nowhere gives an empty map, not every site', () => {
   const sites = [site('EcoRI', 100), site('BamHI', 500)];
   assert.deepEqual(chooseMapEnzymes(sites, countCuts(sites), { restrictTo: ['NotI'] }), []);
+});
+
+
+test('a site says what ends the digest leaves', () => {
+  const [ecoRI] = chooseMapEnzymes([site('EcoRI', 100)], countCuts([site('EcoRI', 100)]));
+  assert.equal(endDescription(ecoRI), "4 nt 5\u2032 overhang AATT");
+  assert.match(siteTitle(ecoRI), /4 nt 5\u2032 overhang AATT/);
+
+  const bluntSites = [site('SmaI', 200, { cutBottom: 201, overhang: '', overhangType: 'blunt' })];
+  const [smaI] = chooseMapEnzymes(bluntSites, countCuts(bluntSites));
+  assert.equal(endDescription(smaI), 'blunt ends');
+
+  // Type IIS: the length is known, the overhang sequence is not.
+  const iis = [site('BsaI', 300, { cutBottom: 305, overhang: '', overhangType: '5prime' })];
+  const [bsaI] = chooseMapEnzymes(iis, countCuts(iis));
+  assert.equal(endDescription(bsaI), "4 nt 5\u2032 overhang");
 });

@@ -27,6 +27,7 @@ import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
+import EnzymePicker from './sequences/EnzymePicker';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
 import MolbuilderStats from './sequences/MolbuilderStats';
 import MolbuilderFindReplace from './sequences/MolbuilderFindReplace';
@@ -40,15 +41,17 @@ import CircularMap from './sequences/CircularMap';
 // already import it from this module.
 export type { SequenceFeature } from '@/lib/features';
 
-interface ReSite {
-  enzyme: string;
-  cutPos: number;
-  recognitionStart: number;
-  recognitionLen: number;
-  overhang: string;
-  overhangType: string;
-  color: string;
-}
+/*
+ * One shape for a cut site, not two.
+ *
+ * This file used to declare its own ReSite identical to the map's. Identical
+ * is not the same as shared: adding the bottom-strand cut to one left the
+ * other a structurally different type with the same name, and the compiler
+ * called it what it was. The map exports it, the way CircularMap already
+ * takes it.
+ */
+import type { ReSite } from './sequences/LinearMap';
+export type { ReSite };
 
 export interface SavedPrimer {
   id: string;
@@ -231,6 +234,14 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const [enzymeSet, setEnzymeSet] = useState('all');
   const [mapMaxCuts, setMapMaxCuts] = useState(1);
   const [mapMinSite, setMapMinSite] = useState(6);
+  /**
+   * Enzymes asked for by name, shared by the map, the sequence and the panel.
+   *
+   * Empty means "use the filters", which is the default and answers "what
+   * could I clone into". Non-empty means someone named an enzyme, which is a
+   * different question and outranks the filters — see `enzymeDisplay`.
+   */
+  const [pickedEnzymes, setPickedEnzymes] = useState<Set<string>>(new Set());
 
   const enzymeSetNames = useMemo(() => {
     if (enzymeSet === 'all') return null;
@@ -238,11 +249,24 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     return set ? resolveSet(set) : null;
   }, [enzymeSet]);
 
-  const enzymeDisplay = useMemo(() => ({
-    minSiteLength: mapMinSite,
-    maxCuts: mapMaxCuts,
-    ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
-  }), [mapMinSite, mapMaxCuts, enzymeSetNames]);
+  /*
+   * Naming an enzyme overrides every filter, rather than intersecting them.
+   *
+   * The filters exist to answer a question nobody asked out loud: of five
+   * thousand cuts, which are worth drawing. Once someone types "AluI" they
+   * have asked out loud, and a four-cutter that cuts forty times failing every
+   * default is the whole reason they had to ask. Silently showing nothing
+   * would look like a broken picker rather than a filter doing its job.
+   */
+  const enzymeDisplay = useMemo(() => (
+    pickedEnzymes.size > 0
+      ? { restrictTo: [...pickedEnzymes], minSiteLength: 0, maxCuts: Infinity, maxLabels: 400 }
+      : {
+          minSiteLength: mapMinSite,
+          maxCuts: mapMaxCuts,
+          ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
+        }
+  ), [pickedEnzymes, mapMinSite, mapMaxCuts, enzymeSetNames]);
 
   const [showExport, setShowExport] = useState(false);
 
@@ -427,10 +451,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     const sites: ReSite[] = [];
     enzymeList.forEach((enzyme, i) => {
       findCutSites(sequence, enzyme).forEach(cutPos => {
+        const recognitionStart = cutPos - enzyme.cutBefore;
         sites.push({
           enzyme: enzyme.name,
           cutPos,
-          recognitionStart: cutPos - enzyme.cutBefore,
+          /*
+           * Both cut offsets are measured from the start of the recognition
+           * site, so the bottom-strand cut is the site's start plus the
+           * enzyme's own bottom offset. REBASE gives one for every enzyme in
+           * the table, which is what lets the sequence view draw a digest as
+           * the staggered cut it actually is rather than as a single line.
+           */
+          cutBottom: recognitionStart + (enzyme.cutBottom ?? enzyme.cutBefore),
+          recognitionStart,
           recognitionLen: enzyme.pattern.length,
           overhang: enzyme.overhang || 'blunt',
           overhangType: enzyme.overhangType,
@@ -490,12 +523,22 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * rest of this map is about. The default once on is the useful question:
    * frames with no CDS already over them.
    */
-  const mapOrfs = useMemo(
-    () => (showOrfs
-      ? chooseMapOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated })
-      : []),
-    [showOrfs, orfIncludeAnnotated, orfs, features],
+  /*
+   * Which reading frames are worth drawing anywhere, decided once.
+   *
+   * This used to be folded together with the map's own on/off switch, so the
+   * sequence view could not use it — and the sequence view was handed the raw
+   * six-frame scan instead: every ORF over 100 nt in all six frames, including
+   * the ones lying under a CDS already annotated. Turning the ORF layer on
+   * there filled the page with bars saying what the feature track above them
+   * already said. Choosing is one question and showing is another.
+   */
+  const chosenOrfs = useMemo(
+    () => chooseMapOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated }),
+    [orfIncludeAnnotated, orfs, features],
   );
+
+  const mapOrfs = showOrfs ? chosenOrfs : [];
 
   const orfSummary = useMemo(
     () => summariseOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated }),
@@ -976,9 +1019,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 <select
                   value={enzymeSet}
                   onChange={e => setEnzymeSet(e.target.value)}
+                  disabled={pickedEnzymes.size > 0}
                   className="input-control"
-                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
-                  title="Narrow the map to a working set. Shared with the Sites panel."
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem', opacity: pickedEnzymes.size ? 0.45 : 1 }}
+                  title={pickedEnzymes.size
+                    ? 'Not in use: the map is showing the enzymes you named'
+                    : 'Narrow the map to a working set. Shared with the Sites panel.'}
                 >
                   <option value="all">All</option>
                   {STARTER_SETS.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
@@ -987,9 +1033,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 <select
                   value={mapMaxCuts}
                   onChange={e => setMapMaxCuts(Number(e.target.value))}
+                  disabled={pickedEnzymes.size > 0}
                   className="input-control"
-                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
-                  title="An enzyme cutting many times is not a cloning site"
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem', opacity: pickedEnzymes.size ? 0.45 : 1 }}
+                  title={pickedEnzymes.size
+                    ? 'Not in use: an enzyme you named is shown however often it cuts'
+                    : 'An enzyme cutting many times is not a cloning site'}
                 >
                   <option value={1}>cutting once</option>
                   <option value={2}>up to twice</option>
@@ -1000,14 +1049,24 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 <select
                   value={mapMinSite}
                   onChange={e => setMapMinSite(Number(e.target.value))}
+                  disabled={pickedEnzymes.size > 0}
                   className="input-control"
-                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
-                  title="A four-cutter lands every few hundred bases"
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem', opacity: pickedEnzymes.size ? 0.45 : 1 }}
+                  title={pickedEnzymes.size
+                    ? 'Not in use: an enzyme you named is shown whatever its site length'
+                    : 'A four-cutter lands every few hundred bases'}
                 >
                   <option value={6}>6 bp sites and up</option>
                   <option value={5}>5 bp and up</option>
                   <option value={4}>4 bp and up</option>
                 </select>
+
+                <EnzymePicker
+                  sitesByEnzyme={reSitesByEnzyme}
+                  picked={pickedEnzymes}
+                  onChange={setPickedEnzymes}
+                  compact
+                />
 
                 {/*
                   Reading frames are opt-in. Six-frame translation finds them
@@ -1043,11 +1102,15 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                       title={siteCounts.drawn < siteCounts.eligible
                         ? 'Too many to label legibly, so they are thinned evenly round the molecule rather than truncated on one side'
                         : undefined}>
-                  {siteCounts.drawn === 0
-                    ? `nothing to draw from ${allReSites.length.toLocaleString()} cuts found`
-                    : siteCounts.drawn < siteCounts.eligible
-                      ? `${siteCounts.drawn} of ${siteCounts.eligible} matching sites drawn — too many to label`
-                      : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} drawn of ${allReSites.length.toLocaleString()} cuts found`}
+                  {pickedEnzymes.size > 0
+                    ? (siteCounts.drawn === 0
+                        ? `${[...pickedEnzymes].join(', ')} ${pickedEnzymes.size === 1 ? 'does' : 'do'} not cut this sequence`
+                        : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} from ${pickedEnzymes.size} enzyme${pickedEnzymes.size === 1 ? '' : 's'} you named`)
+                    : siteCounts.drawn === 0
+                      ? `nothing to draw from ${allReSites.length.toLocaleString()} cuts found`
+                      : siteCounts.drawn < siteCounts.eligible
+                        ? `${siteCounts.drawn} of ${siteCounts.eligible} matching sites drawn — too many to label`
+                        : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} drawn of ${allReSites.length.toLocaleString()} cuts found`}
                   {showOrfs && ` · ${orfSummary.drawn} of ${orfSummary.total.toLocaleString()} reading frames`}
                 </span>
               </div>
@@ -1159,6 +1222,32 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   onClose={() => setShowMolFind(false)} 
                 />
               )}
+              {/*
+                * The same picker the map has, because the question is the
+                * same one and the answer has to be. Naming an enzyme here was
+                * impossible: the Sites panel listed every one that cuts and
+                * no view could be pointed at any of them, so "where does
+                * BamHI cut" ended at a table of numbers to count off by hand.
+                */}
+              {molLayers.enz && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', padding: '0.45rem 0.75rem', borderBottom: '1px solid var(--glass-border)', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                  <span style={{ fontWeight: 600 }}>Enzymes</span>
+                  <EnzymePicker
+                    sitesByEnzyme={reSitesByEnzyme}
+                    picked={pickedEnzymes}
+                    onChange={setPickedEnzymes}
+                    compact
+                  />
+                  <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                    {pickedEnzymes.size > 0
+                      ? (displayedSites.length === 0
+                          ? `${[...pickedEnzymes].join(', ')} ${pickedEnzymes.size === 1 ? 'does' : 'do'} not cut this sequence`
+                          : `${displayedSites.length} cut${displayedSites.length === 1 ? '' : 's'} shown`)
+                      : `${displayedSites.length} site${displayedSites.length === 1 ? '' : 's'} — the map's filters. Name one to see any enzyme.`}
+                  </span>
+                </div>
+              )}
+
               {molLayers.primer && unlocatedPrimers.length > 0 && (
                 <div style={{ padding: '0.4rem 0.75rem', fontSize: '0.72rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', background: 'rgba(245,158,11,0.06)' }}>
                   Not shown on the map: {unlocatedPrimers.map(p => p.name).join(', ')} &mdash;{' '}
@@ -1175,7 +1264,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                     features={visibleFeatures}
                     enzymes={displayedSites}
                     primers={drawablePrimers}
-                    orfs={orfs}
+                    orfs={chosenOrfs}
                     lineLen={effectiveLineLen}
                     layers={molLayers}
                     frames={molFrames}
@@ -1374,7 +1463,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
           {leftTab === 'sites' && (
             <div>
-              <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} />
+              <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} picked={pickedEnzymes} onPicked={setPickedEnzymes} />
 
               {/*
                 The quick digest, moved here from a sidebar accordion called
@@ -2116,7 +2205,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
 // ─── RE Sites Panel ──────────────────────────────────────────────────────────
 
 function RESitesPanel({
-  reSitesByEnzyme, sequence, circular, setName, onSetName,
+  reSitesByEnzyme, sequence, circular, setName, onSetName, picked, onPicked,
 }: {
   reSitesByEnzyme: Map<string, ReSite[]>;
   sequence: string;
@@ -2124,8 +2213,22 @@ function RESitesPanel({
   /** Shared with the map, so the two never disagree about what was asked for. */
   setName: string;
   onSetName: (name: string) => void;
+  /** Also shared: this table is the natural place to pick from. */
+  picked: Set<string>;
+  onPicked: (next: Set<string>) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+
+  /*
+   * The table was a dead end: it knew every enzyme that cuts and where, and
+   * offered no way to say "show me that one". A row is now the way you ask,
+   * and the map and the sequence answer.
+   */
+  const toggle = (enzyme: string) => {
+    const next = new Set(picked);
+    if (next.has(enzyme)) next.delete(enzyme); else next.add(enzyme);
+    onPicked(next);
+  };
   const entries = useMemo(
     () => [...reSitesByEnzyme.entries()].sort((a, b) => a[1].length - b[1].length),
     [reSitesByEnzyme],
@@ -2145,7 +2248,19 @@ function RESitesPanel({
     return set ? new Set(resolveSet(set)) : null;
   }, [setName]);
 
-  const displayed = (showAll ? entries : uniqueCutters).filter(([n]) => !inSet || inSet.has(n));
+  /*
+   * Whatever the filters, a picked enzyme stays in the table.
+   *
+   * The list defaults to unique cutters, so picking a two-cutter took its own
+   * row off screen — the checkbox that turned it on had nowhere to turn it
+   * off, and the only way back was Clear, which drops everything.
+   */
+  const displayed = useMemo(() => {
+    const base = (showAll ? entries : uniqueCutters).filter(([n]) => !inSet || inSet.has(n));
+    const shown = new Set(base.map(([n]) => n));
+    const missing = entries.filter(([n]) => picked.has(n) && !shown.has(n));
+    return [...base, ...missing].sort((a, b) => a[1].length - b[1].length || a[0].localeCompare(b[0]));
+  }, [showAll, entries, uniqueCutters, inSet, picked]);
 
   return (
     <div>
@@ -2209,6 +2324,20 @@ function RESitesPanel({
           );
         })()}
 
+      {picked.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', padding: '0.5rem 0.85rem', marginBottom: '0.85rem', borderRadius: 7, background: 'var(--accent-blue-15)', border: '1px solid var(--glass-border)', fontSize: '0.8rem' }}>
+          <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>
+            Showing {[...picked].join(', ')} on the map and in the sequence
+          </span>
+          <button
+            onClick={() => onPicked(new Set())}
+            style={{ marginLeft: 'auto', padding: '0.2rem 0.55rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'white', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontFamily: 'inherit' }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {displayed.length === 0 ? (
         <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No restriction sites found.</p>
       ) : (
@@ -2216,6 +2345,7 @@ function RESitesPanel({
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                <th style={{ padding: '0.45rem 0.5rem', width: 30 }} />
                 {['Enzyme', 'Pattern', '# Cuts', 'Position(s)', 'Overhang', 'End type'].map(h => (
                   <th key={h} style={{ padding: '0.45rem 0.75rem', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase' }}>{h}</th>
                 ))}
@@ -2225,8 +2355,27 @@ function RESitesPanel({
               {displayed.map(([enz, sites]) => {
                 const isUnique = sites.length === 1;
                 const enzObj = ENZYMES[enz];
+                const isPicked = picked.has(enz);
                 return (
-                  <tr key={enz} style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                  <tr
+                    key={enz}
+                    onClick={() => toggle(enz)}
+                    title={isPicked ? `Stop showing ${enz} on the map and sequence` : `Show ${enz} on the map and sequence`}
+                    style={{
+                      borderBottom: '1px solid var(--glass-border)', cursor: 'pointer',
+                      background: isPicked ? 'var(--accent-blue-15)' : undefined,
+                    }}
+                  >
+                    <td style={{ padding: '0.45rem 0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={isPicked}
+                        onChange={() => toggle(enz)}
+                        onClick={e => e.stopPropagation()}
+                        aria-label={`Show ${enz}`}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </td>
                     <td style={{ padding: '0.45rem 0.75rem' }}>
                       <span style={{ fontWeight: 600, color: isUnique ? 'var(--accent-green)' : 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: sites[0].color, display: 'inline-block' }} />
