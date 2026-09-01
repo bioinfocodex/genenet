@@ -1,7 +1,10 @@
 'use client';
 import React, { useState, useMemo, useTransition, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download } from 'lucide-react';
+import {
+  Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
+  FlaskConical, Dna, Atom, Link2, Library, Tag, BarChart3, Globe,
+} from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
@@ -792,12 +795,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {dirty && (
             <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }} onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : '💾 Save'}
+              {saving ? 'Saving…' : <><Save size={14} /> Save</>}
             </button>
           )}
           <button className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }}
             onClick={() => navigator.clipboard.writeText(sequence)}>
-            📋 Copy
+            <Copy size={14} /> Copy
           </button>
         </div>
       </div>
@@ -810,7 +813,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', padding: '0.5rem 1rem', marginBottom: '0.85rem', background: 'var(--accent-blue-15)', border: '1px solid var(--accent-blue-glow)', borderRadius: '8px', fontSize: '0.82rem', flexWrap: 'wrap', boxShadow: '0 4px 12px rgba(59,130,246,0.08)' }}>
             <span style={{ color: 'var(--accent-blue)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <span style={{ fontSize: '1rem' }}>📍</span> {selection.start.toLocaleString()} – {selection.end.toLocaleString()} 
+              <MapPin size={14} /> {selection.start.toLocaleString()} – {selection.end.toLocaleString()} 
               <span style={{ opacity: 0.6, fontWeight: 400, marginLeft: '0.2rem' }}>({selection.end - selection.start + 1} bp)</span>
             </span>
             <div style={{ width: '1px', height: '14px', background: 'var(--glass-border)' }} />
@@ -818,10 +821,10 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             {selGC !== null && <span style={{ color: 'var(--text-secondary)' }}>GC <strong>{selGC}%</strong></span>}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
               <button onClick={() => openAddFeature()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-blue)', fontSize: '0.78rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                ＋ Feature
+                <Plus size={12} /> Feature
               </button>
               <button onClick={openAddPrimer} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-purple)', fontSize: '0.78rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                ＋ Primer
+                <Plus size={12} /> Primer
               </button>
               <button onClick={() => setSelection(null)} style={{ background: 'var(--bg-primary)', border: '1px solid var(--glass-border)', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.7rem', padding: '0.15rem 0.4rem', borderRadius: '4px' }}>Clear</button>
             </div>
@@ -1053,16 +1056,16 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                       <button
                         onClick={() => openAddFeature()}
                         style={{ padding: '0.3rem 0.8rem', borderRadius: '6px', border: 'none', background: 'var(--accent-blue)', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit' }}
-                      >＋ Feature</button>
+                      ><Plus size={12} /> Feature</button>
                       <button
                         onClick={openAddPrimer}
                         style={{ padding: '0.3rem 0.8rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: 'white', color: 'var(--accent-purple)', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit' }}
-                      >＋ Primer</button>
+                      ><Plus size={12} /> Primer</button>
                       <button
                         onClick={() => navigator.clipboard.writeText(selSeq)}
                         style={{ padding: '0.3rem 0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: 'white', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit' }}
                         title="Copy selected sequence"
-                      >📋</button>
+                      ><Copy size={12} /></button>
                       <button
                         onClick={() => setSelection(null)}
                         style={{ padding: '0.3rem 0.5rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: 'white', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.72rem', fontFamily: 'inherit' }}
@@ -1195,7 +1198,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
               {dirty && (
                 <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end' }}>
                   <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }} onClick={handleSave} disabled={saving}>
-                    {saving ? 'Saving…' : '💾 Save Changes'}
+                    {saving ? 'Saving…' : <><Save size={14} /> Save changes</>}
                   </button>
                 </div>
               )}
@@ -1350,7 +1353,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           {/* 2. Analysis Tools */}
 
           {/* 3. Feature Library */}
-          <SidebarSection title="📚 Library" open={libraryOpen} onToggle={() => setLibraryOpen(o => !o)}>
+          <SidebarSection title={<><Library size={14} /> Library</>} open={libraryOpen} onToggle={() => setLibraryOpen(o => !o)}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
               {LIBRARY_FEATURES.map(item => (
                 <div key={item.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.35rem 0.5rem', borderRadius: '5px', background: 'white', border: '1px solid var(--glass-border)' }}>
@@ -1367,7 +1370,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           </SidebarSection>
 
           {/* 4. Features visibility */}
-          <SidebarSection title="📍 Features" open={featuresOpen} onToggle={() => setFeaturesOpen(o => !o)}>
+          <SidebarSection title={<><Tag size={14} /> Features</>} open={featuresOpen} onToggle={() => setFeaturesOpen(o => !o)}>
             {features.length === 0 ? (
               <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No features added yet.</p>
             ) : (
@@ -1387,7 +1390,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                         })}
                         title={hidden ? 'Show' : 'Hide'}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.82rem', color: hidden ? 'var(--text-muted)' : f.color, flexShrink: 0 }}
-                      >{hidden ? '🚫' : '👁'}</button>
+                      >{hidden ? <EyeOff size={12} /> : <Eye size={12} />}</button>
                       <button
                         onClick={() => { setFeatures(prev => prev.filter(x => x.id !== f.id)); if (selectedFeature?.id === f.id) setSelectedFeature(null); }}
                         title="Delete"
@@ -1406,7 +1409,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           </SidebarSection>
 
           {/* 5. Primers */}
-          <SidebarSection title={`🧬 Primers (${primers.length})`} open={primersOpen} onToggle={() => setPrimersOpen(o => !o)}>
+          <SidebarSection title={<><Dna size={14} /> Primers ({primers.length})</>} open={primersOpen} onToggle={() => setPrimersOpen(o => !o)}>
             {primers.length === 0 ? (
               <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No primers yet. Select a region on the Sequence tab and click &ldquo;Make Primer&rdquo;.</p>
             ) : (
@@ -1424,12 +1427,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                       onClick={() => navigator.clipboard.writeText(p.sequence)}
                       title="Copy sequence"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.75rem', color: '#64748b', flexShrink: 0 }}
-                    >📋</button>
+                    ><Copy size={12} /></button>
                     <button
                       onClick={() => openEditPrimer(p)}
                       title="Edit"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.75rem', color: '#3b82f6', flexShrink: 0 }}
-                    >✎</button>
+                    ><Pencil size={12} /></button>
                     <button
                       onClick={() => handleDeletePrimer(p.id)}
                       title="Delete"
@@ -1442,7 +1445,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           </SidebarSection>
 
           {/* 6. Statistics */}
-          <SidebarSection title="📊 Statistics" open={statsOpen} onToggle={() => setStatsOpen(o => !o)}>
+          <SidebarSection title={<><BarChart3 size={14} /> Statistics</>} open={statsOpen} onToggle={() => setStatsOpen(o => !o)}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
               {[
                 ['Length', `${size.toLocaleString()} bp`],
@@ -1662,7 +1665,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
 // ─── Sidebar helpers ──────────────────────────────────────────────────────────
 
-function SidebarSection({ title, open, onToggle, children }: { title: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+function SidebarSection({ title, open, onToggle, children }: { title: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: '0.75rem', border: '1px solid var(--glass-border)', borderRadius: '10px', overflow: 'hidden' }}>
       <button
@@ -2382,7 +2385,7 @@ function SequencePanel({
                 onClick={() => { setClickStart(null); setTooltip(null); onMakePrimer?.({ start: selection.start, end: selection.end }); }}
                 style={{ marginLeft: 'auto', padding: '0.3rem 0.75rem', borderRadius: '6px', border: '1px solid var(--accent-blue)', background: 'var(--accent-blue-15)', color: 'var(--accent-blue)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: 600 }}
               >
-                🧬 Make Primer →
+                <Dna size={13} /> Make primer
               </button>
             )}
             <button onClick={() => onSelect(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.75rem', padding: 0 }}>✕</button>
@@ -2791,13 +2794,13 @@ function ORFsPanel({ sequence }: { sequence: string }) {
                       onClick={() => navigator.clipboard.writeText(selected.protein)}
                       style={{ fontSize: '0.72rem', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                     >
-                      📋 Copy protein sequence
+                      <Copy size={13} /> Copy protein sequence
                     </button>
                     <button
                       onClick={() => navigator.clipboard.writeText(sequence.substring(selected.start, selected.end))}
                       style={{ fontSize: '0.72rem', color: 'var(--accent-green)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                     >
-                      📋 Copy DNA
+                      <Copy size={13} /> Copy DNA
                     </button>
                   </div>
                 </div>
@@ -2835,11 +2838,11 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           <button className="btn btn-primary" onClick={onRun} disabled={!fwd || !rev} style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            🧪 Run PCR
+            <FlaskConical size={15} /> Run PCR
           </button>
           {result && !saved && (
             <button className="btn btn-secondary" onClick={() => startTransition(() => { onSave(); })} disabled={isPending} style={{ fontSize: '0.82rem' }}>
-              {isPending ? 'Saving…' : '💾 Save simulation'}
+              {isPending ? 'Saving…' : <><Save size={14} /> Save simulation</>}
             </button>
           )}
           {saved && <span style={{ fontSize: '0.82rem', color: 'var(--accent-green)' }}>✓ Saved</span>}
@@ -2896,7 +2899,7 @@ function LigationPanel({ sequenceId, sequenceName, vectorSeq, vectorSize, result
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div className="glass-panel" style={{ padding: '1.25rem' }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '0.25rem', color: 'var(--text-primary)' }}>🔗 SnapGene-AI Pro Ligator</h2>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '0.25rem', color: 'var(--text-primary)' }}><Link2 size={17} /> Ligation</h2>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Professional Multi-Fragment Assembly & Ligation Simulation</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 1rem', background: 'white', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
@@ -2920,11 +2923,11 @@ function LigationPanel({ sequenceId, sequenceName, vectorSeq, vectorSize, result
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           <button className="btn btn-primary" onClick={onRun} disabled={!insertSeq} style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            ✂ Ligate
+            <Scissors size={15} /> Ligate
           </button>
           {result && !saved && (
             <button className="btn btn-secondary" onClick={() => startTransition(() => { onSave(); })} disabled={isPending} style={{ fontSize: '0.82rem' }}>
-              {isPending ? 'Saving…' : '💾 Save simulation'}
+              {isPending ? 'Saving…' : <><Save size={14} /> Save simulation</>}
             </button>
           )}
           {saved && <span style={{ fontSize: '0.82rem', color: 'var(--accent-green)' }}>✓ Saved</span>}
@@ -3168,7 +3171,7 @@ function TranslatePanel({ sequence }: { sequence: string }) {
               onClick={() => navigator.clipboard.writeText(revTransResult)}
               style={{ marginTop: '0.35rem', fontSize: '0.72rem', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
             >
-              📋 Copy DNA sequence
+              <Copy size={13} /> Copy DNA sequence
             </button>
           </div>
         )}
@@ -3320,7 +3323,7 @@ function AIGenePanel({ sequence }: { sequence: string }) {
                   onClick={() => navigator.clipboard.writeText(r.protein)}
                   style={{ marginTop: '0.35rem', fontSize: '0.68rem', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                 >
-                  📋 Copy protein sequence
+                  <Copy size={13} /> Copy protein sequence
                 </button>
               </div>
             );
@@ -3612,7 +3615,7 @@ function DimerPanel({ primers }: { primers: SavedPrimer[] }) {
           ))}
           {heteroDimer && seq1 && seq2 && (
             <div style={{ padding: '0.5rem 0.75rem', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '0.78rem', color: '#92400e' }}>
-              💡 A true professional tool (Primer3) calculates ΔG for exact dimer stability. This check uses 3′ complementarity as a fast heuristic.
+              A true professional tool (Primer3) calculates ΔG for exact dimer stability. This check uses 3′ complementarity as a fast heuristic.
             </div>
           )}
         </div>
@@ -3697,7 +3700,7 @@ function LiveDesignPanel({
   return (
     <div>
       <div style={{ marginBottom: '1rem' }}>
-        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Live Primer Design Studio</h3>
+        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Primer Design</h3>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
           Set a binding region, choose strand, and inspect live Tm/GC. Unique cutters in-region are highlighted.
         </p>
@@ -3942,7 +3945,7 @@ function MutagenesisPanel({ sequence, selection }: { sequence: string; selection
       )}
       <div style={{ marginTop: '0.5rem' }}>
         <button onClick={() => navigator.clipboard.writeText(mutFullSeq)} style={{ fontSize: '0.72rem', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          📋 Copy mutant sequence
+          <Copy size={13} /> Copy mutant sequence
         </button>
       </div>
     </div>
@@ -3979,7 +3982,7 @@ function VirtualGelPanel({ sequence, allReSites, reSitesByEnzyme, seqType }: { s
   return (
     <div>
       <div style={{ marginBottom: '1.25rem' }}>
-        <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: '0 0 0.25rem', color: 'var(--text-primary)' }}>🧪 SnapGene-AI Pro Digest</h3>
+        <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: '0 0 0.25rem', color: 'var(--text-primary)' }}><FlaskConical size={16} /> Digest</h3>
         <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', margin: 0 }}>
           Virtual Agarose Gel Simulator · <strong>{seqType === 'plasmid' ? 'Circular Plasmid' : 'Linear Sequence'}</strong>
         </p>
@@ -4264,7 +4267,7 @@ function FoldPanel({ sequence, selection }: { sequence: string; selection: { sta
         className="btn btn-primary"
         style={{ fontSize: '0.82rem', marginBottom: '1rem' }}
       >
-        {status === 'loading' ? '⏳ Predicting structure…' : '⚛️ Predict 3D Structure'}
+        {status === 'loading' ? 'Predicting structure…' : <><Atom size={15} /> Predict 3D structure</>}
       </button>
 
       {status === 'loading' && (
@@ -4300,14 +4303,14 @@ function FoldPanel({ sequence, selection }: { sequence: string; selection: { sta
               className="btn btn-secondary"
               style={{ fontSize: '0.82rem' }}
             >
-              🌐 View in Mol*
+              <Globe size={13} /> View in Mol*
             </button>
             <button
               onClick={() => navigator.clipboard.writeText(pdb)}
               className="btn btn-secondary"
               style={{ fontSize: '0.82rem' }}
             >
-              📋 Copy PDB
+              <Copy size={13} /> Copy PDB
             </button>
           </div>
 
