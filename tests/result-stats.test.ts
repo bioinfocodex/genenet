@@ -162,3 +162,15 @@ test('numbers are formatted with digits suited to their size', () => {
   // Small negatives keep their sign.
   assert.ok(fmt(-0.5).startsWith('-'));
 });
+
+test('a categorical field nobody filled in is left out, like an empty numeric one', () => {
+  const defs: FieldDefinition[] = [
+    { id: 'a', key: 'od', label: 'OD600', type: 'number' },
+    { id: 'b', key: 'arm', label: 'Arm', type: 'select', options: ['control', 'treated'] },
+  ];
+  // 96 readings of OD and not one Arm — what a pasted plate produces.
+  const results = Array.from({ length: 96 }, () => ({ values: [row('a', { number: 0.5 }), row('b')] }));
+  const s = summariseResults(defs, results);
+  assert.equal(s.numeric.length, 1);
+  assert.deepEqual(s.categorical, [], 'an empty field would render as a heading with nothing under it');
+});

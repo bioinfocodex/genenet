@@ -289,9 +289,23 @@ export interface WellLike {
   sequenceId?: string | null;
 }
 
-/** True when nothing has been put in the well. */
+/**
+ * True when the well has not been laid out at all.
+ *
+ * A role counts. Marking a block of wells "control" before anything physical
+ * exists is a real and common step in designing a plate, and it is information
+ * about the plate. Treating those wells as empty produced a plate that reported
+ * "12 wells filled", drew nothing, said "0 of 96 wells used", and still listed
+ * "control" in the legend — three parts of one feature disagreeing, because
+ * roleColours looked at every well and this did not.
+ */
 export function isEmpty(w: WellLike): boolean {
-  return !w.sampleId && !w.entityId && !w.sequenceId && !w.content;
+  return !w.sampleId && !w.entityId && !w.sequenceId && !w.content && !w.role?.trim();
+}
+
+/** True when the well holds material a transfer could actually move. */
+export function hasMaterial(w: WellLike): boolean {
+  return Boolean(w.sampleId || w.entityId || w.sequenceId || w.content);
 }
 
 /**
@@ -342,6 +356,8 @@ export function summarise(wells: WellLike[], format: PlateFormat): PlateSummary 
     roles: [...counts.entries()]
       .map(([role, count]) => ({ role, count }))
       .sort((a, b) => b.count - a.count || a.role.localeCompare(b.role)),
+    // Laid out, but not against a record the system holds: free text, or a
+    // role and nothing else.
     untracked: filled.filter(w => !w.sampleId && !w.entityId && !w.sequenceId).length,
   };
 }

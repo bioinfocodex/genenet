@@ -3,7 +3,7 @@ import { useState, useTransition, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Beaker, ArrowRightLeft, Droplets, Eraser } from 'lucide-react';
 import { fillWells, clearWells, transferPlate, layoutDilution } from '@/app/actions/plates';
-import { formatOf, rowLabel, roleColours, summarise, type WellLike } from '@/lib/plates';
+import { formatOf, rowLabel, roleColours, summarise, isEmpty, type WellLike } from '@/lib/plates';
 
 /**
  * The plate map.
@@ -200,7 +200,8 @@ export default function PlateClient({
                   const key = `${r}:${c}`;
                   const w = byKey.get(key);
                   const on = selected.has(key);
-                  const filled = w && !!(w.sampleId || w.entityId || w.sequenceId || w.content);
+                  // Same rule as isEmpty: a role marks the well as laid out.
+                  const filled = w && !isEmpty(w);
                   const colour = w?.role ? colours[w.role] : undefined;
                   const title = w
                     ? [w.label, w.sampleName ?? w.entityName ?? w.sequenceName ?? w.content ?? 'empty',

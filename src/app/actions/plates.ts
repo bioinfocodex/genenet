@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth-guard';
 import {
   formatOf, allWells, expandRange, stamp, quadrant, cherryPick,
-  serialDilution, type TransferStep,
+  serialDilution, hasMaterial, type TransferStep,
 } from '@/lib/plates';
 import type { ActionResult } from './entities';
 
@@ -199,14 +199,22 @@ export async function transferPlate(data: FormData): Promise<ActionResult<{ move
     const sourceByLabel = new Map(source.wells.map(w => [w.label, w]));
     const destByLabel = new Map(dest.wells.map(w => [w.label, w]));
 
-    // Only wells with something in them move. Transferring the empties too
-    // would overwrite whatever the destination already held with nothing,
-    // which is a destructive no-op nobody asks for.
+    // Only wells holding material move. Transferring the empties too would
+    // overwrite whatever the destination held with nothing, which is a
+    // destructive no-op nobody asks for. A role is a label, not material: you
+    // cannot pipette it, so a role-only well does not move either.
     const live = steps.filter(s => {
       const from = sourceByLabel.get(s.from.label);
-      return from && (from.sampleId || from.entityId || from.sequenceId || from.content);
+      return from ? hasMaterial(from) : false;
     });
-    if (live.length === 0) return { error: 'Nothing to move — every source well is empty.' };
+    if (live.length === 0) {
+      const labelled = steps.some(s => sourceByLabel.get(s.from.label)?.role);
+      return {
+        error: labelled
+          ? 'Nothing to move. Those wells carry a role but no sample, record, sequence or contents — a label is not material.'
+          : 'Nothing to move — every source well is empty.',
+      };
+    }
 
     const volumeUl = data.get('volumeUl') ? Number(data.get('volumeUl')) : null;
 

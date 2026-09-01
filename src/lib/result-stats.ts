@@ -117,7 +117,12 @@ export function summariseResults(
       const s = summariseNumeric(def, raw.map(v => v.number).filter((n): n is number => n !== null));
       if (s) numeric.push(s);
     } else if (['select', 'multiselect', 'boolean'].includes(def.type)) {
-      categorical.push(summariseCategory(def, raw.map(v => decode(def, v))));
+      const c = summariseCategory(def, raw.map(v => decode(def, v)));
+      // A field nobody has filled in has nothing to summarise. Returning it
+      // anyway put a heading on the page with an empty row beneath it, which
+      // reads as a rendering fault rather than as "no data" — the same reason
+      // summariseNumeric returns null instead of a summary of zero readings.
+      if (c.counts.length > 0) categorical.push(c);
     }
   }
 
