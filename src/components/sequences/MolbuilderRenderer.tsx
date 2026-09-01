@@ -25,13 +25,16 @@ import type { SequenceFeature, SavedPrimer } from '@/components/SequenceViewer';
  * than once if it anneals in more than one place.
  */
 export type DrawablePrimer = SavedPrimer & { start: number; end: number };
-import type { ReSite } from '@/components/sequences/LinearMap';
 import type { ORF } from '@/lib/simulation';
 
 interface MolbuilderRendererProps {
   sequence: string;
   features: SequenceFeature[];
-  enzymes?: ReSite[];
+  /**
+   * Only what a label needs. Typed narrowly on purpose: demanding a full
+   * ReSite is what pushed callers into handing over the raw scan.
+   */
+  enzymes?: { enzyme: string; cutPos: number }[];
   primers?: DrawablePrimer[];
   orfs?: ORF[];
   lineLen: number;
@@ -98,14 +101,40 @@ export default function MolbuilderRenderer({
     const i1 = i + 1; // 1-indexed block start
     const iEnd1 = i + chunkLen; // 1-indexed block end
 
-    // 1. Layer: Enzymes (1-indexed cutPos)
+    /*
+     * 1. Layer: Enzymes (1-indexed cutPos)
+     *
+     * Labels are stacked into rows by where they would actually land. Every
+     * one of these is absolutely positioned at its cut, and two cuts a few
+     * bases apart put two names in the same place — which on a real plasmid
+     * produced a run of "AccIIBsePIBsh1236IBspFNIBssHII…" above the sequence,
+     * every name correct and not one of them readable.
+     *
+     * The caller decides *which* enzymes arrive here; this decides where they
+     * sit once they have.
+     */
     const activeEnz = layers.enz ? enzymes.filter(e => e.cutPos >= i1 && e.cutPos <= iEnd1) : [];
+
+    const enzRows: { e: { enzyme: string; cutPos: number }; row: number }[] = [];
+    const rowEnds: number[] = [];
+    for (const e of [...activeEnz].sort((a, b) => a.cutPos - b.cutPos)) {
+      const col = e.cutPos - i1;
+      // A label is about 0.62ch per character and centred on its cut.
+      const halfWidth = e.enzyme.length * 0.31 + 0.5;
+      let row = rowEnds.findIndex(end => col - halfWidth > end);
+      if (row === -1) { row = rowEnds.length; rowEnds.push(0); }
+      rowEnds[row] = col + halfWidth;
+      enzRows.push({ e, row });
+    }
+    const enzHeight = Math.max(1, rowEnds.length) * 13 + 8;
+
     const enzRow = activeEnz.length > 0 && (
-      <div key={`enz-${i}`} style={{ height: '32px', position: 'relative', borderLeft: '60px solid transparent', fontFamily: 'var(--font-mono)' }}>
-        {activeEnz.map((e, idx) => (
-          <div key={`${e.enzyme}-${idx}`} style={{ position: 'absolute', left: `${e.cutPos - i1}ch`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ef4444', whiteSpace: 'nowrap', borderRight: '1px solid #ef4444', paddingRight: '2px', lineHeight: 1 }}>{e.enzyme}</span>
-            <div style={{ width: '1px', height: '6px', background: '#ef4444' }} />
+      <div key={`enz-${i}`} style={{ height: `${enzHeight}px`, position: 'relative', borderLeft: '60px solid transparent', fontFamily: 'var(--font-mono)' }}>
+        {enzRows.map(({ e, row }, idx) => (
+          <div key={`${e.enzyme}-${idx}`} title={`${e.enzyme} cuts at ${e.cutPos.toLocaleString()}`} style={{ position: 'absolute', bottom: 0, left: `${e.cutPos - i1}ch`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ef4444', whiteSpace: 'nowrap', paddingRight: '2px', lineHeight: 1.35 }}>{e.enzyme}</span>
+            {/* The tick reaches from the label down to the bases it cuts. */}
+            <div style={{ width: '1px', height: `${(rowEnds.length - row - 1) * 13 + 6}px`, background: '#ef4444' }} />
           </div>
         ))}
       </div>

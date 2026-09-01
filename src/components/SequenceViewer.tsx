@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useMemo, useTransition, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useTransition, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
@@ -348,7 +348,43 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const [molLayers, setMolLayers] = useState({ feat: true, enz: true, primer: true, orf: true });
   const [showMolStats, setShowMolStats] = useState(false);
   const [showMolFind, setShowMolFind] = useState(false);
-  const [molLineLen, setMolLineLen] = useState(60);
+  /*
+   * Bases per line, where 0 means "as many as fit".
+   *
+   * Fixed at 60 it left 46% of the panel empty on a wide screen and made the
+   * page twice as long as it needed to be — the reader scrolls further to see
+   * less. Fitting is the default; the fixed widths stay for anyone who wants
+   * to line a printout up against a published map.
+   */
+  const [molLineLen, setMolLineLen] = useState(0);
+  const [fittedLineLen, setFittedLineLen] = useState(60);
+  const seqPaneRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (molLineLen !== 0) return;
+    const measure = () => {
+      const el = seqPaneRef.current;
+      if (!el) return;
+      // The gutter carries the position numbers; the rest is monospace bases.
+      const usable = el.clientWidth - 90;
+      const probe = document.createElement('span');
+      probe.style.cssText = 'position:absolute;visibility:hidden;font-family:var(--font-mono);font-size:13px';
+      probe.textContent = 'A'.repeat(100);
+      el.appendChild(probe);
+      const chWidth = probe.getBoundingClientRect().width / 100;
+      probe.remove();
+      if (chWidth > 0) {
+        // Round to ten so the position numbers stay on tidy boundaries.
+        const fits = Math.floor(usable / chWidth / 10) * 10;
+        setFittedLineLen(Math.max(30, Math.min(180, fits)));
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [molLineLen, leftTab]);
+
+  const effectiveLineLen = molLineLen === 0 ? fittedLineLen : molLineLen;
   const [molFrames, setMolFrames] = useState<Set<number>>(new Set());
 
   // File import
@@ -423,13 +459,24 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * thinning behind the first — which is the thing this counter exists to
    * prevent.
    */
-  const siteCounts = useMemo(() => {
-    const counts = countCuts(allReSites);
-    return {
-      drawn: chooseMapEnzymes(allReSites, counts, enzymeDisplay).length,
-      eligible: chooseMapEnzymes(allReSites, counts, { ...enzymeDisplay, maxLabels: Infinity }).length,
-    };
-  }, [allReSites, enzymeDisplay]);
+  /**
+   * The sites worth showing, computed once.
+   *
+   * The map, the linear map and the sequence view all used to decide this for
+   * themselves — and the sequence view did not decide at all, taking every one
+   * of the five thousand cuts and printing their names above the bases. Now
+   * the same list and the same controls drive all three, so what the map shows
+   * and what the sequence shows cannot disagree.
+   */
+  const displayedSites = useMemo(
+    () => chooseMapEnzymes(allReSites, countCuts(allReSites), enzymeDisplay),
+    [allReSites, enzymeDisplay],
+  );
+
+  const siteCounts = useMemo(() => ({
+    drawn: displayedSites.length,
+    eligible: chooseMapEnzymes(allReSites, countCuts(allReSites), { ...enzymeDisplay, maxLabels: Infinity }).length,
+  }), [displayedSites, allReSites, enzymeDisplay]);
 
   // ORFs count (lazy, for sidebar stats)
   const orfsCount = useMemo(() => findORFs(sequence, 100).length, [sequence]);
@@ -1045,7 +1092,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           )}
 
           {leftTab === 'sequence' && (
-            <div className="seq-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 600 }}>
+            <div ref={seqPaneRef} className="seq-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 600 }}>
 
               {/* ── Selection action bar ── */}
               {selection && (() => {
@@ -1090,7 +1137,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 setFrames={setMolFrames}
                 viewMode="wrap"
                 setViewMode={() => {}}
-                lineLen={molLineLen}
+                lineLen={effectiveLineLen}
                 setLineLen={setMolLineLen}
                 showStats={showMolStats}
                 setShowStats={setShowMolStats}
@@ -1126,10 +1173,10 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   <MolbuilderRenderer
                     sequence={sequence}
                     features={visibleFeatures}
-                    enzymes={allReSites}
+                    enzymes={displayedSites}
                     primers={drawablePrimers}
                     orfs={orfs}
-                    lineLen={molLineLen}
+                    lineLen={effectiveLineLen}
                     layers={molLayers}
                     frames={molFrames}
                     selection={selection}

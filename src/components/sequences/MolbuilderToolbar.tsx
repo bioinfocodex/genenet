@@ -89,6 +89,7 @@ export default function MolbuilderToolbar({
           onChange={(e) => setLineLen(parseInt(e.target.value))}
           style={{ padding: '0.25rem 0.4rem', fontSize: '0.75rem', borderRadius: '6px', border: '1px solid var(--glass-border)', fontWeight: 600 }}
         >
+          <option value={0}>Fit width</option>
           <option value={50}>50 bp</option>
           <option value={60}>60 bp</option>
           <option value={80}>80 bp</option>
