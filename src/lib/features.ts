@@ -13,6 +13,8 @@
  * records already stored and everything imported from here.
  */
 
+import { colourForRole } from './map-style';
+
 /** Coordinates are 1-indexed and inclusive, matching GenBank as printed. */
 export interface SequenceFeature {
   id: string;
@@ -31,41 +33,25 @@ export interface SequenceFeature {
   segments?: { start: number; end: number }[];
 }
 
-const PALETTE = ['#22c55e', '#3b82f6', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
-
 /**
- * The common types are pinned rather than hashed. An eight-colour palette will
- * collide somewhere, and left to a hash it collided on CDS and promoter --
- * the two that appear on almost every map, and the two you least want to
- * confuse with each other.
+ * Colour says what a feature is for, not what GenBank called it.
+ *
+ * This used to be a table of saturated colours keyed on type alone, which put
+ * AmpR, KanR and every other resistance marker in the same blue as every
+ * ordinary CDS -- they are all plain CDS records. The one thing someone
+ * scanning an unfamiliar plasmid is usually looking for was the one thing the
+ * colour did not say.
+ *
+ * The role and its palette live in lib/map-style.ts, next to the shapes,
+ * because the two decisions are made together and by all three views.
  */
-const BY_TYPE: Record<string, string> = {
-  CDS: '#3b82f6',
-  gene: '#22c55e',
-  exon: '#3b82f6',
-  intron: '#94a3b8',
-  "5'UTR": '#a3e635',
-  "3'UTR": '#a3e635',
-  promoter: '#f59e0b',
-  terminator: '#ef4444',
-  primer_bind: '#ec4899',
-  rep_origin: '#a855f7',
-  regulatory: '#f97316',
-  RBS: '#06b6d4',
-  enhancer: '#f97316',
-  reporter: '#22c55e',
-  selectable_marker: '#ef4444',
-  tag: '#06b6d4',
-  misc_feature: '#94a3b8',
-};
+export function colourFor(type: string, name = ''): string {
+  return colourForRole(type, name);
+}
 
 /** Deterministic, so a feature keeps its colour between page loads. */
 export function colourForType(type: string): string {
-  const pinned = BY_TYPE[type];
-  if (pinned) return pinned;
-  let h = 0;
-  for (let i = 0; i < type.length; i++) h = (h * 31 + type.charCodeAt(i)) >>> 0;
-  return PALETTE[h % PALETTE.length];
+  return colourForRole(type);
 }
 
 type Raw = Record<string, unknown>;
@@ -107,7 +93,7 @@ function normaliseOne(f: Raw, index: number): SequenceFeature | null {
     name: typeof f.name === 'string' && f.name ? f.name : type,
     start: start + shift,
     end: end + shift,
-    color: typeof f.color === 'string' && f.color ? f.color : colourForType(type),
+    color: typeof f.color === 'string' && f.color ? f.color : colourFor(type, typeof f.name === 'string' ? f.name : ''),
     type,
     // '+'/'-' from a parser, 1/-1 from the viewer, and anything else is forward.
     strand: f.strand === -1 || f.strand === '-' ? -1 : 1,

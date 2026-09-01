@@ -21,6 +21,7 @@ import { blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
+import { colourFor } from '@/lib/features';
 import { placePrimers, bindingTitle } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
@@ -308,6 +309,23 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     }
   };
 
+  /*
+   * Recolour every feature by what it is for.
+   *
+   * Colours already stored on a record are kept when it is read -- overwriting
+   * what someone chose is not the viewer's call to make -- so a sequence
+   * annotated before the palette changed keeps whatever it was given then.
+   * This is how you ask for the change, on the one sequence you are looking
+   * at, rather than having it happen to every file you own overnight.
+   */
+  const applyStandardColours = () => {
+    setFeatures(prev => {
+      const next = prev.map(f => ({ ...f, color: colourFor(f.type, f.name) }));
+      return next.some((f, i) => f.color !== prev[i].color) ? next : prev;
+    });
+    setDirty(true);
+  };
+
   const placedPrimers = useMemo(
     () => placePrimers(primers, sequence, { circular: seqType === 'plasmid' }),
     [primers, sequence, seqType],
@@ -383,6 +401,41 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const [molLineLen, setMolLineLen] = useState(0);
   const [fittedLineLen, setFittedLineLen] = useState(60);
   const seqPaneRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * The sequence pane is a window, not a document.
+   *
+   * It used to be `height: 100%` under a parent with no height, which resolves
+   * to "as tall as the content" -- 9,700px on a 2.4 kb plasmid. The page
+   * scrolled instead of the pane, so the toolbar, the enzyme picker and the
+   * position readout all scrolled away with it, and by the time you were
+   * halfway down a sequence nothing on screen said where you were.
+   *
+   * Measured rather than a hardcoded `calc(100vh - 260px)`: what sits above
+   * the pane changes with the menu bar wrapping, the stats row and the tab
+   * rows, and a guessed constant is wrong on every window it was not guessed
+   * for.
+   */
+  const [seqPaneHeight, setSeqPaneHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (leftTab !== 'sequence') return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const el = seqPaneRef.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      // A floor, so a short window gives a small scroller rather than none.
+      setSeqPaneHeight(Math.max(320, Math.round(window.innerHeight - top - 24)));
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    schedule();
+    window.addEventListener('resize', schedule);
+    return () => {
+      window.removeEventListener('resize', schedule);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [leftTab]);
 
   useEffect(() => {
     if (molLineLen !== 0) return;
@@ -811,6 +864,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       { label: 'Add Tag', action: () => openAddFeature('misc_feature') },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Auto-detect Features', action: handleAutoDetect },
+      { label: '──────────', action: () => {}, divider: true },
+      { label: 'Apply Standard Colours', action: applyStandardColours },
     ],
     Primers: [
       { label: 'Add Primer', action: openAddPrimer },
@@ -1155,7 +1210,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           )}
 
           {leftTab === 'sequence' && (
-            <div ref={seqPaneRef} className="seq-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 600 }}>
+            <div ref={seqPaneRef} className="seq-container" style={{ display: 'flex', flexDirection: 'column', height: seqPaneHeight ?? 600 }}>
 
               {/* ── Selection action bar ── */}
               {selection && (() => {
@@ -1257,8 +1312,21 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   Mutagenesis primers and primers carrying a tail behave this way.
                 </div>
               )}
-              <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                <div style={{ flex: 1, overflowY: 'auto' }}>
+              {/*
+                * One scroller, and it is the sequence itself.
+                *
+                * This wrapper used to declare `overflowY: auto` of its own,
+                * which made it the scroller and left .seq-viewport inside it
+                * free to grow to its full 9,700px. Nothing in the sequence
+                * view could then pin itself to the top of the window, because
+                * the element it would pin to was not the one moving.
+                *
+                * minHeight: 0 is what lets a flex child shrink below its
+                * content; without it the column refuses to be shorter than the
+                * sequence and the bound is silently ignored.
+                */}
+              <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                   <MolbuilderRenderer
                     sequence={sequence}
                     features={visibleFeatures}

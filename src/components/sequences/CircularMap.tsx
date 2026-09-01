@@ -4,7 +4,7 @@ import type { ReSite } from './LinearMap'; // reused type
 import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
 import { bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
 import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
-import { shapeFor, isSolid, labelInk, estimateTextWidth } from '@/lib/map-style';
+import { shapeFor, isSolid, labelInk, estimateTextWidth, outlineFor } from '@/lib/map-style';
 
 interface CircularMapProps {
   sequence: string;
@@ -61,6 +61,8 @@ interface OutsideLabel {
   title: string;
   mono: boolean;
   fontSize: number;
+  /** Bold. For a site it means a unique cutter; feature names are always bold. */
+  strong: boolean;
   /** A tick drawn across the backbone, for a cut that lands on it. */
   tick?: boolean;
   feature?: SequenceFeature;
@@ -407,10 +409,20 @@ export default function CircularMap({ sequence, features, reSites, selection, on
           angle: midA,
           anchorR: feat.strand === 1 ? far : ro,
           text: feat.name,
-          colour: feat.color,
+          /*
+           * A darker cast of the fill, not the fill.
+           *
+           * Feature colours are pastels now -- that is what makes a dozen of
+           * them legible side by side on the ring -- and #d4d4d4 written on
+           * white is a name nobody can read. Inside the glyph the fill is the
+           * background and the ink is chosen against it; out here the page is
+           * the background, so the fill has to become the ink.
+           */
+          colour: outlineFor(feat.color, 0.4),
           title: `${feat.name} — ${feat.type}, ${feat.start}–${feat.end} (${feat.strand === 1 ? '+' : '−'})`,
           mono: false,
           fontSize: LABEL_FS,
+          strong: true,
           feature: feat,
         });
       }
@@ -442,6 +454,8 @@ export default function CircularMap({ sequence, features, reSites, selection, on
         title: siteTitle(s),
         mono: true,
         fontSize: SITE_FS,
+        // Bold means it cuts once: a cloning site rather than a fact.
+        strong: s.cuts === 1,
         tick: true,
       })),
     ];
@@ -452,7 +466,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
         l, cos, sin,
         y: CY + R_LBL * sin,
         side: cos > 0 ? 1 : -1,
-        width: estimateTextWidth(l.text, l.fontSize, true),
+        width: estimateTextWidth(l.text, l.fontSize, l.strong),
       };
     });
 
@@ -951,7 +965,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
                 fill="none" stroke={l.colour} strokeWidth={1} opacity={0.45}
               />
               <text x={textX} y={y + 3} textAnchor={isRight ? 'start' : 'end'}
-                    fill={l.colour} fontSize={l.fontSize} fontWeight="700"
+                    fill={l.colour} fontSize={l.fontSize} fontWeight={l.strong ? 800 : 400}
                     fontFamily={l.mono ? 'monospace' : undefined}>
                 {l.text}
               </text>

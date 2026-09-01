@@ -4,7 +4,7 @@ import type { SequenceFeature } from '../SequenceViewer';
 import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
 import { bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
 import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
-import { shapeFor, isSolid, labelInk, estimateTextWidth } from '@/lib/map-style';
+import { shapeFor, isSolid, labelInk, estimateTextWidth, outlineFor } from '@/lib/map-style';
 
 export interface ReSite {
   enzyme: string;
@@ -586,7 +586,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
             return mapSites.map((s, i) => {
               const x = toX(s.cutPos);
               const label = siteLabel(s);
-              const halfWidth = estimateTextWidth(label, 9, true) / 2 + 4;
+              const halfWidth = estimateTextWidth(label, 9, s.cuts === 1) / 2 + 4;
 
               let row = rows.findIndex(edge => x - halfWidth > edge);
               if (row === -1) { row = rows.length; rows.push(0); }
@@ -602,7 +602,8 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
                   <title>{siteTitle(s)}</title>
                   <line x1={x} y1={fwdY - 4} x2={x} y2={revY + 4} stroke={s.color} strokeWidth={2} />
                   <line x1={x} y1={fwdY - 4} x2={x} y2={labelY + 3} stroke={s.color} strokeWidth={1} opacity={0.55} strokeDasharray="2,2" />
-                  <text x={x} y={labelY} textAnchor="middle" fontSize={9} fill={s.color} fontWeight="700" fontFamily="monospace">
+                  {/* Bold means it cuts once: a cloning site rather than a fact. */}
+                  <text x={x} y={labelY} textAnchor="middle" fontSize={9} fill={s.color} fontWeight={s.cuts === 1 ? 800 : 400} fontFamily="monospace">
                     {label}
                   </text>
                 </g>
@@ -685,11 +686,14 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
           {featureLabels.above.map(({ f, row, x, anchorX }) => {
             const y = featStartY + row * rowH;
             const moved = Math.abs(x - anchorX) > 1;
+            // Darker than the fill: out here the page is the background, and
+            // the pastels that make the blocks legible are invisible on white.
+            const ink = outlineFor(f.color, 0.4);
             return (
               <g key={`lbl-${f.id}`} onClick={(e) => { e.stopPropagation(); onFeatureClick?.(f); }} style={{ cursor: 'pointer' }}>
                 <title>{`${f.name} — ${f.type}, ${f.start}–${f.end} (${f.strand === 1 ? '+' : '−'})`}</title>
-                {moved && <line x1={anchorX} y1={y - 1} x2={x} y2={y - 7} stroke={f.color} strokeWidth={0.75} opacity={0.5} />}
-                <text x={x} y={y - 4} textAnchor="middle" fontSize={LABEL_FS - 1} fill={f.color} fontWeight="700">
+                {moved && <line x1={anchorX} y1={y - 1} x2={x} y2={y - 7} stroke={ink} strokeWidth={0.75} opacity={0.5} />}
+                <text x={x} y={y - 4} textAnchor="middle" fontSize={LABEL_FS - 1} fill={ink} fontWeight="700">
                   {f.name}
                 </text>
               </g>

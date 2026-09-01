@@ -1,5 +1,5 @@
 'use client';
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { 
   NT_COL, 
   NT_BOT, 
@@ -28,6 +28,7 @@ export type DrawablePrimer = SavedPrimer & { start: number; end: number };
 import type { MapSite } from '@/lib/map-enzymes';
 import { siteTitle } from '@/lib/map-enzymes';
 import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
+import { shapeFor, labelInk, outlineFor } from '@/lib/map-style';
 
 interface MolbuilderRendererProps {
   sequence: string;
@@ -100,6 +101,45 @@ export default function MolbuilderRenderer({
     return () => window.removeEventListener('mouseup', handleMouseUp);
   }, []);
 
+  /*
+   * Which base is at the top of the window.
+   *
+   * The per-line positions scroll away with the lines they belong to, so
+   * halfway down a plasmid the numbers on screen answer "where is this line"
+   * and nothing answers "where am I". This one is pinned to the top of the
+   * scrolling area and recalculated as the sequence slides under it.
+   *
+   * Measured from the blocks rather than computed from scrollTop, because
+   * blocks are not a uniform height -- a line carrying four enzyme labels and
+   * three feature rows is twice the height of a bare one.
+   */
+  const [topBase, setTopBase] = useState(1);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const blocks = el.querySelectorAll<HTMLElement>('[data-block-start]');
+      const y = el.scrollTop;
+      for (const b of blocks) {
+        if (b.offsetTop + b.offsetHeight > y) {
+          setTopBase(Number(b.dataset.blockStart) + 1);
+          return;
+        }
+      }
+    };
+    // Scheduled rather than called: a setState in an effect body cascades a
+    // second render on every dependency change.
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    schedule();
+    el.addEventListener('scroll', schedule, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', schedule);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [sequence, lineLen, layers, frames, enzymes, features]);
+
   // ─── Render Blocks ──────────────────────────────────────────────────────────
 
   const blocks = [];
@@ -153,7 +193,13 @@ export default function MolbuilderRenderer({
       <div key={`enz-${i}`} style={{ height: `${enzHeight}px`, position: 'relative', borderLeft: '60px solid transparent', fontFamily: 'var(--font-mono)' }}>
         {enzRows.map(({ e, row }, idx) => (
           <div key={`${e.enzyme}-${idx}`} title={siteTitle(e)} style={{ position: 'absolute', bottom: 0, left: `${e.cutPos - i}ch`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <span style={{ fontSize: '9px', fontWeight: 700, color: e.color, whiteSpace: 'nowrap', paddingRight: '2px', lineHeight: 1.35 }}>{e.enzyme}</span>
+            {/*
+              * Bold means unique. An enzyme that cuts this molecule once is a
+              * cloning site; one that cuts eleven times is a fact about the
+              * sequence. Both belong on the page and they are not the same
+              * kind of thing, and weight says so without spending a colour.
+              */}
+            <span style={{ fontSize: '9px', fontWeight: e.cuts === 1 ? 800 : 400, color: e.color, whiteSpace: 'nowrap', paddingRight: '2px', lineHeight: 1.35 }}>{e.enzyme}</span>
             {/* The tick reaches from the label down to the bases it cuts. */}
             <div style={{ width: '1px', height: `${(rowEnds.length - row - 1) * 13 + 6}px`, background: e.color }} />
           </div>
@@ -277,59 +323,151 @@ export default function MolbuilderRenderer({
       </div>
     );
 
-    // 5. Features (1-indexed start/end)
+    /*
+     * 5. Features
+     *
+     * A ribbon with a blocky arrow tip when the feature has a direction, a
+     * rounded block with a thin dark outline when it does not. Both used to be
+     * the same flat bar with the name in white on top, which said neither
+     * which way a gene is transcribed nor where one feature ends and the next
+     * begins — and white on the pastel fills these carry is a name you cannot
+     * read at all.
+     */
     const activeFeats = layers.feat ? features.filter(f => f.start <= iEnd1 && f.end >= i1) : [];
+
+    /*
+     * Overlapping features stack rather than pile up. Two features on one row
+     * drew one over the other, which is worst exactly where a plasmid is
+     * densest — a tag inside a CDS inside an operon.
+     */
+    const featRowOf = new Map<string, number>();
+    {
+      const rowEnds: number[] = [];
+      for (const f of [...activeFeats].sort((a, b) => a.start - b.start || b.end - a.end)) {
+        // Two bases of clearance, so adjacent features never share an edge.
+        let row = rowEnds.findIndex(e => f.start > e + 1);
+        if (row === -1) { row = rowEnds.length; rowEnds.push(0); }
+        rowEnds[row] = f.end;
+        featRowOf.set(f.id, row);
+      }
+    }
+    const featRowCount = Math.max(0, ...[...featRowOf.values()].map(r => r + 1));
+    const FEAT_H = 14, FEAT_PITCH = 19;
+
     // A spliced feature is drawn as its exons. Painting one bar from first to
     // last base would colour the introns as though they were coding.
     const featBlocks = activeFeats.flatMap((f, idx) =>
       (f.segments ?? [{ start: f.start, end: f.end }])
         .filter(seg => seg.start <= iEnd1 && seg.end >= i1)
-        .map((seg, si) => ({ f, seg, key: `${f.id}-${idx}-${si}` })),
+        .map((seg, si, all) => ({
+          f, seg, key: `${f.id}-${idx}-${si}`,
+          // Only the terminal exon carries the arrowhead: an intron is not a 3' end.
+          terminal: f.strand === 1 ? si === all.length - 1 : si === 0,
+        })),
     );
+
     const featRow = featBlocks.length > 0 && (
-      <div key={`feat-${i}`} style={{ height: '18px', position: 'relative', marginBottom: '4px', paddingLeft: '60px', fontFamily: 'var(--font-mono)' }}>
+      <div key={`feat-${i}`} style={{ height: `${featRowCount * FEAT_PITCH}px`, position: 'relative', marginBottom: '4px', paddingLeft: '60px', fontFamily: 'var(--font-mono)' }}>
         {/* Intron lines, behind the exon blocks. */}
         {activeFeats.filter(f => f.segments).map((f, idx) => {
           const s = Math.max(0, f.start - i1);
           const e = Math.min(chunkLen, f.end - i + 1);
+          const row = featRowOf.get(f.id) ?? 0;
           return (
             <div
               key={`intron-${f.id}-${idx}`}
               title={`${f.name} — intron`}
               style={{
                 position: 'absolute', left: `${s}ch`, width: `${Math.max(0.5, e - s)}ch`,
-                top: '6px', height: '2px', background: f.color || '#94a3b8',
-                opacity: 0.45, zIndex: 9,
+                top: `${row * FEAT_PITCH + FEAT_H / 2 - 1}px`, height: '2px',
+                background: outlineFor(f.color || '#94a3b8'), opacity: 0.55, zIndex: 9,
               }}
             />
           );
         })}
-        {featBlocks.map(({ f, seg, key }) => {
+        {featBlocks.map(({ f, seg, key, terminal }) => {
           const start = Math.max(0, seg.start - i1);
           const end = Math.min(chunkLen, seg.end - i + 1);
           const width = Math.max(0.5, end - start);
+          const row = featRowOf.get(f.id) ?? 0;
+          const fill = f.color || '#94a3b8';
+          const edge = outlineFor(fill);
+
+          /*
+           * The arrowhead is a clip, and a clip cannot carry a border -- so
+           * the outline is a second copy of the same shape one pixel larger
+           * behind it. Below about two characters there is no room for a head
+           * and the block stays square: a 6 bp feature drawn as a pure
+           * triangle reads as an arrow pointing at nothing.
+           */
+          const directional = shapeFor(f.type) === 'arrow' && terminal && width >= 2;
+          const clip = !directional ? undefined
+            : f.strand === 1
+              ? 'polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%)'
+              : 'polygon(7px 0, 100% 0, 100% 100%, 7px 100%, 0 50%)';
+
+          const label = f.name;
+          // Room for the name plus a character of padding either side.
+          const fits = width >= label.length + 2;
+
+          /*
+           * A name that does not fit goes beside the block rather than nowhere.
+           *
+           * A 17 bp promoter split across a line break has no piece wide
+           * enough to hold "T7 promoter" on either line, so gating on fit
+           * alone left it as an unlabelled stripe on both. Written once, at
+           * the piece where the feature starts, on whichever side has room.
+           */
+          const startsHere = seg.start >= i1;
+          const roomRight = chunkLen - (start + width) >= label.length + 1;
+          const outside = !fits && startsHere;
+
           return (
-            <div 
+            <div
               key={key}
               onClick={() => onFeatureClick?.(f)}
+              title={`${f.name} — ${f.type}, ${f.start}–${f.end} (${f.strand === 1 ? '+' : '−'})${f.segments ? ' · exon' : ''}`}
               style={{
-                position: 'absolute',
-                left: `${start}ch`,
-                width: `${width}ch`,
-                height: '14px',
-                background: f.color || '#94a3b8',
-                borderRadius: '2px',
-                cursor: 'pointer',
-                opacity: 0.8,
-                zIndex: 10,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden'
+                position: 'absolute', left: `${start}ch`, width: `${width}ch`,
+                top: `${row * FEAT_PITCH}px`, height: `${FEAT_H}px`,
+                cursor: 'pointer', zIndex: 10,
+                // The clip goes on an inner layer, never the outer box: a
+                // clipPath here would cut off any label written beside it.
+                ...(clip ? {} : { background: edge, borderRadius: '3px' }),
               }}
-              title={f.segments ? `${f.name} (exon)` : f.name}
             >
-              <span style={{ fontSize: '8px', color: 'white', fontWeight: 700, pointerEvents: 'none' }}>{width > 4 ? f.name : ''}</span>
+              {clip && (
+                <div style={{ position: 'absolute', inset: 0, background: edge, clipPath: clip }} />
+              )}
+              <div style={{
+                position: 'absolute', inset: '1px',
+                background: fill,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                overflow: 'hidden',
+                ...(clip ? { clipPath: clip } : { borderRadius: '2px' }),
+              }}>
+                {fits && (
+                  <span style={{
+                    fontSize: '9px', fontWeight: 700, lineHeight: 1,
+                    color: labelInk(fill), pointerEvents: 'none', whiteSpace: 'nowrap',
+                  }}>
+                    {label}
+                  </span>
+                )}
+              </div>
+              {outside && (
+                <span style={{
+                  position: 'absolute', top: 0, height: `${FEAT_H}px`,
+                  display: 'flex', alignItems: 'center',
+                  ...(roomRight
+                    ? { left: '100%', marginLeft: 3 }
+                    : { right: '100%', marginRight: 3 }),
+                  fontSize: '9px', fontWeight: 700, lineHeight: 1,
+                  color: outlineFor(fill, 0.3), whiteSpace: 'nowrap', pointerEvents: 'none',
+                }}>
+                  {label}
+                </span>
+              )}
             </div>
           );
         })}
@@ -481,7 +619,7 @@ export default function MolbuilderRenderer({
     );
 
     blocks.push(
-      <div key={`block-${i}`} className="seq-block">
+      <div key={`block-${i}`} className="seq-block" data-block-start={i}>
         {enzRow}
         {primerFwdRow}
         {orfFwdRow}
@@ -508,6 +646,24 @@ export default function MolbuilderRenderer({
       onMouseLeave={handleMouseUp}
       style={{ userSelect: 'none' }}
     >
+      {/*
+        * Locked to the top of the scrolling area, so the position on screen is
+        * always the position you are looking at.
+        */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 30, height: 0,
+        display: 'flex', justifyContent: 'flex-start', pointerEvents: 'none',
+      }}>
+        <span style={{
+          transform: 'translateY(-1.4rem)',
+          fontFamily: 'var(--font-mono, monospace)', fontSize: '10px', fontWeight: 700,
+          color: 'var(--text-muted)', background: 'var(--seq-bg, #fff)',
+          border: '1px solid var(--seq-border, #e5e7eb)', borderRadius: 5,
+          padding: '0.1rem 0.4rem', fontVariantNumeric: 'tabular-nums',
+        }}>
+          {topBase.toLocaleString()}
+        </span>
+      </div>
       {blocks}
     </div>
   );
