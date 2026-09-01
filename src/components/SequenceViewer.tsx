@@ -18,6 +18,7 @@ import { blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
+import { placePrimers } from '@/lib/primer-binding';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
@@ -144,6 +145,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const [leftTab, setLeftTab] = useState<LeftTab>('map');
   const [features, setFeatures] = useState<SequenceFeature[]>(initialFeatures);
   const [primers, setPrimers] = useState<SavedPrimer[]>(initialPrimers);
+
+  /*
+   * Where the saved primers actually sit.
+   *
+   * A primer record carries a sequence and no coordinates, so the map cannot
+   * draw one without searching for it. Located by the 3' end rather than by
+   * exact match, because every primer this application designs for cloning
+   * carries a 5' tail that is not in the template.
+   */
+  const placedPrimers = useMemo(
+    () => placePrimers(primers, sequence, { circular: seqType === 'plasmid' }),
+    [primers, sequence, seqType],
+  );
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -667,8 +681,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 ))}
               </div>
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
+                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={placedPrimers} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={placedPrimers} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
               }
 
               {/* Feature detail panel */}

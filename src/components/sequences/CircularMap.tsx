@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useCallback } from 'react';
 import type { SequenceFeature } from '../SequenceViewer';
 import type { ReSite } from './LinearMap'; // reused type
 import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
+import { bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
 
 interface CircularMapProps {
   sequence: string;
@@ -14,6 +15,8 @@ interface CircularMapProps {
   onAddFeature?: (sel: { start: number; end: number }) => void;
   /** How to choose which sites are worth drawing. Defaults are SnapGene's. */
   enzymeDisplay?: ChooseOptions;
+  /** Primers already located on this sequence. */
+  primers?: PlacedPrimer[];
 }
 
 // Fixed layout. Outside the component because none of it varies per render.
@@ -24,7 +27,7 @@ const R_IN = 210;
 const R_BB = (R_OUT + R_IN) / 2;
 const TRACK_W = 18;
 
-export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature, enzymeDisplay }: CircularMapProps) {
+export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature, enzymeDisplay, primers = [] }: CircularMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -68,6 +71,26 @@ export default function CircularMap({ sequence, features, reSites, selection, on
    * promoter". Positions and feature names are both worth reading, so they get
    * separate rings rather than a tie-break.
    */
+  /*
+   * Primer rows are assigned here rather than at draw time because the
+   * restriction-site labels have to sit outside them. Working it out during
+   * the render put the labels at a radius chosen before the primers knew how
+   * much room they needed, and the two rings overlapped.
+   */
+  const primerRows = useMemo(() => {
+    const edges: number[] = [];
+    const rowOf = new Map<string, number>();
+    for (const p of primers) {
+      let row = edges.findIndex(edge => p.start > edge);
+      if (row === -1) { row = edges.length; edges.push(0); }
+      edges[row] = p.wrapsOrigin ? Infinity : p.end;
+      rowOf.set(`${p.id}:${p.start}`, row);
+    }
+    return { rowOf, count: edges.length };
+  }, [primers]);
+
+  const R_PRIMER = R_OUT + (fwdTracks.numTracks * TRACK_W) + 10;
+  const R_PRIMER_TOP = R_PRIMER + Math.max(0, primerRows.count - 1) * 9;
   const R_RULER = R_IN - (revTracks.numTracks * TRACK_W) - 12;
   const R_GC_OUT = R_RULER - 14;
   const R_GC_IN = R_GC_OUT - 40;
@@ -208,7 +231,8 @@ export default function CircularMap({ sequence, features, reSites, selection, on
   const handleMouseUp = () => setDragStart(null);
 
   // Label positions for enzymes
-  const R_RE_LBL = R_OUT + fwdTracks.numTracks * TRACK_W + 20;
+  // Outside the primer ring, whatever height that turned out to need.
+  const R_RE_LBL = R_PRIMER_TOP + 22;
 
   return (
     <div style={{ background: 'var(--bg-secondary)', borderRadius: '12px', padding: '1rem', border: '1px solid var(--glass-border)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -341,6 +365,63 @@ export default function CircularMap({ sequence, features, reSites, selection, on
              </g>
           );
         })}
+
+        {/* Primers */}
+        {(() => {
+          /*
+           * Primers ride just outside the forward feature tracks, on their own
+           * ring, drawn as a thin arc with a head at the 3' end — the end that
+           * gets extended, and the only end whose position decides what the
+           * product is.
+           *
+           * The annealing region is what is drawn. A primer's 5' tail is not on
+           * this molecule at all: drawing the whole oligo would put an arrow
+           * over bases the primer does not bind, which is the one thing a map
+           * must not do.
+           */
+          if (primers.length === 0) return null;
+
+          return primers.map((p, i) => {
+            // Wrapped primers are drawn from start round to end.
+            const a1 = toAngle(p.start);
+            const a2 = toAngle(p.wrapsOrigin ? p.end + len : p.end + 1);
+
+            // Stacked outward so two overlapping primers do not sit on one line.
+            const row = primerRows.rowOf.get(`${p.id}:${p.start}`) ?? 0;
+            const r = R_PRIMER + row * 9;
+            const large = (a2 - a1) > Math.PI ? 1 : 0;
+            const headA = p.strand === 'forward' ? a2 : a1;
+            const bodyEnd = p.strand === 'forward'
+              ? a2 - Math.min(0.05, (a2 - a1) * 0.35)
+              : a1 + Math.min(0.05, (a2 - a1) * 0.35);
+
+            const arc = p.strand === 'forward'
+              ? `M ${CX + r * Math.cos(a1)} ${CY + r * Math.sin(a1)} A ${r} ${r} 0 ${large} 1 ${CX + r * Math.cos(bodyEnd)} ${CY + r * Math.sin(bodyEnd)}`
+              : `M ${CX + r * Math.cos(a2)} ${CY + r * Math.sin(a2)} A ${r} ${r} 0 ${large} 0 ${CX + r * Math.cos(bodyEnd)} ${CY + r * Math.sin(bodyEnd)}`;
+
+            // A little triangle at the 3' end.
+            const hx = CX + r * Math.cos(headA), hy = CY + r * Math.sin(headA);
+            const back = p.strand === 'forward' ? headA - 0.045 : headA + 0.045;
+            const head = [
+              `${hx},${hy}`,
+              `${CX + (r - 3.5) * Math.cos(back)},${CY + (r - 3.5) * Math.sin(back)}`,
+              `${CX + (r + 3.5) * Math.cos(back)},${CY + (r + 3.5) * Math.sin(back)}`,
+            ].join(' ');
+
+            const colour = p.directionMismatch ? '#b91c1c' : '#7c3aed';
+            return (
+              <g key={`${p.id}-${i}`} style={{ cursor: 'help' }}>
+                <title>{bindingTitle(p)}</title>
+                <path d={arc} fill="none" stroke={colour} strokeWidth={2} opacity={0.9} />
+                <polygon points={head} fill={colour} />
+                {/* The tail, dashed and outside the arc, so it reads as not annealed. */}
+                {p.tailLength > 0 && (
+                  <path d={arc} fill="none" stroke={colour} strokeWidth={5} opacity={0.15} />
+                )}
+              </g>
+            );
+          });
+        })()}
 
         {/* Restriction sites worth drawing */}
         {(() => {

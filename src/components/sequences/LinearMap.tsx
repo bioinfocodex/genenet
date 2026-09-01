@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import type { SequenceFeature } from '../SequenceViewer';
 
 import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
+import { bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
 
 export interface ReSite {
   enzyme: string;
@@ -19,6 +20,8 @@ interface LinearMapProps {
   reSites: ReSite[];
   /** How to choose which sites are worth drawing. Defaults are SnapGene's. */
   enzymeDisplay?: ChooseOptions;
+  /** Primers already located on this sequence. */
+  primers?: PlacedPrimer[];
   isCircular: boolean;
   selection?: { start: number; end: number } | null;
   onSelect?: (s: { start: number; end: number }) => void;
@@ -38,7 +41,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
   return map;
 }
 
-export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay }: LinearMapProps) {
+export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay, primers = [] }: LinearMapProps) {
   const len = sequence.length;
   const W = 800;
   const padL = 20; const padR = 40;
@@ -53,7 +56,26 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
   const reAreaH = 40;
   const fwdY = reAreaH + 4;
   const revY = fwdY + 8;
-  const featStartY = revY + 16;
+  /*
+   * Primers get a band between the strands and the features. Rows are worked
+   * out here rather than while drawing, because everything below has to be
+   * pushed down by however many rows they need.
+   */
+  const primerRows = useMemo(() => {
+    const edges: number[] = [];
+    const rowOf = new Map<string, number>();
+    for (const p of primers) {
+      let row = edges.findIndex(edge => p.start > edge + 40);
+      if (row === -1) { row = edges.length; edges.push(0); }
+      edges[row] = p.end;
+      rowOf.set(`${p.id}:${p.start}`, row);
+    }
+    return { rowOf, count: edges.length };
+  }, [primers]);
+
+  const primerY = revY + 14;
+  const primerH = primerRows.count * 13;
+  const featStartY = primerY + primerH + (primerRows.count ? 8 : 2);
   const featH = maxRow * 24;
   const rulerY = featStartY + featH + 12;
   const svgH = rulerY + 30;
@@ -115,6 +137,70 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
             const pos = Math.round((i / 10) * len);
             const x = toX(pos);
             return <line key={`grid-${i}`} x1={x} y1={0} x2={x} y2={svgH} stroke="rgba(0,0,0,0.03)" strokeWidth={1} />;
+          })}
+
+          {/* Primers */}
+          {primers.map((p, i) => {
+            /*
+             * Only the annealing region is drawn. A 5' tail is not on this
+             * molecule, and an arrow covering bases the primer does not bind
+             * would be a map telling a lie about where the product starts.
+             */
+            const row = primerRows.rowOf.get(`${p.id}:${p.start}`) ?? 0;
+            const y = primerY + row * 13;
+            const colour = p.directionMismatch ? '#b91c1c' : '#7c3aed';
+
+            /*
+             * A primer through the origin becomes two pieces on a linear axis.
+             *
+             * Drawing it as one span from start to end gives a negative width,
+             * which came out as a three-pixel stub at the far right — the
+             * primer present, its extent a lie. The arrowhead goes on whichever
+             * piece carries the 3' end, since that is the end that extends.
+             */
+            const pieces = p.wrapsOrigin
+              ? [
+                  { from: p.start, to: len - 1, head: p.strand === 'reverse' },
+                  { from: 0, to: p.end, head: p.strand === 'forward' },
+                ]
+              : [{ from: p.start, to: p.end, head: true }];
+
+            const x1 = toX(p.start);
+            const w = Math.max(3, toX(p.wrapsOrigin ? len : p.end + 1) - x1);
+
+            return (
+              <g key={`${p.id}-${i}`} style={{ cursor: 'help' }}>
+                <title>{bindingTitle(p)}</title>
+                {pieces.map((seg, k) => {
+                  const sx = toX(seg.from);
+                  const sw = Math.max(3, toX(seg.to + 1) - sx);
+                  const head = seg.head ? Math.min(6, sw * 0.4) : 0;
+                  const shape = p.strand === 'forward'
+                    ? `${sx},${y - 3} ${sx + sw - head},${y - 3} ${sx + sw},${y} ${sx + sw - head},${y + 3} ${sx},${y + 3}`
+                    : `${sx + sw},${y - 3} ${sx + head},${y - 3} ${sx},${y} ${sx + head},${y + 3} ${sx + sw},${y + 3}`;
+                  return <polygon key={k} points={shape} fill={colour} opacity={0.85} />;
+                })}
+                {/*
+                  * Labelled by the room available, not by the primer's own
+                  * width. A 24 nt primer on a 3.7 kb plasmid is five pixels
+                  * wide, so gating on that drew every arrow nameless — and an
+                  * unlabelled arrow is half a feature. What matters is whether
+                  * the name fits before the next primer on this row.
+                  */}
+                {(() => {
+                  const nameW = p.name.length * 4.4;
+                  const next = primers.find(o =>
+                    o !== p &&
+                    (primerRows.rowOf.get(`${o.id}:${o.start}`) ?? 0) === row &&
+                    o.start > p.start);
+                  const room = next ? toX(next.start) - (x1 + w / 2) - 4 : W - (x1 + w / 2) - 4;
+                  return room > nameW / 2
+                    ? <text x={x1 + w / 2} y={y - 5} textAnchor="middle" fontSize={8}
+                            fill={colour} fontWeight="700">{p.name}</text>
+                    : null;
+                })()}
+              </g>
+            );
           })}
 
           {/* RE sites */}
