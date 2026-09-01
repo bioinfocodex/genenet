@@ -278,12 +278,11 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const [mapView, setMapView] = useState<'linear' | 'circular'>('linear');
   const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
 
-  // Sidebar collapse state
-  const [addOpen, setAddOpen] = useState(true);
-  const [analysisOpen, setAnalysisOpen] = useState(true);
+  // Sidebar collapse state. The Add Elements, Analysis and Import sections
+  // are gone — their contents were duplicates of menu commands — so the flags
+  // that opened them went with them.
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [digestOpen, setDigestOpen] = useState(false);
 
   // Digest simulation state
@@ -419,7 +418,6 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     };
   }, [allReSites, enzymeDisplay]);
 
-
   // ORFs count (lazy, for sidebar stats)
   const orfsCount = useMemo(() => findORFs(sequence, 100).length, [sequence]);
   const orfs = useMemo(() => findORFs(sequence, 100), [sequence]);
@@ -443,7 +441,6 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     () => summariseOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated }),
     [orfs, features, orfIncludeAnnotated],
   );
-
 
   /*
    * One answer to "where does this primer sit", shared by the maps and the
@@ -582,7 +579,6 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     });
   };
 
-
   const handleSave = () => {
     setSaving(true);
     const fd = new FormData();
@@ -677,50 +673,68 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     }
   };
 
-  // Menu bar items
+  /*
+   * Commands, grouped by the thing they act on.
+   *
+   * Views are not here any more. Every panel that is a way of looking at the
+   * sequence has a tab, so a View menu listing eight of them was a second
+   * route to the same places — and its other two entries, Zoom In and Zoom
+   * Out, were `() => {}`. A menu item that does nothing is worse than a
+   * missing one: it is tried, and then it is distrusted.
+   *
+   * Each command appears exactly once. Before this, Copy Sequence was in File,
+   * in Edit, on a toolbar button and in the sidebar — four places for one
+   * clipboard write, which reads as four features until you try them.
+   */
   const menuItems: Record<string, { label: string; action: () => void; divider?: boolean }[]> = {
     File: [
       { label: 'New Sequence', action: () => router.push('/sequences/new') },
       { label: 'Open Library', action: () => router.push('/sequences') },
       { label: '──────────', action: () => {}, divider: true },
+      { label: 'Import GenBank / FASTA…', action: () => importFileRef.current?.click() },
+      { label: '──────────', action: () => {}, divider: true },
       { label: 'Export FASTA', action: exportFasta },
       { label: 'Export GenBank', action: exportGenBank },
-      { label: 'Copy Sequence', action: () => navigator.clipboard.writeText(sequence) },
+      { label: 'Export SnapGene .dna', action: () => { window.location.href = `/api/sequence/${id}/export`; } },
       { label: '──────────', action: () => {}, divider: true },
-      { label: '🤖 Open in AI Suite', action: () => { window.open(`http://localhost:8501/?id=${id}`, '_blank'); } },
+      { label: 'Open in AI Suite', action: () => { window.open(`http://localhost:8501/?id=${id}`, '_blank'); } },
     ],
     Edit: [
       { label: 'Copy Sequence', action: () => navigator.clipboard.writeText(sequence) },
       { label: 'Copy Reverse Complement', action: () => navigator.clipboard.writeText(reverseComplement(sequence)) },
       { label: '──────────', action: () => {}, divider: true },
-      { label: 'Auto-detect Features', action: handleAutoDetect },
       { label: 'Find / Replace', action: () => { setLeftTab('sequence'); setShowMolFind(true); } },
-      { label: '──────────', action: () => {}, divider: true },
+    ],
+    Features: [
       { label: 'Add Feature', action: () => openAddFeature() },
+      { label: 'Add Tag', action: () => openAddFeature('misc_feature') },
+      { label: '──────────', action: () => {}, divider: true },
+      { label: 'Auto-detect Features', action: handleAutoDetect },
+    ],
+    Primers: [
       { label: 'Add Primer', action: openAddPrimer },
-    ],
-    View: [
-      { label: 'Map', action: () => setLeftTab('map') },
-      { label: 'Sequence', action: () => setLeftTab('sequence') },
-      { label: 'Features', action: () => setLeftTab('feature') },
       { label: '──────────', action: () => {}, divider: true },
-      { label: 'RE Sites', action: () => setLeftTab('sites') },
-      { label: 'ORFs', action: () => setLeftTab('orfs') },
-      { label: 'Translation', action: () => setLeftTab('translate') },
-      { label: '──────────', action: () => {}, divider: true },
-      { label: 'Zoom In', action: () => {} },
-      { label: 'Zoom Out', action: () => {} },
+      { label: 'Primer Design', action: () => setLeftTab('design') },
+      { label: 'Primer Dimer', action: () => setLeftTab('dimer') },
     ],
-    Tools: [
-      { label: 'Primer Design', action: () => { setLeftTab('design'); } },
+    Enzymes: [
+      { label: 'Add RE Site', action: () => setShowAddREModal(true) },
+      { label: '──────────', action: () => {}, divider: true },
+      { label: 'Quick Digest', action: () => { setLeftTab('sites'); setDigestOpen(true); } },
+    ],
+    // Simulating something done at a bench.
+    Actions: [
       { label: 'PCR Simulation', action: () => setLeftTab('pcr') },
       { label: 'Ligation', action: () => setLeftTab('ligation') },
-      { label: 'Virtual Gel', action: () => setLeftTab('gel') },
       { label: 'Mutagenesis', action: () => setLeftTab('mutagenesis') },
       { label: '──────────', action: () => {}, divider: true },
-      { label: 'Primer Dimer', action: () => setLeftTab('dimer') },
+      { label: 'Virtual Gel', action: () => setLeftTab('gel') },
       { label: 'Sanger Alignment', action: () => setLeftTab('sanger') },
-      { label: 'AI Gene Annotation', action: () => setLeftTab('aigen') },
+    ],
+    // Computing something about the sequence.
+    Tools: [
+      { label: 'CRISPR Guides', action: () => setLeftTab('crispr') },
+      { label: 'AI Annotation', action: () => setLeftTab('aigen') },
       { label: '3D Fold', action: () => setLeftTab('fold') },
     ],
   };
@@ -1188,7 +1202,70 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             </div>
           )}
 
-          {leftTab === 'sites' && <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} />}
+          {leftTab === 'sites' && (
+            <div>
+              <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} />
+
+              {/*
+                The quick digest, moved here from a sidebar accordion called
+                "Analysis". It is a question about enzymes and it belongs with
+                the enzymes; sitting in a general-purpose drawer is how a real
+                tool ends up undiscovered.
+              */}
+              <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--glass-border)' }}>
+                <button
+                  onClick={() => setDigestOpen(o => !o)}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.8rem', marginBottom: digestOpen ? '0.75rem' : 0 }}
+                >
+                  {digestOpen ? 'Hide quick digest' : 'Quick digest'}
+                </button>
+            {digestOpen && (
+              <div style={{ padding: '0.75rem', background: 'white', borderRadius: '8px', border: '1px solid var(--glass-border)', marginTop: '0.25rem' }}>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.5rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Select Enzymes</div>
+                <div style={{ maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem', marginBottom: '0.5rem' }}>
+                  {[...reSitesByEnzyme.keys()].map(enz => (
+                    <label key={enz} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.76rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={digestEnzymes.includes(enz)}
+                        onChange={e => {
+                          setDigestEnzymes(prev =>
+                            e.target.checked ? [...prev, enz] : prev.filter(x => x !== enz)
+                          );
+                          setDigestResult(null);
+                        }}
+                      />
+                      <span style={{ fontFamily: 'monospace' }}>{enz}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>({(reSitesByEnzyme.get(enz) ?? []).length})</span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  onClick={handleDigest}
+                  disabled={digestEnzymes.length === 0}
+                  style={{ width: '100%', padding: '0.35rem', borderRadius: '5px', border: '1px solid var(--glass-border)', background: digestEnzymes.length === 0 ? '#f1f5f9' : 'var(--accent-blue)', color: digestEnzymes.length === 0 ? 'var(--text-muted)' : 'white', cursor: digestEnzymes.length === 0 ? 'not-allowed' : 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: 600 }}
+                >
+                  Simulate Digest
+                </button>
+                {digestResult && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>{digestResult.length} fragment(s)</div>
+                    <div style={{ maxHeight: 100, overflowY: 'auto' }}>
+                      {digestResult.map((frag, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', padding: '0.15rem 0', borderBottom: '1px solid var(--glass-border)' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Fragment {i + 1}</span>
+                          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{frag.toLocaleString()} bp</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+              </div>
+            </div>
+          )}
           {leftTab === 'orfs'  && <ORFsPanel sequence={sequence} />}
           {leftTab === 'translate' && <TranslatePanel sequence={sequence} />}
           {leftTab === 'pcr' && (
@@ -1269,75 +1346,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         <div style={{ width: 272, flexShrink: 0 }}>
 
           {/* 1. Add Elements */}
-          <SidebarSection title="＋ Add Elements" open={addOpen} onToggle={() => setAddOpen(o => !o)}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
-              <SidebarBtn label="Add Feature" onClick={() => openAddFeature()} />
-              <SidebarBtn label="Add Primer" onClick={openAddPrimer} />
-              <SidebarBtn label="Add RE Site" onClick={() => setShowAddREModal(true)} />
-              <SidebarBtn label="Add Tag" onClick={() => openAddFeature('misc_feature')} />
-              <SidebarBtn label="Auto-detect" onClick={handleAutoDetect} style={{ gridColumn: '1 / -1', background: 'var(--accent-blue-15)', color: 'var(--accent-blue)', fontWeight: 600 }} />
-            </div>
-          </SidebarSection>
 
           {/* 2. Analysis Tools */}
-          <SidebarSection title="🔬 Analysis" open={analysisOpen} onToggle={() => setAnalysisOpen(o => !o)}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <SidebarBtn label="Find ORFs" onClick={() => setLeftTab('orfs')} />
-              <SidebarBtn label="Translate" onClick={() => setLeftTab('translate')} />
-              <SidebarBtn label="RE Analysis" onClick={() => setLeftTab('sites')} />
-              <SidebarBtn label="Align a Read" onClick={() => setLeftTab('sanger')} />
-              <SidebarBtn label="CRISPR Guides" onClick={() => setLeftTab('crispr')} />
-              <SidebarBtn label="GC Content" onClick={() => setLeftTab('sequence')} />
-              <SidebarBtn
-                label={digestOpen ? 'Hide Digest Sim' : 'Digest Sim'}
-                onClick={() => setDigestOpen(o => !o)}
-                style={{ background: digestOpen ? 'var(--accent-blue-15)' : undefined, color: digestOpen ? 'var(--accent-blue)' : undefined }}
-              />
-              {digestOpen && (
-                <div style={{ padding: '0.75rem', background: 'white', borderRadius: '8px', border: '1px solid var(--glass-border)', marginTop: '0.25rem' }}>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.5rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Select Enzymes</div>
-                  <div style={{ maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem', marginBottom: '0.5rem' }}>
-                    {[...reSitesByEnzyme.keys()].map(enz => (
-                      <label key={enz} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.76rem', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={digestEnzymes.includes(enz)}
-                          onChange={e => {
-                            setDigestEnzymes(prev =>
-                              e.target.checked ? [...prev, enz] : prev.filter(x => x !== enz)
-                            );
-                            setDigestResult(null);
-                          }}
-                        />
-                        <span style={{ fontFamily: 'monospace' }}>{enz}</span>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>({(reSitesByEnzyme.get(enz) ?? []).length})</span>
-                      </label>
-                    ))}
-                  </div>
-                  <button
-                    onClick={handleDigest}
-                    disabled={digestEnzymes.length === 0}
-                    style={{ width: '100%', padding: '0.35rem', borderRadius: '5px', border: '1px solid var(--glass-border)', background: digestEnzymes.length === 0 ? '#f1f5f9' : 'var(--accent-blue)', color: digestEnzymes.length === 0 ? 'var(--text-muted)' : 'white', cursor: digestEnzymes.length === 0 ? 'not-allowed' : 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: 600 }}
-                  >
-                    Simulate Digest
-                  </button>
-                  {digestResult && (
-                    <div style={{ marginTop: '0.5rem' }}>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>{digestResult.length} fragment(s)</div>
-                      <div style={{ maxHeight: 100, overflowY: 'auto' }}>
-                        {digestResult.map((frag, i) => (
-                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', padding: '0.15rem 0', borderBottom: '1px solid var(--glass-border)' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Fragment {i + 1}</span>
-                            <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{frag.toLocaleString()} bp</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </SidebarSection>
 
           {/* 3. Feature Library */}
           <SidebarSection title="📚 Library" open={libraryOpen} onToggle={() => setLibraryOpen(o => !o)}>
@@ -1453,21 +1463,20 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           </SidebarSection>
 
           {/* 6. Import */}
-          <SidebarSection title="⬆ Import" open={exportOpen} onToggle={() => setExportOpen(o => !o)}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <input ref={importFileRef} type="file" accept=".gb,.gbk,.genbank,.fasta,.fa,.fna" style={{ display: 'none' }} onChange={handleFileImport} />
-              <SidebarBtn label="Import GenBank / FASTA" onClick={() => importFileRef.current?.click()} style={{ background: 'var(--accent-blue-15)', color: 'var(--accent-blue)', fontWeight: 600 }} />
-              {importMsg && (
-                <div style={{ fontSize: '0.72rem', padding: '0.3rem 0.5rem', borderRadius: '5px', background: importMsg.type === 'ok' ? '#f0fdf4' : '#fef2f2', color: importMsg.type === 'ok' ? '#16a34a' : '#dc2626', border: `1px solid ${importMsg.type === 'ok' ? '#bbf7d0' : '#fca5a5'}` }}>
-                  {importMsg.text}
-                </div>
-              )}
-              <SidebarBtn label="Export FASTA" onClick={exportFasta} />
-              <SidebarBtn label="Export GenBank" onClick={exportGenBank} />
-              <SidebarBtn label="Copy Sequence" onClick={() => navigator.clipboard.writeText(sequence)} />
-              <SidebarBtn label="Export SVG" onClick={() => alert('Open the Map tab and right-click the SVG to save it.')} />
+          {/*
+            The file input the File menu drives, and whatever the last import
+            had to say. The buttons that used to sit here — Import, Export
+            FASTA, Export GenBank, Copy Sequence — all live in the File and
+            Edit menus now. The fifth, "Export SVG", opened an alert telling
+            the reader to right-click the map and save it themselves; the map
+            has real SVG and PNG buttons, so it is gone rather than moved.
+          */}
+          <input ref={importFileRef} type="file" accept=".gb,.gbk,.genbank,.fasta,.fa,.fna" style={{ display: 'none' }} onChange={handleFileImport} />
+          {importMsg && (
+            <div style={{ fontSize: '0.75rem', padding: '0.45rem 0.6rem', borderRadius: 6, marginBottom: '0.75rem', background: importMsg.type === 'err' ? 'rgba(220,38,38,0.08)' : 'rgba(16,185,129,0.08)', color: importMsg.type === 'err' ? '#b91c1c' : 'var(--accent-green)' }}>
+              {importMsg.text}
             </div>
-          </SidebarSection>
+          )}
 
         </div>
       </div>
@@ -1669,26 +1678,6 @@ function SidebarSection({ title, open, onToggle, children }: { title: string; op
         </div>
       )}
     </div>
-  );
-}
-
-function SidebarBtn({ label, onClick, style }: { label: string; onClick: () => void; style?: React.CSSProperties }) {
-  return (
-    <button
-      onClick={onClick}
-      className="sidebar-btn"
-      style={{
-        padding: '0.45rem 0.75rem', borderRadius: '8px', border: '1px solid var(--glass-border)',
-        background: 'white', color: 'var(--text-primary)', cursor: 'pointer',
-        fontSize: '0.78rem', fontFamily: 'inherit', textAlign: 'left', width: '100%',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        fontWeight: 500,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-        ...style,
-      }}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -1951,7 +1940,6 @@ function AddPrimerModal({
     </ModalOverlay>
   );
 }
-
 
 function Badge({ label, color }: { label: string; color: string }) {
   return (
@@ -3355,7 +3343,6 @@ function AIGenePanel({ sequence }: { sequence: string }) {
 // reference, and scattered indels scored the same as contiguous ones. Replaced
 // by verifyRead from lib/alignment: affine gaps, free reference ends, both
 // orientations tried, and differences reported by position in the reference.
-
 
 function SangerPanel({ reference }: { reference: string }) {
   const [query, setQuery] = useState('');
