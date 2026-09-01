@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { ChevronRight, CheckSquare, Clock, AlertCircle, BookOpen } from 'lucide-react';
 import { updateProjectStatus } from '@/app/actions/projects';
 import TaskCreateForm from '@/components/TaskCreateForm';
+import ProjectAccess from '@/components/ProjectAccess';
+import { requireUser } from '@/lib/auth-guard';
+import { checkAccess, effectiveMembers } from '@/lib/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +19,7 @@ const statusIcon: Record<string, React.ReactNode> = {
 };
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireUser();
   const { id } = await params;
   const project = await prisma.project.findUnique({
     where: { id },
@@ -25,12 +29,40 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         include: { assignedTo: true, procedure: true },
         orderBy: { createdAt: 'desc' },
       },
+      members: { include: { user: { select: { name: true, email: true } } } },
     },
   });
 
   if (!project) notFound();
 
+  // A restricted project a person is not in should not be distinguishable from
+  // one that does not exist: telling them it exists but is closed leaks the
+  // project's name, which is often the part worth hiding.
+  const membership = project.members.find(m => m.userId === user.id) ?? null;
+  const access = checkAccess(
+    { project: { id: project.id, restricted: project.restricted }, membership, user },
+    'VIEW',
+  );
+  if (!access.allowed) notFound();
+
+  const canManage = checkAccess(
+    { project: { id: project.id, restricted: project.restricted }, membership, user },
+    'MANAGE',
+  ).allowed;
+
   const users = await prisma.user.findMany({ select: { id: true, name: true } });
+  const [workspaceMembers, admins] = await Promise.all([
+    prisma.user.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.user.findMany({
+      where: { status: 'ACTIVE', role: 'ADMIN' },
+      select: { id: true, name: true, email: true },
+    }),
+  ]);
+  const memberView = effectiveMembers(project.members, admins);
   const procedures = await prisma.procedure.findMany({ where: { isArchived: false, status: 'Approved' }, select: { id: true, name: true, procedureId: true } });
 
   const done = project.tasks.filter(t => t.status === 'DONE').length;
@@ -83,6 +115,14 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
       </div>
 
       {/* Add Task */}
+      <ProjectAccess
+        projectId={project.id}
+        restricted={project.restricted}
+        members={memberView}
+        candidates={workspaceMembers}
+        canManage={canManage}
+      />
+
       <TaskCreateForm projectId={project.id} users={users} procedures={procedures} />
 
       {/* Task Columns */}

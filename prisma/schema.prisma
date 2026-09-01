@@ -59,6 +59,18 @@ model User {
   simulations        Simulation[]       @relation("SimulationCreator")
   gelsCreated        GelSimulation[]    @relation("GelCreator")
   samplesCreated     Sample[]           @relation("SampleCreator")
+
+  entityTypesCreated   EntityType[]    @relation("EntityTypeCreator")
+  entitiesCreated      Entity[]        @relation("EntityCreator")
+  resultSchemasCreated ResultSchema[]  @relation("ResultSchemaCreator")
+  resultsRecorded      AssayResult[]   @relation("ResultRecorder")
+  platesCreated        Plate[]         @relation("PlateCreator")
+  transfersPerformed   PlateTransfer[] @relation("TransferPerformer")
+  notebookAuthored     NotebookEntry[] @relation("NotebookAuthor")
+  notebookSigned       NotebookEntry[] @relation("NotebookSigner")
+  notebookWitnessed    NotebookEntry[] @relation("NotebookWitness")
+  projectMemberships   ProjectMember[] @relation("ProjectMembership")
+  projectMembersAdded  ProjectMember[] @relation("ProjectMemberAdder")
 }
 
 model WorkspaceSettings {
@@ -180,6 +192,13 @@ model Project {
   tasks   Task[]
   report  Report?
   samples Sample[] @relation("SampleProject")
+
+  entities  Entity[]        @relation("EntityProject")
+  plates    Plate[]         @relation("PlateProject")
+  notebook  NotebookEntry[] @relation("NotebookProject")
+  members   ProjectMember[]
+  /// When true, only users with a ProjectMember row may reach this project.
+  restricted Boolean @default(false)
 }
 
 model Task {
@@ -225,6 +244,8 @@ model Task {
   comments    TaskComment[]
   gelImages   GelImage[]
   samples     Sample[]         @relation("SampleTask")
+
+  results AssayResult[] @relation("TaskResults")
 }
 
 model GelImage {
@@ -429,6 +450,8 @@ model GeneSequence {
   tasks       Task[]       @relation("TaskSequences")
   samples     Sample[]     @relation("SampleSequence")
   lineage     SequenceLineage[] @relation("LineageChild")
+
+  wells PlateWell[] @relation("SequenceWells")
 }
 
 model Primer {
@@ -661,6 +684,9 @@ model Sample {
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  wells   PlateWell[]   @relation("SampleWells")
+  results AssayResult[] @relation("SampleResults")
 }
 
 /**
@@ -717,4 +743,427 @@ model LibraryPart {
 
   @@unique([name, sequence])
   @@index([name])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7: the parts that make this a system of record rather than a tool.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A record type the lab defines for itself.
+ *
+ * Every other model in this schema is a decision made here about what a lab
+ * keeps track of. That works until a lab tracks something nobody anticipated --
+ * an antibody, a cell line, a mouse colony, a plasmid prep batch -- and then
+ * the only options are to misuse an existing model or to wait for a release.
+ *
+ * An EntityType lets the lab declare the shape itself: a name, and a set of
+ * typed fields. Instances are Entity rows, and their values are FieldValue
+ * rows in typed columns, so a custom field is as queryable as a built-in one.
+ *
+ * This deliberately does not convert the existing models. A Sample knows about
+ * freezers and a GeneSequence knows about bases; folding them into generic
+ * entities would trade real, specific behaviour for uniformity nobody asked
+ * for. Custom types sit alongside them and can link to them.
+ */
+model EntityType {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  plural      String
+  description String?
+
+  /// Prefix for generated codes, e.g. "STR" gives STR-001. Immutable once set:
+  /// codes already printed on tubes must keep meaning what they meant.
+  prefix      String  @unique
+  color       String  @default("#3b82f6")
+  icon        String?
+  archived    Boolean @default(false)
+
+  createdBy   User?   @relation("EntityTypeCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fields   FieldDef[] @relation("EntityTypeFields")
+  entities Entity[]
+  /// Field definitions on other types that point at this one.
+  linkedFrom FieldDef[] @relation("FieldLinkTarget")
+}
+
+/**
+ * One typed field, belonging to either an entity type or a result schema.
+ *
+ * Exactly one of entityTypeId / resultSchemaId is set. SQLite cannot express
+ * that as a constraint, so it is enforced in src/lib/fields.ts and checked on
+ * every write; the alternative was two near-identical tables and two
+ * near-identical validators, which is how the two drift apart.
+ */
+model FieldDef {
+  id    String @id @default(cuid())
+  /// Stable identifier used by values. Never changes once created, so renaming
+  /// a field's label does not orphan everything recorded under it.
+  key   String
+  label String
+
+  /// text | longtext | number | integer | boolean | date | select | multiselect
+  /// | link | sequence | sample
+  type     String
+  required Boolean @default(false)
+  /// Values must be distinct across instances of this type.
+  isUnique Boolean @default(false)
+
+  /// JSON array of permitted options, for select and multiselect.
+  options  String?
+  /// For link fields: the entity type this points at.
+  linkType   EntityType? @relation("FieldLinkTarget", fields: [linkTypeId], references: [id])
+  linkTypeId String?
+
+  unit     String?
+  helpText String?
+  order    Int     @default(0)
+
+  entityType   EntityType? @relation("EntityTypeFields", fields: [entityTypeId], references: [id], onDelete: Cascade)
+  entityTypeId String?
+  resultSchema   ResultSchema? @relation(fields: [resultSchemaId], references: [id], onDelete: Cascade)
+  resultSchemaId String?
+
+  values FieldValue[]
+
+  @@unique([entityTypeId, key])
+  @@unique([resultSchemaId, key])
+  @@index([entityTypeId])
+  @@index([resultSchemaId])
+}
+
+/** One instance of a lab-defined type. */
+model Entity {
+  id   String @id @default(cuid())
+  /// Generated from the type's prefix, e.g. STR-001. Shown on labels.
+  code String @unique
+  name String
+  archived Boolean @default(false)
+
+  entityType   EntityType @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
+  entityTypeId String
+
+  project   Project? @relation("EntityProject", fields: [projectId], references: [id])
+  projectId String?
+
+  createdBy   User?    @relation("EntityCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  values  FieldValue[]
+  wells   PlateWell[]
+  results AssayResult[] @relation("EntityResults")
+  /// Field values on other entities that point at this one.
+  referencedBy FieldValue[] @relation("FieldValueRef")
+
+  @@index([entityTypeId, archived])
+  @@index([name])
+}
+
+/**
+ * One value of one field, on one entity or one result.
+ *
+ * Values live in typed columns rather than a single JSON blob so that "every
+ * strain with an OD above 0.8" is a query rather than a scan. The cost is a
+ * row per field per record, which for a lab's scale is nothing.
+ */
+model FieldValue {
+  id      String   @id @default(cuid())
+  field   FieldDef @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  fieldId String
+
+  entity   Entity? @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  entityId String?
+  result   AssayResult? @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  resultId String?
+
+  text    String?
+  number  Float?
+  boolean Boolean?
+  date    DateTime?
+
+  /// Target of a link, sequence or sample field. `text` holds the display name
+  /// as it was at the time of writing, so a deleted target still reads as
+  /// something rather than as a dangling id.
+  refEntity   Entity? @relation("FieldValueRef", fields: [refEntityId], references: [id])
+  refEntityId String?
+  refId       String?
+
+  @@unique([entityId, fieldId])
+  @@unique([resultId, fieldId])
+  @@index([fieldId, number])
+  @@index([fieldId, text])
+}
+
+/**
+ * The shape of a measurement, so results can be queried rather than read.
+ *
+ * A result recorded as free text is a result nobody can plot. Declaring the
+ * columns up front -- OD600 as a number, "passed" as a boolean, operator as
+ * text -- means a year of assays can be compared without anyone re-reading
+ * them.
+ */
+model ResultSchema {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  archived    Boolean @default(false)
+
+  createdBy   User?    @relation("ResultSchemaCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fields  FieldDef[]
+  results AssayResult[]
+}
+
+/** One measurement, attached to whatever it was measured on. */
+model AssayResult {
+  id       String @id @default(cuid())
+  schema   ResultSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+  schemaId String
+
+  /// What was measured. At most one of these is set; all may be null for a
+  /// result recorded before it was attached to anything.
+  sample   Sample? @relation("SampleResults", fields: [sampleId], references: [id])
+  sampleId String?
+  well     PlateWell? @relation(fields: [wellId], references: [id], onDelete: Cascade)
+  wellId   String?
+  task     Task? @relation("TaskResults", fields: [taskId], references: [id])
+  taskId   String?
+  entity   Entity? @relation("EntityResults", fields: [entityId], references: [id])
+  entityId String?
+
+  measuredAt  DateTime @default(now())
+  recordedBy   User?   @relation("ResultRecorder", fields: [recordedById], references: [id])
+  recordedById String?
+  createdAt   DateTime @default(now())
+
+  values FieldValue[]
+
+  @@index([schemaId, measuredAt])
+  @@index([sampleId])
+  @@index([wellId])
+}
+
+/**
+ * A microplate.
+ *
+ * Freezer / rack / box / position describes where one tube sits. It cannot
+ * describe a screen, where the identity of a well is its coordinates and the
+ * whole point is that ninety-six of them were handled as one object.
+ */
+model Plate {
+  id      String  @id @default(cuid())
+  name    String
+  barcode String? @unique
+  /// 6 | 12 | 24 | 48 | 96 | 384 | 1536
+  format  Int     @default(96)
+  description String?
+  archived Boolean @default(false)
+
+  project   Project? @relation("PlateProject", fields: [projectId], references: [id])
+  projectId String?
+
+  createdBy   User?    @relation("PlateCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  wells         PlateWell[]
+  transfersOut  PlateTransfer[] @relation("TransferSource")
+  transfersIn   PlateTransfer[] @relation("TransferDest")
+}
+
+/**
+ * One well.
+ *
+ * Rows are created for every well when the plate is made, empty ones included:
+ * an empty well is a fact about the plate, and a layout with gaps in it is a
+ * layout, not missing data.
+ */
+model PlateWell {
+  id      String @id @default(cuid())
+  plate   Plate  @relation(fields: [plateId], references: [id], onDelete: Cascade)
+  plateId String
+
+  /// 0-indexed. Row 0 column 0 is A1.
+  row   Int
+  col   Int
+  label String
+
+  sample   Sample? @relation("SampleWells", fields: [sampleId], references: [id])
+  sampleId String?
+  entity   Entity? @relation(fields: [entityId], references: [id])
+  entityId String?
+  sequence   GeneSequence? @relation("SequenceWells", fields: [sequenceId], references: [id])
+  sequenceId String?
+
+  /// What is in the well when it is not a record the system already holds.
+  content String?
+  /// Free-text grouping used to colour a plate map: "control", "10 µM", etc.
+  role    String?
+
+  volumeUl      Float?
+  concentration Float?
+  concentrationUnit String?
+  notes String?
+
+  results AssayResult[]
+  sourceOf PlateTransferWell[] @relation("TransferFromWell")
+  destOf   PlateTransferWell[] @relation("TransferToWell")
+
+  @@unique([plateId, row, col])
+  @@index([plateId])
+  @@index([sampleId])
+}
+
+/** A recorded movement of material from one plate to another. */
+model PlateTransfer {
+  id String @id @default(cuid())
+
+  source   Plate  @relation("TransferSource", fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceId String
+  dest     Plate  @relation("TransferDest", fields: [destId], references: [id], onDelete: Cascade)
+  destId   String
+
+  /// stamp | cherry-pick | pool | dilution
+  kind     String @default("stamp")
+  volumeUl Float?
+  note     String?
+
+  performedBy   User?    @relation("TransferPerformer", fields: [performedById], references: [id])
+  performedById String?
+  performedAt   DateTime @default(now())
+
+  wells PlateTransferWell[]
+
+  @@index([sourceId])
+  @@index([destId])
+}
+
+/**
+ * One well-to-well step of a transfer.
+ *
+ * Stored per well rather than as a rule, because "which wells did this sample
+ * end up in" is the question a transfer record exists to answer, and a rule has
+ * to be re-run to answer it.
+ */
+model PlateTransferWell {
+  id         String @id @default(cuid())
+  transfer   PlateTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  transferId String
+
+  from   PlateWell @relation("TransferFromWell", fields: [fromId], references: [id], onDelete: Cascade)
+  fromId String
+  to     PlateWell @relation("TransferToWell", fields: [toId], references: [id], onDelete: Cascade)
+  toId   String
+
+  volumeUl Float?
+
+  @@index([transferId])
+  @@index([fromId])
+  @@index([toId])
+}
+
+/**
+ * What actually happened, as opposed to what was planned.
+ *
+ * Procedures describe intent and are versioned. A notebook entry is dated,
+ * written after the fact, and signed -- and once signed it stops being
+ * editable, because a signature over content that can still change is not a
+ * signature. Edits after signing are made as a new entry that supersedes it,
+ * which is what a paper notebook enforces with bound pages.
+ */
+model NotebookEntry {
+  id      String @id @default(cuid())
+  title   String
+  /// Markdown. Rendered read-only once signed.
+  body    String @default("")
+  /// The day the work was done, which is not the day the entry was typed.
+  entryDate DateTime
+
+  /// DRAFT | SIGNED | WITNESSED
+  status  String @default("DRAFT")
+
+  author   User   @relation("NotebookAuthor", fields: [authorId], references: [id])
+  authorId String
+
+  project   Project? @relation("NotebookProject", fields: [projectId], references: [id])
+  projectId String?
+
+  /// Digest of title + body + entryDate at the moment of signing. Recomputing
+  /// it is how a later reader checks the entry has not been altered since.
+  contentHash String?
+  signedAt    DateTime?
+  signedBy    User?    @relation("NotebookSigner", fields: [signedById], references: [id])
+  signedById  String?
+  witnessedAt   DateTime?
+  witnessedBy   User?   @relation("NotebookWitness", fields: [witnessedById], references: [id])
+  witnessedById String?
+
+  /// Set when this entry corrects one that was already signed.
+  supersedes   NotebookEntry? @relation("Supersedes", fields: [supersedesId], references: [id])
+  supersedesId String?
+  supersededBy NotebookEntry[] @relation("Supersedes")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  links NotebookLink[]
+
+  @@index([authorId, entryDate])
+  @@index([projectId])
+  @@index([status])
+}
+
+/** Something an entry points at: a sequence, a sample, a plate, a result. */
+model NotebookLink {
+  id      String @id @default(cuid())
+  entry   NotebookEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entryId String
+
+  /// sequence | sample | plate | result | task | entity | procedure | gel
+  kind     String
+  targetId String
+  /// The target's name when the link was made, so a deleted target still reads.
+  label    String
+
+  @@index([entryId])
+  @@index([kind, targetId])
+}
+
+/**
+ * Who may see and change what, below the level of workspace role.
+ *
+ * ADMIN and MEMBER answer "does this person work here". They cannot answer the
+ * question a lab actually has once a rotation student or an external
+ * collaborator arrives: this person should see one project and nothing else.
+ *
+ * Absence of a row is not absence of access -- a workspace member can still
+ * reach anything not explicitly restricted. Making every project private by
+ * default would break every existing install on upgrade, so a project opts in
+ * by being marked restricted, and only then do these rows decide.
+ */
+model ProjectMember {
+  id        String @id @default(cuid())
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  user      User    @relation("ProjectMembership", fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+
+  /// VIEW | EDIT | MANAGE
+  level String @default("VIEW")
+
+  addedBy   User?    @relation("ProjectMemberAdder", fields: [addedById], references: [id])
+  addedById String?
+  addedAt   DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
 }

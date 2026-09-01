@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
-import { Plus, FolderKanban, CheckSquare } from 'lucide-react';
+import { Plus, FolderKanban, CheckSquare, Lock } from 'lucide-react';
+import { requireUser } from '@/lib/auth-guard';
+import { visibleProjectFilter } from '@/lib/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +13,11 @@ const statusColor: Record<string, string> = {
 };
 
 export default async function ProjectsPage() {
+  const user = await requireUser();
+  // A list that forgets the filter leaks the names of restricted projects,
+  // which is often the part most worth hiding.
   const projects = await prisma.project.findMany({
+    where: visibleProjectFilter(user),
     include: { createdBy: true, tasks: true },
     orderBy: { updatedAt: 'desc' },
   });
@@ -42,7 +48,13 @@ export default async function ProjectsPage() {
               <Link key={project.id} href={`/projects/${project.id}`} style={{ textDecoration: 'none' }}>
                 <div className="glass-card" style={{ padding: '1.5rem', cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <h3 style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)', flex: 1 }}>{project.name}</h3>
+                    <h3 style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)', flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      {project.restricted && (
+                        <Lock size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }}
+                          aria-label="Restricted to named members" />
+                      )}
+                      {project.name}
+                    </h3>
                     <span className={`badge ${statusColor[project.status] ?? ''}`} style={{ fontSize: '0.72rem', flexShrink: 0 }}>{project.status.replace('_', ' ')}</span>
                   </div>
                   {project.description && (

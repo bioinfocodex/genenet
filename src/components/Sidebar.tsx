@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, CheckSquare, Dna, Settings, Users, Database, Scissors,
   BookOpen, FolderKanban, FileText, FlaskConical, Layers, Activity, TestTube,
-  ChevronDown, ChevronRight, Thermometer, ImageIcon, Box, ShieldAlert, Download, GitBranch, ScanSearch, Layers3, Wand2,
+  ChevronDown, ChevronRight, Thermometer, ImageIcon, Box, ShieldAlert, Download, GitBranch, ScanSearch, Layers3, Wand2, Grid3x3, NotebookPen, Boxes,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -41,6 +41,11 @@ export default function Sidebar({ userRole = 'MEMBER', userName = '' }: Props) {
       { name: 'Gel Images',     path: '/gels/images',     icon: ImageIcon },
       { name: 'Phylogeny',      path: '/phylogeny',       icon: GitBranch },
       { name: 'Collections',    path: '/collections',     icon: Layers },
+      { name: 'Plates',         path: '/plates',          icon: Grid3x3 },
+    ]},
+    { group: 'Records', items: [
+      { name: 'Notebook',       path: '/notebook',        icon: NotebookPen },
+      { name: 'Record Types',   path: '/entities',        icon: Boxes },
     ]},
     { group: 'Storage', items: [
       { name: 'Samples',        path: '/samples',         icon: Box },
