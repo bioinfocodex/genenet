@@ -3,7 +3,7 @@ import React, { useState, useMemo, useTransition, useRef, useCallback } from 're
 import { useRouter } from 'next/navigation';
 import {
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
-  FlaskConical, Dna, Atom, Link2, Library, Tag, BarChart3, Globe,
+  FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2,
 } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
@@ -21,7 +21,7 @@ import { blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
-import { placePrimers } from '@/lib/primer-binding';
+import { placePrimers, bindingTitle } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
@@ -60,7 +60,7 @@ export interface SavedPrimer {
   notes?: string;
 }
 
-type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold';
+type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'primers' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold';
 
 /**
  * The ways of looking at this sequence, in the order they are offered.
@@ -74,6 +74,7 @@ const VIEW_TABS: [LeftTab, string][] = [
   ['sequence', 'Sequence'],
   ['feature', 'Features'],
   ['sites', 'Enzymes'],
+  ['primers', 'Primers'],
   ['orfs', 'ORFs'],
   ['translate', 'Translation'],
 ];
@@ -284,7 +285,6 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   // Sidebar collapse state. The Add Elements, Analysis and Import sections
   // are gone — their contents were duplicates of menu commands — so the flags
   // that opened them went with them.
-  const [libraryOpen, setLibraryOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [digestOpen, setDigestOpen] = useState(false);
 
@@ -307,8 +307,6 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   // Feature visibility & selection
   const [hiddenFeatures, setHiddenFeatures] = useState<Set<string>>(new Set());
   const [selectedFeature, setSelectedFeature] = useState<SequenceFeature | null>(null);
-  const [featuresOpen, setFeaturesOpen] = useState(true);
-  const [primersOpen, setPrimersOpen] = useState(true);
 
   // Modals
   const [showAddFeatureModal, setShowAddFeatureModal] = useState(false);
@@ -1169,7 +1167,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                     </thead>
                     <tbody>
                       {features.map((f, i) => (
-                        <tr key={f.id} style={{ borderBottom: i < features.length - 1 ? '1px solid var(--glass-border)' : 'none', background: i % 2 === 0 ? 'white' : 'var(--bg-secondary)' }}>
+                        <tr key={f.id} style={{ opacity: hiddenFeatures.has(f.id) ? 0.45 : 1, borderBottom: i < features.length - 1 ? '1px solid var(--glass-border)' : 'none', background: i % 2 === 0 ? 'white' : 'var(--bg-secondary)' }}>
                           <td style={{ padding: '0.45rem 0.75rem' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                               <span style={{ width: 10, height: 10, borderRadius: '2px', background: f.color, flexShrink: 0 }} />
@@ -1185,6 +1183,24 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                           <td style={{ padding: '0.45rem 0.75rem', color: 'var(--text-muted)' }}>{f.strand === 1 ? '+ (fwd)' : '− (rev)'}</td>
                           <td style={{ padding: '0.45rem 0.75rem' }}>
                             <div style={{ display: 'flex', gap: '0.3rem' }}>
+                              {/*
+                                Moved here from the sidebar accordion, which was
+                                the only place a feature could be hidden from the
+                                map — a control worth having next to the feature
+                                it acts on rather than in a separate list of the
+                                same features.
+                              */}
+                              <button
+                                onClick={() => setHiddenFeatures(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
+                                  return next;
+                                })}
+                                title={hiddenFeatures.has(f.id) ? 'Show on the map' : 'Hide from the map'}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: hiddenFeatures.has(f.id) ? 'var(--accent-blue)' : 'var(--text-muted)' }}
+                              >
+                                {hiddenFeatures.has(f.id) ? <EyeOff size={13} /> : <Eye size={13} />}
+                              </button>
                               <button onClick={() => { setSelection({ start: f.start, end: f.end }); setSelectedFeature(f); setLeftTab('map'); }} title="View on map" style={{ background: 'none', border: '1px solid var(--glass-border)', borderRadius: '4px', cursor: 'pointer', padding: '0.15rem 0.4rem', fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'inherit' }}>Map</button>
                               <button onClick={() => { setFeatures(prev => prev.filter(x => x.id !== f.id)); if (selectedFeature?.id === f.id) setSelectedFeature(null); setDirty(true); }} title="Delete" style={{ background: 'none', border: '1px solid #fecaca', borderRadius: '4px', cursor: 'pointer', padding: '0.15rem 0.4rem', fontSize: '0.72rem', color: '#dc2626', fontFamily: 'inherit' }}>✕</button>
                             </div>
@@ -1195,11 +1211,105 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   </table>
                 </div>
               )}
+              {/*
+                The parts library, moved out of a sidebar drawer. Adding a
+                known feature is something you do while looking at the
+                features you have, not in a panel three sections away from
+                them.
+              */}
+              <details style={{ marginTop: '1.1rem' }}>
+                <summary style={{ cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Add from the parts library
+                </summary>
+                <div style={{ marginTop: '0.6rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {LIBRARY_FEATURES.map(item => (
+                <div key={item.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.35rem 0.5rem', borderRadius: '5px', background: 'white', border: '1px solid var(--glass-border)' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: '0.76rem', fontWeight: 500 }}>{item.name}</span>
+                  <span style={{ fontSize: '0.62rem', color: item.color, background: item.color + '18', padding: '0.1rem 0.3rem', borderRadius: '3px' }}>{item.type}</span>
+                  <button
+                    onClick={() => addLibraryFeature(item)}
+                    style={{ background: 'none', border: '1px solid var(--glass-border)', borderRadius: '3px', cursor: 'pointer', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: 'var(--text-muted)', flexShrink: 0 }}
+                  >+</button>
+                </div>
+              ))}
+            </div>
+                </div>
+              </details>
+
               {dirty && (
                 <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end' }}>
                   <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }} onClick={handleSave} disabled={saving}>
                     {saving ? 'Saving…' : <><Save size={14} /> Save changes</>}
                   </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {leftTab === 'primers' && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700 }}>Primers ({primers.length})</div>
+                <button onClick={openAddPrimer} className="btn btn-secondary" style={{ fontSize: '0.78rem' }}>
+                  <Plus size={12} /> Add primer
+                </button>
+              </div>
+
+              {primers.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', border: '1px dashed var(--glass-border)', borderRadius: 8 }}>
+                  No primers yet. Select a region on the Sequence view, or use Primers &rarr; Add primer.
+                </div>
+              ) : (
+                <div style={{ border: '1px solid var(--glass-border)', borderRadius: 8, overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                        {['Name', 'Anneals at', 'Length', 'Tm', 'GC', ''].map(h => (
+                          <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'Name' || h === 'Anneals at' ? 'left' : 'right', fontWeight: 600, fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {primers.map((pr, i) => {
+                        // Where it actually sits, from the same locator the maps use.
+                        const sites = placedPrimers.filter(x => x.id === pr.id);
+                        return (
+                          <tr key={pr.id} style={{ borderBottom: i < primers.length - 1 ? '1px solid var(--glass-border)' : 'none' }}>
+                            <td style={{ padding: '0.45rem 0.75rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: pr.direction === 'forward' ? '#3b82f6' : '#f97316' }} />
+                                <span style={{ fontWeight: 600 }}>{pr.name}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: '0.45rem 0.75rem', fontFamily: 'monospace', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                              {sites.length === 0
+                                ? <span style={{ color: '#a3560a' }} title="Its 3′ end does not anneal anywhere on this sequence">nowhere on this sequence</span>
+                                : sites.map(x => (
+                                    <span key={`${x.start}`} title={bindingTitle(x)} style={{ marginRight: '0.5rem', cursor: 'help' }}>
+                                      {(x.start + 1).toLocaleString()}&ndash;{(x.end + 1).toLocaleString()}
+                                      {x.tailLength > 0 && <span style={{ color: 'var(--text-muted)' }}> (+{x.tailLength} nt tail)</span>}
+                                      {x.directionMismatch && <span style={{ color: '#b91c1c' }}> &#9888;</span>}
+                                    </span>
+                                  ))}
+                              {sites.length > 1 && <span style={{ color: '#a3560a' }}>{sites.length} sites</span>}
+                            </td>
+                            <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>{pr.sequence.length} nt</td>
+                            <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{pr.tm}&deg;C</td>
+                            <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{pr.gcContent}%</td>
+                            <td style={{ padding: '0.45rem 0.75rem' }}>
+                              <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
+                                <button onClick={() => navigator.clipboard.writeText(pr.sequence)} title="Copy sequence" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><Copy size={13} /></button>
+                                <button onClick={() => openEditPrimer(pr)} title="Edit" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><Pencil size={13} /></button>
+                                <button onClick={() => handleDeletePrimer(pr.id)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 2 }}><Trash2 size={13} /></button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
@@ -1353,96 +1463,10 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           {/* 2. Analysis Tools */}
 
           {/* 3. Feature Library */}
-          <SidebarSection title={<><Library size={14} /> Library</>} open={libraryOpen} onToggle={() => setLibraryOpen(o => !o)}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              {LIBRARY_FEATURES.map(item => (
-                <div key={item.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.35rem 0.5rem', borderRadius: '5px', background: 'white', border: '1px solid var(--glass-border)' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
-                  <span style={{ flex: 1, fontSize: '0.76rem', fontWeight: 500 }}>{item.name}</span>
-                  <span style={{ fontSize: '0.62rem', color: item.color, background: item.color + '18', padding: '0.1rem 0.3rem', borderRadius: '3px' }}>{item.type}</span>
-                  <button
-                    onClick={() => addLibraryFeature(item)}
-                    style={{ background: 'none', border: '1px solid var(--glass-border)', borderRadius: '3px', cursor: 'pointer', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: 'var(--text-muted)', flexShrink: 0 }}
-                  >+</button>
-                </div>
-              ))}
-            </div>
-          </SidebarSection>
 
           {/* 4. Features visibility */}
-          <SidebarSection title={<><Tag size={14} /> Features</>} open={featuresOpen} onToggle={() => setFeaturesOpen(o => !o)}>
-            {features.length === 0 ? (
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No features added yet.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                {features.map(f => {
-                  const hidden = hiddenFeatures.has(f.id);
-                  return (
-                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.4rem', borderRadius: '5px', background: 'white', border: '1px solid var(--glass-border)', opacity: hidden ? 0.45 : 1, transition: 'opacity 0.15s' }}>
-                      <span style={{ width: 9, height: 9, borderRadius: '2px', background: f.color, flexShrink: 0 }} />
-                      <span style={{ flex: 1, fontSize: '0.74rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                      <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontFamily: 'monospace', flexShrink: 0 }}>{f.end - f.start + 1}bp</span>
-                      <button
-                        onClick={() => setHiddenFeatures(prev => {
-                          const next = new Set(prev);
-                          if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
-                          return next;
-                        })}
-                        title={hidden ? 'Show' : 'Hide'}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.82rem', color: hidden ? 'var(--text-muted)' : f.color, flexShrink: 0 }}
-                      >{hidden ? <EyeOff size={12} /> : <Eye size={12} />}</button>
-                      <button
-                        onClick={() => { setFeatures(prev => prev.filter(x => x.id !== f.id)); if (selectedFeature?.id === f.id) setSelectedFeature(null); }}
-                        title="Delete"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.78rem', color: '#dc2626', flexShrink: 0 }}
-                      >✕</button>
-                    </div>
-                  );
-                })}
-                {hiddenFeatures.size > 0 && (
-                  <button onClick={() => setHiddenFeatures(new Set())} style={{ marginTop: '0.25rem', padding: '0.25rem', borderRadius: '4px', border: '1px solid var(--glass-border)', background: 'none', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'inherit' }}>
-                    Show all ({hiddenFeatures.size} hidden)
-                  </button>
-                )}
-              </div>
-            )}
-          </SidebarSection>
 
           {/* 5. Primers */}
-          <SidebarSection title={<><Dna size={14} /> Primers ({primers.length})</>} open={primersOpen} onToggle={() => setPrimersOpen(o => !o)}>
-            {primers.length === 0 ? (
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No primers yet. Select a region on the Sequence tab and click &ldquo;Make Primer&rdquo;.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                {primers.map(p => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.5rem', borderRadius: '5px', background: 'white', border: '1px solid var(--glass-border)' }}>
-                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.direction === 'forward' ? '#3b82f6' : '#a855f7', flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '0.74rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                      <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                        Tm {p.tm}°C · GC {p.gcContent}% · {p.sequence.length}nt
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(p.sequence)}
-                      title="Copy sequence"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.75rem', color: '#64748b', flexShrink: 0 }}
-                    ><Copy size={12} /></button>
-                    <button
-                      onClick={() => openEditPrimer(p)}
-                      title="Edit"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.75rem', color: '#3b82f6', flexShrink: 0 }}
-                    ><Pencil size={12} /></button>
-                    <button
-                      onClick={() => handleDeletePrimer(p.id)}
-                      title="Delete"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.78rem', color: '#dc2626', flexShrink: 0 }}
-                    >✕</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </SidebarSection>
 
           {/* 6. Statistics */}
           <SidebarSection title={<><BarChart3 size={14} /> Statistics</>} open={statsOpen} onToggle={() => setStatsOpen(o => !o)}>
