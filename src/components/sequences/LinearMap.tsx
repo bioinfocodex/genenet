@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { SequenceFeature } from '../SequenceViewer';
+
+import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
 
 export interface ReSite {
   enzyme: string;
@@ -15,6 +17,8 @@ interface LinearMapProps {
   sequence: string;
   features: SequenceFeature[];
   reSites: ReSite[];
+  /** How to choose which sites are worth drawing. Defaults are SnapGene's. */
+  enzymeDisplay?: ChooseOptions;
   isCircular: boolean;
   selection?: { start: number; end: number } | null;
   onSelect?: (s: { start: number; end: number }) => void;
@@ -34,7 +38,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
   return map;
 }
 
-export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick }: LinearMapProps) {
+export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay }: LinearMapProps) {
   const len = sequence.length;
   const W = 800;
   const padL = 20; const padR = 40;
@@ -79,6 +83,11 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
     setDragStart(null); setDragEnd(null);
   };
 
+  const mapSites = useMemo(
+    () => chooseMapEnzymes(reSites, countCuts(reSites), enzymeDisplay),
+    [reSites, enzymeDisplay],
+  );
+
   const reSitesByEnzyme = new Map<string, ReSite[]>();
   reSites.forEach(s => {
     if (!reSitesByEnzyme.has(s.enzyme)) reSitesByEnzyme.set(s.enzyme, []);
@@ -109,26 +118,44 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
           })}
 
           {/* RE sites */}
-          {reSites.map((s, i) => {
-            const x = toX(s.cutPos);
-            const isUnique = (reSitesByEnzyme.get(s.enzyme)?.length ?? 0) === 1;
-            return (
-              <g key={i}
-                onMouseEnter={() => setHoveredRE({ name: s.enzyme, pos: s.cutPos, overhang: s.overhang, overhangType: s.overhangType, x })}
-                onMouseLeave={() => setHoveredRE(null)}
-                style={{ cursor: 'pointer' }}
-              >
-                {/* Cut line */}
-                <line x1={x} y1={fwdY - 4} x2={x} y2={revY + 4} stroke={s.color} strokeWidth={isUnique ? 2 : 1} opacity={isUnique ? 1 : 0.4} />
-                <line x1={x} y1={fwdY - 4} x2={x} y2={reAreaH - (i % 3) * 10 - 2} stroke={s.color} strokeWidth={1} opacity={isUnique ? 0.6 : 0.2} strokeDasharray="2,2" />
-                {isUnique && (
-                  <text x={x} y={reAreaH - (i % 3) * 10 - 6} textAnchor="middle" fontSize={9} fill={s.color} fontWeight="700" fontFamily="monospace">
-                    {s.enzyme}
+          {(() => {
+            /*
+             * The same selection the circular map uses, for the same reason: a
+             * 450-enzyme scan produces thousands of cuts, and drawing a line
+             * for each one is both unreadable and thousands of SVG nodes.
+             *
+             * Labels are then stacked into rows by actual width. Staggering
+             * them by index modulo three, as this did, spreads them evenly
+             * whether or not they collide — so it separates labels that were
+             * never going to touch and leaves touching ones on the same row.
+             */
+            const rows: number[] = [];       // right-hand edge used so far, per row
+            return mapSites.map((s, i) => {
+              const x = toX(s.cutPos);
+              const label = siteLabel(s);
+              const halfWidth = label.length * 2.8 + 4;
+
+              let row = rows.findIndex(edge => x - halfWidth > edge);
+              if (row === -1) { row = rows.length; rows.push(0); }
+              rows[row] = x + halfWidth;
+
+              const labelY = reAreaH - row * 11 - 6;
+              return (
+                <g key={`${s.enzyme}-${i}`}
+                  onMouseEnter={() => setHoveredRE({ name: s.enzyme, pos: s.cutPos, overhang: '', overhangType: '', x })}
+                  onMouseLeave={() => setHoveredRE(null)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <title>{siteTitle(s)}</title>
+                  <line x1={x} y1={fwdY - 4} x2={x} y2={revY + 4} stroke={s.color} strokeWidth={2} />
+                  <line x1={x} y1={fwdY - 4} x2={x} y2={labelY + 3} stroke={s.color} strokeWidth={1} opacity={0.55} strokeDasharray="2,2" />
+                  <text x={x} y={labelY} textAnchor="middle" fontSize={9} fill={s.color} fontWeight="700" fontFamily="monospace">
+                    {label}
                   </text>
-                )}
-              </g>
-            );
-          })}
+                </g>
+              );
+            });
+          })()}
 
           {/* Hover tooltip for RE */}
           {hoveredRE && (() => {

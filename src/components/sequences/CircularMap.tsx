@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import type { SequenceFeature } from '../SequenceViewer';
 import type { ReSite } from './LinearMap'; // reused type
+import { chooseMapEnzymes, countCuts, siteLabel, siteTitle, type ChooseOptions } from '@/lib/map-enzymes';
 
 interface CircularMapProps {
   sequence: string;
@@ -11,6 +12,8 @@ interface CircularMapProps {
   onFeatureClick?: (f: SequenceFeature) => void;
   name?: string;
   onAddFeature?: (sel: { start: number; end: number }) => void;
+  /** How to choose which sites are worth drawing. Defaults are SnapGene's. */
+  enzymeDisplay?: ChooseOptions;
 }
 
 // Fixed layout. Outside the component because none of it varies per render.
@@ -21,11 +24,19 @@ const R_IN = 210;
 const R_BB = (R_OUT + R_IN) / 2;
 const TRACK_W = 18;
 
-export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature }: CircularMapProps) {
+export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature, enzymeDisplay }: CircularMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const svgRef = useRef<SVGSVGElement>(null);
   const len = sequence.length || 1;
+
+  // Scanning 450 enzymes over a plasmid finds thousands of cuts; almost none
+  // of them belong on a picture. Recomputed only when the sites or the display
+  // rules change, because it walks every hit.
+  const mapSites = useMemo(
+    () => chooseMapEnzymes(reSites, countCuts(reSites), enzymeDisplay),
+    [reSites, enzymeDisplay],
+  );
 
   // Track system to prevent feature collision
   const assignTracks = (feats: SequenceFeature[], direction: 1 | -1) => {
@@ -49,7 +60,16 @@ export default function CircularMap({ sequence, features, reSites, selection, on
   const revTracks = assignTracks(features, -1);
 
   // Depends on how many reverse tracks were needed, so it stays in the body.
-  const R_GC_OUT = R_IN - (revTracks.numTracks * TRACK_W) - 15;
+  /*
+   * The ruler's own ring, inside the innermost reverse-strand feature track.
+   *
+   * It used to sit at R_IN - 12, which is the same radius as the label on a
+   * track-0 reverse feature — so "922" was drawn straight through "AmpR
+   * promoter". Positions and feature names are both worth reading, so they get
+   * separate rings rather than a tie-break.
+   */
+  const R_RULER = R_IN - (revTracks.numTracks * TRACK_W) - 12;
+  const R_GC_OUT = R_RULER - 14;
   const R_GC_IN = R_GC_OUT - 40;
 
   // Stable for a given sequence length, so the GC memo can depend on it.
@@ -247,14 +267,27 @@ export default function CircularMap({ sequence, features, reSites, selection, on
         })()}
 
         {/* Ticks */}
-        {Array.from({ length: 12 }, (_, i) => {
-           const a = (i / 12) * 2 * Math.PI - Math.PI / 2;
-           const pos = Math.round((i / 12) * len);
+        {(() => {
+          /*
+           * Round positions, not twelve equal divisions.
+           *
+           * Dividing the length by twelve labels a 3,686 bp plasmid at 307,
+           * 614, 922 — numbers that mean nothing and are hard to read against.
+           * A step of 250, 500 or 1,000 puts the marks where someone would
+           * look for them, and puts fewer of them on a small plasmid.
+           */
+          const target = 10;
+          const step = [50, 100, 250, 500, 1000, 2000, 5000, 10000, 25000, 50000]
+            .find(x => len / x <= target) ?? Math.ceil(len / target);
+          const count = Math.ceil(len / step);
+          return Array.from({ length: count }, (_, i) => i * step);
+        })().map((pos, i) => {
+           const a = (pos / len) * 2 * Math.PI - Math.PI / 2;
            const cos = Math.cos(a), sin = Math.sin(a);
            return (
              <g key={i}>
                <line x1={CX + R_IN * cos} y1={CY + R_IN * sin} x2={CX + R_OUT * cos} y2={CY + R_OUT * sin} stroke="#9ca3af" strokeWidth={1.5} />
-               <text x={CX + (R_IN - 12) * cos} y={CY + (R_IN - 12) * sin} textAnchor="middle" dominantBaseline="middle" fontSize={9} fill="#6b7280" fontFamily="monospace" fontWeight="600">{pos >= 1000 ? `${(pos / 1000).toFixed(1)}k` : pos}</text>
+               <text x={CX + R_RULER * cos} y={CY + R_RULER * sin} textAnchor="middle" dominantBaseline="middle" fontSize={9} fill="#6b7280" fontFamily="monospace" fontWeight="600">{pos >= 1000 ? `${(pos / 1000).toFixed(1)}k` : pos}</text>
              </g>
            );
         })}
@@ -309,33 +342,62 @@ export default function CircularMap({ sequence, features, reSites, selection, on
           );
         })}
 
-        {/* Unique Restriction Enzymes */}
+        {/* Restriction sites worth drawing */}
         {(() => {
-          // Deconflict logic for RE text
-          const uniqueSites = reSites.filter(s => {
-             return reSites.filter(rs => rs.enzyme === s.enzyme).length === 1;
-          });
-          const labels = uniqueSites.map(s => {
+          /*
+           * Two passes. `chooseMapEnzymes` decides *which* sites belong on a
+           * map — one label per site rather than one per enzyme, six-cutters
+           * and up, unique cutters only. Then the labels are pushed apart
+           * vertically, because deciding what to draw does not stop two sites
+           * a few degrees apart from writing over each other.
+           *
+           * The previous version sorted the labels by Y and then never used
+           * the ordering, so the sort looked like deconfliction and did
+           * nothing: 109 labels landed at 32 positions.
+           */
+          const labels = mapSites.map(s => {
             const a = toAngle(s.cutPos);
-            return { s, a, textY: CY + R_RE_LBL * Math.sin(a) };
+            const cos = Math.cos(a), sin = Math.sin(a);
+            return { s, a, cos, sin, y: CY + R_RE_LBL * sin, side: cos > 0 ? 1 : -1 };
           });
-          // Sort basically by Y to space them out (simplified deconfliction)
-          labels.sort((a, b) => a.textY - b.textY);
+
+          const MIN_GAP = 12;
+          for (const side of [1, -1]) {
+            const column = labels.filter(l => l.side === side).sort((a, b) => a.y - b.y);
+            // Walk down the column pushing each label clear of the one above.
+            for (let i = 1; i < column.length; i++) {
+              const gap = column[i].y - column[i - 1].y;
+              if (gap < MIN_GAP) column[i].y = column[i - 1].y + MIN_GAP;
+            }
+            // Anything shoved past the bottom is pushed back up, so a crowded
+            // column spreads either side of where it started rather than
+            // running off the picture.
+            const overflow = column.length ? column[column.length - 1].y - (SVG - 14) : 0;
+            if (overflow > 0) for (const l of column) l.y -= overflow;
+          }
 
           return labels.map((lbl, i) => {
-            const cos = Math.cos(lbl.a), sin = Math.sin(lbl.a);
+            const { cos, sin } = lbl;
             const lx1 = CX + R_OUT * cos;
             const ly1 = CY + R_OUT * sin;
-            const lx2 = CX + (R_RE_LBL - 20) * cos;
-            const ly2 = CY + (R_RE_LBL - 20) * sin;
+            const elbowX = CX + (R_RE_LBL - 20) * cos;
             const isRight = cos > 0;
             const textX = CX + R_RE_LBL * cos + (isRight ? 10 : -10);
 
             return (
-              <g key={i}>
-                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={lbl.s.color} strokeWidth={1} opacity={0.5} />
-                <line x1={CX + R_IN * cos} y1={CY + R_IN * sin} x2={lx1} y2={ly1} stroke={lbl.s.color} strokeWidth={2} />
-                <text x={textX} y={ly2 + 4} textAnchor={isRight ? 'start' : 'end'} fill={lbl.s.color} fontSize={10} fontWeight="700" fontFamily="monospace">{lbl.s.enzyme}</text>
+              <g key={`${lbl.s.enzyme}-${i}`}>
+                <title>{siteTitle(lbl.s)}</title>
+                {/* Leader from the backbone out to the label's own row. */}
+                <line x1={CX + R_IN * cos} y1={CY + R_IN * sin} x2={lx1} y2={ly1}
+                      stroke={lbl.s.color} strokeWidth={2} />
+                <polyline
+                  points={`${lx1},${ly1} ${elbowX},${lbl.y} ${textX - (isRight ? 4 : -4)},${lbl.y}`}
+                  fill="none" stroke={lbl.s.color} strokeWidth={1} opacity={0.45}
+                />
+                <text x={textX} y={lbl.y + 3} textAnchor={isRight ? 'start' : 'end'}
+                      fill={lbl.s.color} fontSize={10} fontWeight="700" fontFamily="monospace">
+                  {siteLabel(lbl.s)}
+                </text>
               </g>
             );
           });
