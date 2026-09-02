@@ -18,12 +18,12 @@ import {
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import { annotate } from '@/lib/annotation';
-import { blockedSites, type BlockedSite } from '@/lib/methylation';
+import { dormantEnzymes, blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
 import { colourFor } from '@/lib/features';
-import { findHost, findStrain, strainSummary } from '@/lib/hosts';
+import { findHost, findStrain, strainSummary, carriesMethylation } from '@/lib/hosts';
 import { placePrimers, bindingTitle } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
@@ -1640,7 +1640,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
           {leftTab === 'sites' && (
             <div>
-              <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} picked={pickedEnzymes} onPicked={setPickedEnzymes} />
+              <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} picked={pickedEnzymes} onPicked={setPickedEnzymes} strain={strain} />
 
               {/*
                 The quick digest, moved here from a sidebar accordion called
@@ -2382,7 +2382,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
 // ─── RE Sites Panel ──────────────────────────────────────────────────────────
 
 function RESitesPanel({
-  reSitesByEnzyme, sequence, circular, setName, onSetName, picked, onPicked,
+  reSitesByEnzyme, sequence, circular, setName, onSetName, picked, onPicked, strain,
 }: {
   reSitesByEnzyme: Map<string, ReSite[]>;
   sequence: string;
@@ -2393,6 +2393,8 @@ function RESitesPanel({
   /** Also shared: this table is the natural place to pick from. */
   picked: Set<string>;
   onPicked: (next: Set<string>) => void;
+  /** What it was grown in, which decides whether the prep is methylated. */
+  strain?: string | null;
 }) {
   const [showAll, setShowAll] = useState(false);
 
@@ -2412,12 +2414,42 @@ function RESitesPanel({
   );
   const uniqueCutters = useMemo(() => entries.filter(([, s]) => s.length === 1), [entries]);
 
-  // Which of these sites carry a methyl group that stops the enzyme binding.
-  // Only enzymes that have sites here can be blocked at one.
+  /*
+   * Which of these sites carry a methyl group that stops the enzyme binding.
+   *
+   * What the DNA actually carries depends on what it was grown in, which the
+   * record now knows. This panel used to warn about Dam blocking on every
+   * plasmid regardless -- including one deliberately prepped in JM110 to
+   * avoid exactly that, where the warning was not merely unhelpful but the
+   * opposite of the truth.
+   */
+  const present = useMemo(() => ({
+    dam: carriesMethylation(strain, 'dam'),
+    dcm: carriesMethylation(strain, 'dcm'),
+  }), [strain]);
+
+  const names = useMemo(() => entries.map(([n]) => n), [entries]);
+
   const blocked = useMemo(
-    () => blockedSites(sequence, entries.map(([n]) => n), { circular }),
-    [sequence, circular, entries],
+    () => blockedSites(sequence, names, { circular, present }),
+    [sequence, circular, names, present],
   );
+
+  /*
+   * What would have been blocked in an ordinary strain. Only used to say how
+   * much the choice of strain bought, which is worth stating: "prepped in
+   * JM110" and "four sites that Dam would have blocked are clear" are the
+   * same fact, and only the second one answers the question being asked.
+   */
+  const wouldBlock = useMemo(
+    () => (present.dam && present.dcm ? [] : blockedSites(sequence, names, { circular })),
+    [sequence, circular, names, present],
+  );
+
+  /** The opposite problem: enzymes that need the methylation this prep lacks. */
+  const dormant = useMemo(() => dormantEnzymes(names, present), [names, present]);
+
+  const strainInfo = findStrain(strain);
 
   const inSet = useMemo(() => {
     if (setName === 'all') return null;
@@ -2471,16 +2503,59 @@ function RESitesPanel({
           const relevant = blocked.filter(b => shown.has(b.enzyme));
           const known = relevant.filter(b => b.known);
           const unsure = relevant.filter(b => !b.known);
-          if (relevant.length === 0) return null;
+          /*
+           * Not filtered to the visible rows, unlike the rest of this panel.
+           * DpnI cuts GATC every few hundred bases, so it is never a unique
+           * cutter and never on screen -- and "DpnI will not cut" is a fact
+           * about a method someone is about to run, not about a table row
+           * they happen to be looking at.
+           */
+          const dormantShown = dormant;
+          const clearedShown = wouldBlock.filter(b => shown.has(b.enzyme) && b.known);
+          const cleared = new Set(clearedShown.map(b => b.enzyme));
+          if (relevant.length === 0 && dormantShown.length === 0 && cleared.size === 0) return null;
           return (
             <div style={{
               padding: '0.75rem 1rem', marginBottom: '0.9rem', borderRadius: 7,
-              background: known.length ? 'rgba(217,119,6,0.06)' : 'var(--bg-primary)',
-              border: `1px solid ${known.length ? 'rgba(217,119,6,0.25)' : 'var(--glass-border)'}`,
+              background: known.length || dormantShown.length ? 'rgba(217,119,6,0.06)' : 'var(--bg-primary)',
+              border: `1px solid ${known.length || dormantShown.length ? 'rgba(217,119,6,0.25)' : 'var(--glass-border)'}`,
             }}>
               <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: known.length ? '#a3560a' : 'var(--text-muted)', marginBottom: '0.4rem' }}>
                 Methylation
+                {strainInfo && (
+                  <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: 'var(--text-muted)' }}>
+                    {' · '}from {strainSummary(strain)}
+                  </span>
+                )}
               </div>
+
+              {/*
+                * What the strain bought, said as a result rather than left for
+                * the reader to infer from an absence of warnings. An empty
+                * panel cannot tell you whether the prep is clean or whether
+                * nothing was checked.
+                */}
+              {cleared.size > 0 && (
+                <p style={{ fontSize: '0.79rem', color: 'var(--accent-green)', margin: '0 0 0.5rem', lineHeight: 1.5 }}>
+                  <strong>{cleared.size} enzyme{cleared.size === 1 ? '' : 's'} clear.</strong>{' '}
+                  {[...cleared].slice(0, 6).join(', ')}{cleared.size > 6 ? '…' : ''}{' '}
+                  would be blocked in an ordinary strain; this prep carries no{' '}
+                  {[!present.dam && 'Dam', !present.dcm && 'Dcm'].filter(Boolean).join(' or ')} methylation.
+                </p>
+              )}
+
+              {/*
+                * And the cost of it. Reaching for a dam- strain to rescue an
+                * XbaI digest is also how a DpnI template cleanup silently
+                * stops working, which is a worse afternoon than the first one.
+                */}
+              {dormantShown.length > 0 && (
+                <ul style={{ margin: '0 0 0.5rem', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {dormantShown.map((d, i) => (
+                    <li key={i} style={{ fontSize: '0.79rem', lineHeight: 1.5, color: '#b91c1c' }}>{d.message}</li>
+                  ))}
+                </ul>
+              )}
               {known.length > 0 && (
                 <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                   {known.slice(0, 6).map((b, i) => (
