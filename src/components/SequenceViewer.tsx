@@ -23,6 +23,7 @@ import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
 import { colourFor } from '@/lib/features';
+import { findHost, findStrain, strainSummary } from '@/lib/hosts';
 import { placePrimers, bindingTitle } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
@@ -119,6 +120,9 @@ interface Props {
   sequence: string;
   size: number;
   seqType: string;
+  /** Ids from lib/hosts.ts. Null on records made before the fields existed. */
+  host?: string | null;
+  strain?: string | null;
   initialFeatures: SequenceFeature[];
   initialPrimers?: SavedPrimer[];
   /**
@@ -189,7 +193,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, initialFeatures, initialPrimers = [], library }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -1010,6 +1014,18 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         <Pill label="Type" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
         <Pill label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
         <Pill label="Features" value={`${features.length}`} />
+        {/*
+          * Only when recorded. A pill reading "Host: —" on every older record
+          * is a column of nothing pretending to be data.
+          */}
+        {findHost(host) && (
+          <Pill label="Host" value={findHost(host)!.organism.name} />
+        )}
+        {findStrain(strain) && (
+          <span title={[findStrain(strain)!.strain.genotype, findStrain(strain)!.strain.use].filter(Boolean).join('\n')}>
+            <Pill label="Strain" value={strainSummary(strain)!} />
+          </span>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {dirty && (
             <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }} onClick={handleSave} disabled={saving}>

@@ -92,6 +92,8 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         sequence={seq.sequence}
         size={seq.size}
         seqType={seq.type}
+        host={seq.host}
+        strain={seq.strain}
         initialFeatures={normaliseFeatures(seq.features)}
         library={library}
         initialPrimers={seq.primers.map(p => ({

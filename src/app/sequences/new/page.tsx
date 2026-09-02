@@ -3,6 +3,7 @@ import { useState, useTransition, useRef } from 'react';
 import { createSequence, importSequence } from '@/app/actions/sequences';
 import Link from 'next/link';
 import { Upload, FileText } from 'lucide-react';
+import { LAB_HOSTS, TRANSFORMATION_STRAINS } from '@/lib/hosts';
 
 type Mode = 'manual' | 'fasta' | 'genbank' | 'file';
 
@@ -124,6 +125,61 @@ export default function NewSequencePage() {
             </div>
             <textarea name="sequence" required value={sequenceInput} onChange={e => setSequenceInput(e.target.value)} className="input-control" rows={8} placeholder="Paste DNA sequence here (ACGT, IUPAC codes, spaces/numbers ignored)" style={{ fontFamily: 'monospace', fontSize: '0.85rem', resize: 'vertical', lineHeight: 1.6 }} />
           </div>
+
+          {/*
+            * Host and strain, on a plasmid.
+            *
+            * A gene record is a sequence; a plasmid is a thing someone grew,
+            * and the two questions that decide what happens to it next are
+            * where it is meant to work and what it came out of. Both are
+            * chosen from lib/hosts.ts rather than typed, because the strain
+            * answer feeds the digest warnings -- DNA from a Dam+ strain is
+            * why an XbaI digest fails, and that is worth knowing from the
+            * record rather than from an afternoon.
+            */}
+          {type === 'plasmid' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                  Laboratory host <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span>
+                </label>
+                <select name="host" defaultValue="" className="input-control">
+                  <option value="">Not recorded</option>
+                  {LAB_HOSTS.map(g => (
+                    <optgroup key={g.id} label={g.label}>
+                      {g.organisms.map(o => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}{o.latin ? ` (${o.latin})` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Where the construct is meant to work.</span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                  Transformation strain <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span>
+                </label>
+                <select name="strain" defaultValue="" className="input-control">
+                  <option value="">Not recorded</option>
+                  {TRANSFORMATION_STRAINS.map(g => (
+                    <optgroup key={g.id} label={g.subLabel ? `${g.label} · ${g.subLabel}` : g.label}>
+                      {g.strains.map(st => (
+                        <option key={st.id} value={st.id}>
+                          {st.name}{st.genotype ? ` — ${st.genotype}` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                  What it was grown in. Decides whether the prep carries Dam and Dcm marks.
+                </span>
+              </div>
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>Tags <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>

@@ -13,6 +13,7 @@ import { isSnapGene, parseSnapGene } from '@/lib/snapgene';
 import { isAb1, parseAb1 } from '@/lib/formats/ab1';
 import { identifyUnsupported } from '@/lib/formats/proprietary';
 import { fetchAccession } from '@/lib/accession';
+import { findHost, findStrain } from '@/lib/hosts';
 
 export async function createSequence(data: FormData) {
   const name = (data.get('name') as string).trim();
@@ -20,6 +21,13 @@ export async function createSequence(data: FormData) {
   const description = (data.get('description') as string | null)?.trim() || null;
   const rawSeq = data.get('sequence') as string;
   const tags = (data.get('tags') as string | null)?.trim() || null;
+  /*
+   * Ids, not labels. Validated against the taxonomy rather than trusted, so a
+   * hand-posted form cannot put free text in a column the digest planner is
+   * going to read as a genotype.
+   */
+  const host = findHost(data.get('host') as string | null) ? (data.get('host') as string) : null;
+  const strain = findStrain(data.get('strain') as string | null) ? (data.get('strain') as string) : null;
 
   // Normalize: uppercase, strip whitespace/numbers
   const sequence = rawSeq.toUpperCase().replace(/[^ACGTRYMKSWHBVDN]/g, '');
@@ -27,7 +35,7 @@ export async function createSequence(data: FormData) {
   if (sequence.length === 0) throw new Error('Sequence must contain valid nucleotides.');
 
   await prisma.geneSequence.create({
-    data: { name, type, description, sequence, size: sequence.length, tags },
+    data: { name, type, description, sequence, size: sequence.length, tags, host, strain },
   });
 
   revalidatePath('/sequences');
