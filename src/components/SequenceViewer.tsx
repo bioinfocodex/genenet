@@ -929,7 +929,13 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
       {/* ── Menu bar ── */}
       <div
-        style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.35rem', position: 'relative', zIndex: 200 }}
+        /*
+         * Wrapping, because seven menus and the sequence name do not fit a
+         * narrow window on one line -- and not wrapping does not make them
+         * fit, it just pushes the name past the right edge and gives the
+         * whole page a horizontal scrollbar to reach it.
+         */
+        style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.35rem', position: 'relative', zIndex: 200, flexWrap: 'wrap' }}
         onMouseLeave={() => setOpenMenu(null)}
       >
         {Object.entries(menuItems).map(([menuName, items]) => (
@@ -962,8 +968,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             )}
           </div>
         ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', paddingBottom: '0.1rem' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', alignSelf: 'center', fontFamily: 'monospace', background: 'var(--bg-secondary)', padding: '0.15rem 0.5rem', borderRadius: '4px', border: '1px solid var(--glass-border)' }}>{seqName}</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', paddingBottom: '0.1rem', minWidth: 0 }}>
+          {/*
+            * Truncated rather than pushing. Wrapping alone fixes the seven
+            * short menus; a long construct name is wider than the window on
+            * its own and would still push past the edge. The full name stays
+            * available on hover, which is what a title is for.
+            */}
+          <span
+            title={seqName}
+            style={{ fontSize: '0.75rem', color: 'var(--text-muted)', alignSelf: 'center', fontFamily: 'monospace', background: 'var(--bg-secondary)', padding: '0.15rem 0.5rem', borderRadius: '4px', border: '1px solid var(--glass-border)', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {seqName}
+          </span>
         </div>
       </div>
 
