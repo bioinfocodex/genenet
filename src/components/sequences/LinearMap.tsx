@@ -35,6 +35,8 @@ interface LinearMapProps {
 }
 
 const PAD_L = 20, PAD_R = 40;
+/** Only a floor for a pane too narrow to be worth fitting to at all. */
+const MIN_BOX_W = 240;
 const MIN_ZOOM = 1;
 /** Nothing is learned past about fourteen pixels a base, and a drawing wider
  *  than this stops being something a browser lays out quickly. */
@@ -69,29 +71,53 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
    * coordinate system: one SVG unit is one pixel at every zoom level.
    */
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [boxW, setBoxW] = useState(800);
+  /** 0 until measured. Nothing is drawn at a width nobody has measured. */
+  const [boxW, setBoxW] = useState(0);
   const [zoom, setZoom] = useState(1);
 
-  useEffect(() => {
+  /*
+   * The drawing is exactly as wide as the pane, so at zoom 1 there is nothing
+   * to scroll sideways to.
+   *
+   * Three things were stopping that. There was a 600px floor, so any pane
+   * narrower than that got a drawing wider than itself. The initial width was
+   * a guessed 800, which is what the first paint used whatever the pane
+   * actually was. And the measurement came from `contentRect`, which does not
+   * discount a scrollbar -- so once one appeared it kept the width that had
+   * caused it.
+   *
+   * clientWidth does discount it, which makes this settle rather than
+   * oscillate: at zoom 1 the content exactly fits, the scrollbar goes, the
+   * pane measures ~15px wider, and the next pass fills it. The floor is now
+   * low enough to be a genuine last resort -- below it a phone would get a
+   * drawing it has to scroll, which is better than one squeezed past reading.
+   */
+  useLayoutEffect(() => {
     const el = wrapRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(([entry]) => {
-      // A minimum, because below about 600px the ruler and the enzyme labels
-      // stop being legible and a scrollbar is the better answer.
-      setBoxW(Math.max(600, Math.round(entry.contentRect.width)));
-    });
+    if (!el) return;
+    const measure = () => setBoxW(Math.max(MIN_BOX_W, Math.round(el.clientWidth)));
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  /*
+   * The floor also stands in for "not measured yet". The layout effect above
+   * runs before the browser paints, so this value is never seen -- it only
+   * has to keep the first render's arithmetic from going negative.
+   */
+  const box = boxW || MIN_BOX_W;
 
   /*
    * How far in it is worth going. Both limits matter: a short sequence hits
    * the pixels-per-base ceiling long before the width one, and a chromosome
    * hits the width ceiling while still showing a hundred bases to the pixel.
    */
-  const maxZoom = Math.max(2, Math.min(MAX_DRAWING_PX / boxW, (MAX_PX_PER_BASE * len) / boxW));
+  const maxZoom = Math.max(2, Math.min(MAX_DRAWING_PX / box, (MAX_PX_PER_BASE * len) / box));
 
-  const W = boxW * zoom;
+  const W = box * zoom;
   const mapW = W - PAD_L - PAD_R;
   const toX = useCallback((pos: number) => PAD_L + (pos / len) * mapW, [len, mapW]);
   const toBp = (x: number) => Math.max(1, Math.min(len, Math.round(((x - PAD_L) / mapW) * len)));
@@ -107,7 +133,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
     anchor.current = null;
     const el = wrapRef.current;
     if (!a || !el) return;
-    const xAtNewZoom = PAD_L + (a.bp / len) * (boxW * zoom - PAD_L - PAD_R);
+    const xAtNewZoom = PAD_L + (a.bp / len) * (box * zoom - PAD_L - PAD_R);
     el.scrollLeft = xAtNewZoom - a.offset;
   }, [zoom, boxW, len]);
 
@@ -136,7 +162,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const offset = e.clientX - rect.left;
-      const bp = ((el.scrollLeft + offset - PAD_L) / (boxW * zoom - PAD_L - PAD_R)) * len;
+      const bp = ((el.scrollLeft + offset - PAD_L) / (box * zoom - PAD_L - PAD_R)) * len;
       zoomBy(Math.exp(-e.deltaY * 0.003), { bp: Math.max(0, Math.min(len, bp)), offset });
     };
     el.addEventListener('wheel', onWheel, { passive: false });

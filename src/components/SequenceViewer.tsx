@@ -1014,11 +1014,20 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         );
       })()}
 
-      {/* ── Two-column layout ── */}
-      <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
+      {/*
+        * ── Two-column layout ──
+        *
+        * The sidebar is a fixed 272px that does not shrink, so on a narrow
+        * window it took its width off the top and left the map with 310px of
+        * a 700px window -- narrow enough that the drawing had to scroll
+        * sideways whatever floor it was given. Below the point where both fit,
+        * the tools wrap underneath and the work gets the whole width, which is
+        * the right way round.
+        */}
+      <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
         {/* ── Left column ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: '1 1 420px', minWidth: 'min(420px, 100%)' }}>
 
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--glass-border)', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'stretch' }}>
