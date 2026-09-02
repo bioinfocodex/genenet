@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import {
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
   FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2,
+  PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
@@ -244,6 +245,17 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    */
   const [pickedEnzymes, setPickedEnzymes] = useState<Set<string>>(new Set());
 
+  /*
+   * The tool sidebar folds away.
+   *
+   * It is 272px of fixed width, which on a laptop is a third of the room the
+   * sequence has to work with -- and the sequence is the thing being read. It
+   * fits its own line length to whatever width it is given, so those 272px are
+   * directly bases per line. Folded rather than removed: the tools are still
+   * one click away, which is the difference between a panel and a decision.
+   */
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   const enzymeSetNames = useMemo(() => {
     if (enzymeSet === 'all') return null;
     const set = STARTER_SETS.find(x => x.name === enzymeSet);
@@ -445,7 +457,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       // The gutter carries the position numbers; the rest is monospace bases.
       const usable = el.clientWidth - 90;
       const probe = document.createElement('span');
-      probe.style.cssText = 'position:absolute;visibility:hidden;font-family:var(--font-mono);font-size:13px';
+      /*
+       * The probe has to be the font the sequence is actually set in. It was
+       * 13px against the sequence's 14px, so every character measured about
+       * 8% narrow and the fit came out too generous.
+       */
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-family:var(--seq-font,var(--font-mono));font-size:14px';
       probe.textContent = 'A'.repeat(100);
       el.appendChild(probe);
       const chWidth = probe.getBoundingClientRect().width / 100;
@@ -458,7 +475,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     };
     measure();
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    /*
+     * The pane changes width without the window doing anything -- folding the
+     * tool sidebar is the obvious case, and it was the case that showed this
+     * up: 292px of new room and the sequence carried on at the old line
+     * length, so the width went to whitespace instead of to bases.
+     */
+    const el = seqPaneRef.current;
+    const ro = el && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (el && ro) ro.observe(el);
+    return () => {
+      window.removeEventListener('resize', measure);
+      ro?.disconnect();
+    };
   }, [molLineLen, leftTab]);
 
   const effectiveLineLen = molLineLen === 0 ? fittedLineLen : molLineLen;
@@ -998,6 +1027,14 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 {label}
               </button>
             ))}
+            <button
+              onClick={() => setSidebarOpen(o => !o)}
+              title={sidebarOpen ? 'Fold the tools away and give the room to the sequence' : 'Show the tools'}
+              style={{ marginLeft: 'auto', alignSelf: 'center', display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.3rem 0.6rem', border: '1px solid var(--glass-border)', borderRadius: 6, background: sidebarOpen ? 'white' : 'var(--accent-blue-15)', color: sidebarOpen ? 'var(--text-muted)' : 'var(--accent-blue)', cursor: 'pointer', fontSize: '0.75rem', fontFamily: 'inherit', fontWeight: 600 }}
+            >
+              {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+              {sidebarOpen ? 'Wide' : 'Tools'}
+            </button>
 
             {/*
               A tool gets its own tab while it is open, so the bar never claims
@@ -1670,7 +1707,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         </div>
 
         {/* ── Right sidebar ── */}
-        <div style={{ width: 272, flexShrink: 0 }}>
+        <div style={{ width: 272, flexShrink: 0, display: sidebarOpen ? undefined : 'none' }}>
 
           {/* 1. Add Elements */}
 

@@ -245,8 +245,37 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
     return { inside, above, hasAbove: above.length > 0 };
   }, [features, featureRows, toX, W]);
 
+  const mapSites = useMemo(
+    () => chooseMapEnzymes(reSites, countCuts(reSites), enzymeDisplay),
+    [reSites, enzymeDisplay],
+  );
+
+  /*
+   * Where each site's label goes, worked out before the drawing has a height.
+   *
+   * Labels stack upward from the strands, and the band they stack into was a
+   * fixed 40px -- room for three rows. A fourth landed at y = 1 and a fifth at
+   * y = -10, off the top of the SVG entirely: the site was found, chosen,
+   * counted in "23 sites drawn", and then clipped out of the picture with
+   * nothing to say it had been. The band is now however tall the stack turns
+   * out to need.
+   */
+  const siteLabels = useMemo(() => {
+    const rows: number[] = [];       // right-hand edge used so far, per row
+    const placed = mapSites.map(s => {
+      const x = toX(s.cutPos);
+      const label = siteLabel(s);
+      const halfWidth = estimateTextWidth(label, 9, s.cuts === 1) / 2 + 4;
+      let row = rows.findIndex(edge => x - halfWidth > edge);
+      if (row === -1) { row = rows.length; rows.push(0); }
+      rows[row] = x + halfWidth;
+      return { s, x, label, row };
+    });
+    return { placed, rowCount: rows.length };
+  }, [mapSites, toX]);
+
   // Layout Y positions
-  const reAreaH = 40;
+  const reAreaH = Math.max(40, siteLabels.rowCount * 11 + 14);
   const fwdY = reAreaH + 4;
   const revY = fwdY + 8;
   /*
@@ -313,11 +342,6 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
     }
     setDragStart(null); setDragEnd(null);
   };
-
-  const mapSites = useMemo(
-    () => chooseMapEnzymes(reSites, countCuts(reSites), enzymeDisplay),
-    [reSites, enzymeDisplay],
-  );
 
   const selX1 = selection ? toX(selection.start - 1) : 0;
   const selX2 = selection ? toX(selection.end) : 0;
@@ -577,21 +601,9 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
              * 450-enzyme scan produces thousands of cuts, and drawing a line
              * for each one is both unreadable and thousands of SVG nodes.
              *
-             * Labels are then stacked into rows by actual width. Staggering
-             * them by index modulo three, as this did, spreads them evenly
-             * whether or not they collide — so it separates labels that were
-             * never going to touch and leaves touching ones on the same row.
+             * The stacking itself happens above, where the height needed it.
              */
-            const rows: number[] = [];       // right-hand edge used so far, per row
-            return mapSites.map((s, i) => {
-              const x = toX(s.cutPos);
-              const label = siteLabel(s);
-              const halfWidth = estimateTextWidth(label, 9, s.cuts === 1) / 2 + 4;
-
-              let row = rows.findIndex(edge => x - halfWidth > edge);
-              if (row === -1) { row = rows.length; rows.push(0); }
-              rows[row] = x + halfWidth;
-
+            return siteLabels.placed.map(({ s, x, label, row }, i) => {
               const labelY = reAreaH - row * 11 - 6;
               return (
                 <g key={`${s.enzyme}-${i}`}
