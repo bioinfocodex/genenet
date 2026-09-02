@@ -34,6 +34,8 @@ export type DrawablePrimer = SavedPrimer & { start: number; end: number };
  * constants rather than two sets that happen to match today.
  */
 const STRAND_H = 17;      // one nucleotide row
+/** The sequence's own font size. Every `ch` offset must be measured in it. */
+const STRAND_FS = 14;
 const RULER_H = 24;
 /** .seq-line-header carries this in CSS; stated here so the block sum can see it. */
 const RULER_GAP = 4;
@@ -449,12 +451,38 @@ export default function MolbuilderRenderer({
 
     // 4. Ruler
     const ruler = (
-      <div key={`ruler-${i}`} className="seq-line-header" style={{ position: 'relative', height: RULER_H, marginBottom: RULER_GAP, display: 'flex', alignItems: 'flex-end', paddingLeft: '60px' }}>
+      <div
+        key={`ruler-${i}`}
+        className="seq-line-header"
+        style={{
+          position: 'relative', height: RULER_H, marginBottom: RULER_GAP,
+          display: 'flex', alignItems: 'flex-end', paddingLeft: '60px',
+          /*
+           * The font size has to be the sequence's, because `ch` is measured
+           * against the element's own font and every offset on this row is in
+           * ch. .seq-line-header sets 10px, so a tick declared at 30ch landed
+           * at 21.5 characters -- the numbers drifting further left the
+           * further along the line you read. The label keeps its own smaller
+           * size below; only the unit this row measures in is inherited.
+           */
+          fontSize: STRAND_FS,
+        }}
+      >
         {Array.from({ length: Math.ceil(chunkLen / 10) }).map((_, j) => {
           const pos = i + j * 10;
           if (pos >= len) return null;
           return (
-            <div key={pos} style={{ position: 'absolute', left: `calc(60px + ${j * 10}ch)`, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div
+              key={pos}
+              style={{
+                position: 'absolute',
+                // +0.5 and a half-width shift, so the mark sits over the
+                // middle of the base it names rather than against its edge.
+                left: `calc(60px + ${j * 10 + 0.5}ch)`,
+                transform: 'translateX(-50%)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+              }}
+            >
               <span style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 600, marginBottom: '2px' }}>{pos + 1}</span>
               <div style={{ width: '1px', height: '4px', background: '#cbd5e1' }} />
             </div>
@@ -496,7 +524,22 @@ export default function MolbuilderRenderer({
     );
 
     const featRow = featBlocks.length > 0 && (
-      <div key={`feat-${i}`} style={{ height: `${featRowCount * FEAT_PITCH}px`, position: 'relative', marginBottom: '4px', paddingLeft: '60px', fontFamily: 'var(--font-mono)' }}>
+      <div
+        key={`feat-${i}`}
+        style={{
+          height: `${featRowCount * FEAT_PITCH}px`, position: 'relative', marginBottom: '4px',
+          /*
+           * A border, not padding. Absolutely positioned children are placed
+           * against the padding box, which *includes* the padding -- so
+           * `paddingLeft: 60px` moved the gutter and left every feature block
+           * sitting 60px, about seven bases, to the left of the sequence it
+           * was drawn over. The enzyme, primer and ORF rows had it right; this
+           * one did not, and nothing on screen said so.
+           */
+          borderLeft: '60px solid transparent',
+          fontFamily: 'var(--font-mono)',
+        }}
+      >
         {/* Intron lines, behind the exon blocks. */}
         {activeFeats.filter(f => f.segments).map((f, idx) => {
           const s = Math.max(0, f.start - i1);
