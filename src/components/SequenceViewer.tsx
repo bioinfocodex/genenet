@@ -428,6 +428,23 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * rows, and a guessed constant is wrong on every window it was not guessed
    * for.
    */
+  /*
+   * The sequence over the whole window.
+   *
+   * Compacting the chrome around it wins back about 150px of a 900px window,
+   * which is worth having and is not what was asked for. The chrome above the
+   * pane -- menu bar, stats, two rows of tabs -- plus the toolbar inside it
+   * came to 334px, and no amount of tightening turns 563px of sequence into
+   * twice that inside the same window. Filling the window does.
+   */
+  const [seqFocus, setSeqFocus] = useState(false);
+  useEffect(() => {
+    if (!seqFocus) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSeqFocus(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [seqFocus]);
+
   const [seqPaneHeight, setSeqPaneHeight] = useState<number | null>(null);
   useEffect(() => {
     if (leftTab !== 'sequence') return;
@@ -436,7 +453,9 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       raf = 0;
       const el = seqPaneRef.current;
       if (!el) return;
-      const top = el.getBoundingClientRect().top;
+      // Filling the window means the window's height, not the leftovers below
+      // whatever chrome happens to be above the pane.
+      const top = seqFocus ? 12 : el.getBoundingClientRect().top;
       // A floor, so a short window gives a small scroller rather than none.
       setSeqPaneHeight(Math.max(320, Math.round(window.innerHeight - top - 24)));
     };
@@ -447,7 +466,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       window.removeEventListener('resize', schedule);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [leftTab]);
+  }, [leftTab, seqFocus]);
 
   useEffect(() => {
     if (molLineLen !== 0) return;
@@ -1273,7 +1292,16 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           )}
 
           {leftTab === 'sequence' && (
-            <div ref={seqPaneRef} className="seq-container" style={{ display: 'flex', flexDirection: 'column', height: seqPaneHeight ?? 600 }}>
+            <div
+              ref={seqPaneRef}
+              className="seq-container"
+              style={{
+                display: 'flex', flexDirection: 'column', height: seqPaneHeight ?? 600,
+                ...(seqFocus
+                  ? { position: 'fixed', inset: 12, zIndex: 400, boxShadow: '0 24px 64px rgba(0,0,0,0.22)' }
+                  : {}),
+              }}
+            >
 
               {/* ── Selection action bar ── */}
               {selection && (() => {
@@ -1324,6 +1352,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 setShowStats={setShowMolStats}
                 showFind={showMolFind}
                 setShowFind={setShowMolFind}
+                focused={seqFocus}
+                onToggleFocus={() => setSeqFocus(f => !f)}
               />
               {showMolFind && (
                 <MolbuilderFindReplace 

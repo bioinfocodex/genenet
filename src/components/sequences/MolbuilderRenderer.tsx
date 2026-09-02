@@ -36,14 +36,22 @@ export type DrawablePrimer = SavedPrimer & { start: number; end: number };
 const STRAND_H = 17;      // one nucleotide row
 /** The sequence's own font size. Every `ch` offset must be measured in it. */
 const STRAND_FS = 14;
-const RULER_H = 24;
+const RULER_H = 16;
 /** .seq-line-header carries this in CSS; stated here so the block sum can see it. */
-const RULER_GAP = 4;
+const RULER_GAP = 2;
 const TRANS_ROW_H = 18;   // one translated frame
 const ORF_ROW_H = 9;      // one reading frame's bar
 const PRIMER_ROW_H = 14;
 const FEAT_H = 14, FEAT_PITCH = 19;
-const BLOCK_GAP = 24;     // .seq-block margin-bottom, 1.5rem
+/*
+ * The gap between lines.
+ *
+ * It was 24px against a 35px pair of strands -- more than a quarter of a bare
+ * line spent on the space after it. On a 780px window that is the difference
+ * between nine lines of sequence and thirteen, which is the difference the
+ * request was actually about: not a bigger box, more sequence in it.
+ */
+const BLOCK_GAP = 10;
 
 /** Cuts once, so it is a site you could clone into. */
 const UNIQUE_CUTTER = '#c00000';
