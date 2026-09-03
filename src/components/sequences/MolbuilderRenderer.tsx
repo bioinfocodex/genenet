@@ -418,8 +418,15 @@ export default function MolbuilderRenderer({
               if (!aa) return <span key={j} className="seq-char" />;
               const style = getAAStyle(aa);
               return (
-                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontSize: '10px', fontWeight: 700 }}>
-                  {aa}
+                /*
+                 * The small size goes on an inner span, never on the cell.
+                 * `.seq-char` is `width: 1ch`, and `ch` is measured against
+                 * the element's own font -- so a 10px cell was 6.02px wide
+                 * against the sequence's 8.42px, and the whole translation
+                 * row slid left by a base every three or four columns.
+                 */
+                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontWeight: 700 }}>
+                  <span style={{ fontSize: '10px', lineHeight: 1 }}>{aa}</span>
                 </span>
               );
             })}
@@ -746,8 +753,15 @@ export default function MolbuilderRenderer({
               if (!aa) return <span key={j} className="seq-char" />;
               const style = getAAStyle(aa);
               return (
-                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontSize: '10px', fontWeight: 700 }}>
-                  {aa}
+                /*
+                 * The small size goes on an inner span, never on the cell.
+                 * `.seq-char` is `width: 1ch`, and `ch` is measured against
+                 * the element's own font -- so a 10px cell was 6.02px wide
+                 * against the sequence's 8.42px, and the whole translation
+                 * row slid left by a base every three or four columns.
+                 */
+                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontWeight: 700 }}>
+                  <span style={{ fontSize: '10px', lineHeight: 1 }}>{aa}</span>
                 </span>
               );
             })}

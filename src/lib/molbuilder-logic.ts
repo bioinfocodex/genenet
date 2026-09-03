@@ -127,9 +127,19 @@ export function translateSeq(seq: string, frame: number): (string | null)[] {
   for (let i = absFrame; i + 2 < strand.length; i += 3) {
     const codon = strand.substring(i, i + 3);
     const aa = CODON_TABLE[codon] || 'X';
-    // For reverse strand, we need to map the position back to the original index
-    const pos = frame > 0 ? i : seq.length - 1 - i;
-    res[pos] = aa;
+    /*
+     * The residue goes over the *middle* base of its codon.
+     *
+     * This is a display array -- one slot per base, to be printed in a row
+     * above the sequence -- and a letter sitting on the first base of three
+     * reads as belonging to that base rather than to the codon. Centring it
+     * is what makes a translation line up with the bases it came from.
+     *
+     * On the reverse strand the codon runs the other way, so its middle base
+     * in original coordinates is two back from the strand index, not one on.
+     */
+    const pos = frame > 0 ? i + 1 : seq.length - 2 - i;
+    if (pos >= 0 && pos < res.length) res[pos] = aa;
   }
   return res;
 }
