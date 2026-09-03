@@ -66,6 +66,40 @@ export async function saveFeatures(formData: FormData) {
   revalidatePath('/sequences');
 }
 
+/**
+ * Save an edited sequence.
+ *
+ * Separate from saveFeatures because it changes the molecule, not the notes on
+ * it: the length changes, so `size` has to change with it, and the two must be
+ * written together or the record disagrees with itself.
+ */
+export async function saveSequenceEdit(formData: FormData) {
+  // A server action is a callable endpoint, and this one overwrites the
+  // molecule. importSequence carries the same guard for the same reason.
+  await requireUser();
+
+  const id = formData.get('id') as string;
+  const raw = formData.get('sequence') as string | null;
+  const featuresJson = formData.get('features') as string | null;
+  if (!id || raw === null) return;
+
+  const sequence = raw.toUpperCase().replace(/[^ACGTRYMKSWHBVDN]/g, '');
+  // An empty result is a mistake, not an edit. Refusing is kinder than
+  // overwriting a plasmid with nothing.
+  if (sequence.length === 0) throw new Error('An edit cannot leave the sequence empty.');
+
+  await prisma.geneSequence.update({
+    where: { id },
+    data: {
+      sequence,
+      size: sequence.length,
+      ...(featuresJson ? { features: featuresJson } : {}),
+    },
+  });
+  revalidatePath('/sequences');
+  revalidatePath(`/sequences/${id}`);
+}
+
 // ─── Import from FASTA / GenBank ──────────────────────────────────────────────
 
 /**

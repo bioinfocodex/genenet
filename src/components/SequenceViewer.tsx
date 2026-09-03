@@ -7,7 +7,7 @@ import {
   PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
-import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
+import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
   findORFs, reverseComplement,
   reverseTranslate,
@@ -23,6 +23,7 @@ import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
 import { colourFor } from '@/lib/features';
+import { insertBases, deleteRange, replaceRange, cleanTyped, pushHistory, type EditSnapshot } from '@/lib/edit';
 import { findHost, findStrain, strainSummary, carriesMethylation } from '@/lib/hosts';
 import { placePrimers, bindingTitle } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
@@ -193,7 +194,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -217,6 +218,58 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     setLeftTabRaw(t);
   }, []);
   const [features, setFeatures] = useState<SequenceFeature[]>(initialFeatures);
+
+  /*
+   * The sequence is editable now, so it is state rather than a prop.
+   *
+   * Editing is behind an explicit switch. Typing a base is a change to the
+   * molecule, and a view you can mutate by resting a finger on the keyboard is
+   * a view nobody can trust; arming it makes the mutation something you asked
+   * for. `caret` is a 0-indexed gap between bases, so 0 is before the first.
+   */
+  const [sequence, setSequence] = useState(initialSequence);
+  const [editing, setEditing] = useState(false);
+  const [caret, setCaret] = useState<number | null>(null);
+  const [history, setHistory] = useState<EditSnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<EditSnapshot[]>([]);
+
+  const snapshot = useCallback((label: string): EditSnapshot => ({ sequence, features, label }), [sequence, features]);
+
+  const applyEdit = useCallback((label: string, next: { sequence: string; features: SequenceFeature[] }, nextCaret: number) => {
+    setHistory(h => pushHistory(h, snapshot(label)));
+    setRedoStack([]);
+    setSequence(next.sequence);
+    setFeatures(next.features);
+    setCaret(Math.max(0, Math.min(next.sequence.length, nextCaret)));
+    setSelection(null);
+    setDirty(true);
+  }, [snapshot]);
+
+  const undo = useCallback(() => {
+    setHistory(h => {
+      if (h.length === 0) return h;
+      const last = h[h.length - 1];
+      setRedoStack(r => pushHistory(r, { sequence, features, label: last.label }));
+      setSequence(last.sequence);
+      setFeatures(last.features);
+      setSelection(null);
+      setDirty(true);
+      return h.slice(0, -1);
+    });
+  }, [sequence, features]);
+
+  const redo = useCallback(() => {
+    setRedoStack(r => {
+      if (r.length === 0) return r;
+      const last = r[r.length - 1];
+      setHistory(h => pushHistory(h, { sequence, features, label: last.label }));
+      setSequence(last.sequence);
+      setFeatures(last.features);
+      setSelection(null);
+      setDirty(true);
+      return r.slice(0, -1);
+    });
+  }, [sequence, features]);
   const [primers, setPrimers] = useState<SavedPrimer[]>(initialPrimers);
 
   /*
@@ -787,13 +840,92 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     });
   };
 
+  /*
+   * Typing, only while editing is armed and the sequence view is the one on
+   * screen. Guarded against form fields, because the enzyme picker is an input
+   * on this same page and typing "EcoRI" into it must not insert an E.
+   */
+  useEffect(() => {
+    if (!editing || leftTab !== 'sequence') return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (el?.isContentEditable) return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      /*
+       * A one-base selection is a click, not a range.
+       *
+       * Placing the caret also sets selection to {start: n, end: n}, so
+       * treating any selection as a range to replace meant the first key after
+       * every click overwrote the base clicked instead of inserting beside it:
+       * AAAA became AAA and nothing said so. Only a span of more than one base
+       * is a selection someone made on purpose.
+       */
+      const hasSel = selection && selection.end > selection.start;
+      const at = caret ?? (hasSel ? selection!.start - 1 : null);
+
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        if (hasSel) {
+          applyEdit(`delete ${selection!.end - selection!.start + 1} bp`,
+            deleteRange(sequence, features, selection!.start, selection!.end), selection!.start - 1);
+        } else if (at !== null) {
+          if (e.key === 'Backspace' && at > 0) {
+            applyEdit('delete 1 bp', deleteRange(sequence, features, at, at), at - 1);
+          } else if (e.key === 'Delete' && at < sequence.length) {
+            applyEdit('delete 1 bp', deleteRange(sequence, features, at + 1, at + 1), at);
+          }
+        }
+        return;
+      }
+
+      if (e.key === 'ArrowLeft') { e.preventDefault(); setCaret(c => Math.max(0, (c ?? 0) - 1)); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); setCaret(c => Math.min(sequence.length, (c ?? 0) + 1)); return; }
+
+      // A single printable key that is a base. Anything else is left alone,
+      // so the tab and the shortcuts elsewhere on the page still work.
+      if (e.key.length !== 1) return;
+      const typed = cleanTyped(e.key);
+      if (!typed) return;
+      e.preventDefault();
+      if (hasSel) {
+        applyEdit(`replace with ${typed}`,
+          replaceRange(sequence, features, selection!.start, selection!.end, typed), selection!.start);
+      } else if (at !== null) {
+        applyEdit(`insert ${typed}`, insertBases(sequence, features, at, typed), at + 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editing, leftTab, caret, selection, sequence, features, applyEdit, undo, redo]);
+
+  /** True once the molecule itself differs from what was loaded. */
+  const sequenceEdited = sequence !== initialSequence;
+
   const handleSave = () => {
     setSaving(true);
     const fd = new FormData();
     fd.append('id', id);
     fd.append('features', JSON.stringify(features));
     startTransition(() => {
-      saveFeatures(fd);
+      /*
+       * Two different writes. saveFeatures changes the notes on a molecule;
+       * saveSequenceEdit changes the molecule, and has to move `size` with it
+       * or the record contradicts itself.
+       */
+      if (sequenceEdited) {
+        fd.append('sequence', sequence);
+        saveSequenceEdit(fd);
+      } else {
+        saveFeatures(fd);
+      }
       setSaving(false);
       setDirty(false);
     });
@@ -1009,7 +1141,18 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
       {/* ── Stats bar ── */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem' }}>
-        <Pill label="Length" value={`${size.toLocaleString()} bp`} />
+        {/*
+          * The live length, not the stored one. `size` is what the record says
+          * and stops being true the moment a base is typed -- the header read
+          * 480 bp over a 483 bp sequence, which is the sort of disagreement
+          * that gets believed because it is in the summary.
+          */}
+        <Pill
+          label="Length"
+          value={sequenceEdited
+            ? `${sequence.length.toLocaleString()} bp (was ${size.toLocaleString()})`
+            : `${sequence.length.toLocaleString()} bp`}
+        />
         <Pill label="GC" value={`${gcContent}%`} />
         <Pill label="Type" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
         <Pill label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
@@ -1370,6 +1513,10 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 setShowFind={setShowMolFind}
                 focused={seqFocus}
                 onToggleFocus={() => setSeqFocus(f => !f)}
+                editing={editing}
+                onToggleEditing={() => { setEditing(e => !e); setCaret(c => (c === null ? 0 : c)); }}
+                canUndo={history.length > 0}
+                onUndo={undo}
               />
               {showMolFind && (
                 <MolbuilderFindReplace 
@@ -1447,6 +1594,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                     frames={molFrames}
                     selection={selection}
                     onSelect={setSelection}
+                    caret={editing ? caret : null}
+                    onCaret={editing ? setCaret : undefined}
                     onFeatureClick={(f) => {
                       setSelection({ start: f.start, end: f.end });
                       setSelectedFeature(f);

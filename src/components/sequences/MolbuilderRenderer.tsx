@@ -90,6 +90,9 @@ interface MolbuilderRendererProps {
   frames: Set<number>;
   selection?: { start: number; end: number } | null;
   onSelect: (sel: { start: number; end: number } | null) => void;
+  /** Insertion point, as a 0-indexed gap between bases. Null when not editing. */
+  caret?: number | null;
+  onCaret?: (at: number) => void;
   onFeatureClick?: (feat: SequenceFeature) => void;
 }
 
@@ -104,7 +107,9 @@ export default function MolbuilderRenderer({
   frames,
   selection,
   onSelect,
-  onFeatureClick
+  caret = null,
+  onCaret,
+  onFeatureClick,
 }: MolbuilderRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number | null>(null);
@@ -114,9 +119,19 @@ export default function MolbuilderRenderer({
 
   // ─── Rendering Helpers ───────────────────────────────────────────────────────
 
-  const handleMouseDown = (pos: number) => {
+  const handleMouseDown = (pos: number, e?: React.MouseEvent) => {
     dragStartRef.current = pos;
     onSelect({ start: pos + 1, end: pos + 1 });
+    /*
+     * The caret goes to the nearer edge of the base clicked, so clicking the
+     * right half of a base puts the insertion point after it. Typing then
+     * lands where the eye expects rather than one base back.
+     */
+    if (onCaret) {
+      const r = (e?.currentTarget as HTMLElement | undefined)?.getBoundingClientRect();
+      const after = r && e ? e.clientX - r.left > r.width / 2 : false;
+      onCaret(after ? pos + 1 : pos);
+    }
   };
 
   const handleMouseMove = (pos: number) => {
@@ -667,7 +682,7 @@ export default function MolbuilderRenderer({
               <span 
                 key={j} 
                 className={`seq-char nt-${c} ${isSelected ? 'selected' : ''}`}
-                onMouseDown={() => handleMouseDown(pos)}
+                onMouseDown={(e) => handleMouseDown(pos, e)}
                 onMouseMove={() => handleMouseMove(pos)}
                 onMouseUp={handleMouseUp}
                 style={{
@@ -800,6 +815,23 @@ export default function MolbuilderRenderer({
       </div>
     );
 
+    /*
+     * The insertion point. Drawn through both strands at the gap it sits in,
+     * which is the same geometry as a blunt cut -- an edit is a cut you then
+     * type into.
+     */
+    const caretMark = caret !== null && caret >= i && caret <= i + chunkLen && (
+      <div
+        key={`caret-${i}`}
+        className="seq-caret"
+        style={{
+          position: 'absolute', left: `calc(60px + ${caret - i}ch)`, marginLeft: -1,
+          top: 0, height: '100%', width: 2, background: 'var(--accent-blue, #3b82f6)',
+          pointerEvents: 'none', zIndex: 20,
+        }}
+      />
+    );
+
     if (blocks.length === 0) firstVisible = i + 1;
     blocks.push(
       <div
@@ -819,6 +851,7 @@ export default function MolbuilderRenderer({
           {strandSeparator}
           {botStrand}
           {cutMarks}
+          {caretMark}
         </div>
         {transRevRows}
         {orfRevRow}

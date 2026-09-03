@@ -348,3 +348,8 @@ select {
   animation: fadeIn 0.2s ease-out forwards;
 }
 
+
+/* The insertion point. Blinking is what separates a caret from a cut line. */
+@keyframes seq-caret-blink { 0%, 45% { opacity: 1 } 55%, 100% { opacity: 0 } }
+.seq-caret { animation: seq-caret-blink 1.1s step-end infinite; }
+@media (prefers-reduced-motion: reduce) { .seq-caret { animation: none } }

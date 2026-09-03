@@ -2,6 +2,8 @@
 import React from 'react';
 import {
   Layers,
+  Pencil,
+  Undo2,
   Dna,
   Eye,
   Search,
@@ -31,6 +33,11 @@ interface MolbuilderToolbarProps {
   /** Sequence fills the window, app chrome and all. */
   focused: boolean;
   onToggleFocus: () => void;
+  /** Armed for editing: typing changes the molecule. */
+  editing: boolean;
+  onToggleEditing: () => void;
+  canUndo: boolean;
+  onUndo: () => void;
 }
 
 export default function MolbuilderToolbar({
@@ -48,6 +55,10 @@ export default function MolbuilderToolbar({
   setShowFind,
   focused,
   onToggleFocus,
+  editing,
+  onToggleEditing,
+  canUndo,
+  onUndo,
 }: MolbuilderToolbarProps) {
   
   const toggleLayer = (layer: string) => {
@@ -103,6 +114,28 @@ export default function MolbuilderToolbar({
 
       {/* Group: Search & Tools */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
+        {/*
+          * Editing is armed, not ambient. A view that mutates the molecule
+          * whenever a key is pressed is one nobody can leave open safely.
+          */}
+        <ToolbarBtn
+          active={editing}
+          onClick={onToggleEditing}
+          icon={<Pencil size={16} />}
+          label={editing ? 'Editing' : 'Edit'}
+          title={editing
+            ? 'Typing changes the sequence. Click to stop.'
+            : 'Click a base, then type to insert and ⌫ to delete'}
+        />
+        {editing && (
+          <ToolbarBtn
+            active={false}
+            onClick={onUndo}
+            icon={<Undo2 size={16} />}
+            label="Undo"
+            title={canUndo ? 'Undo the last edit (⌘Z)' : 'Nothing to undo'}
+          />
+        )}
         <ToolbarBtn active={showFind} onClick={() => setShowFind(!showFind)} icon={<Search size={16} />} label="Find" />
         <ToolbarBtn active={showStats} onClick={() => setShowStats(!showStats)} icon={<BarChart2 size={16} />} label="Stats" />
         {/*
