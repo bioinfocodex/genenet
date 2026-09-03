@@ -231,7 +231,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   const [editing, setEditing] = useState(false);
   const [caret, setCaret] = useState<number | null>(null);
   const [history, setHistory] = useState<EditSnapshot[]>([]);
-  const [redoStack, setRedoStack] = useState<EditSnapshot[]>([]);
+  // Read through the updater in `redo`, so only the setter is bound here.
+  const [, setRedoStack] = useState<EditSnapshot[]>([]);
 
   const snapshot = useCallback((label: string): EditSnapshot => ({ sequence, features, label }), [sequence, features]);
 
@@ -1139,49 +1140,6 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
         </div>
       </div>
 
-      {/* ── Stats bar ── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem' }}>
-        {/*
-          * The live length, not the stored one. `size` is what the record says
-          * and stops being true the moment a base is typed -- the header read
-          * 480 bp over a 483 bp sequence, which is the sort of disagreement
-          * that gets believed because it is in the summary.
-          */}
-        <Pill
-          label="Length"
-          value={sequenceEdited
-            ? `${sequence.length.toLocaleString()} bp (was ${size.toLocaleString()})`
-            : `${sequence.length.toLocaleString()} bp`}
-        />
-        <Pill label="GC" value={`${gcContent}%`} />
-        <Pill label="Type" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
-        <Pill label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
-        <Pill label="Features" value={`${features.length}`} />
-        {/*
-          * Only when recorded. A pill reading "Host: —" on every older record
-          * is a column of nothing pretending to be data.
-          */}
-        {findHost(host) && (
-          <Pill label="Host" value={findHost(host)!.organism.name} />
-        )}
-        {findStrain(strain) && (
-          <span title={[findStrain(strain)!.strain.genotype, findStrain(strain)!.strain.use].filter(Boolean).join('\n')}>
-            <Pill label="Strain" value={strainSummary(strain)!} />
-          </span>
-        )}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
-          {dirty && (
-            <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }} onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : <><Save size={14} /> Save</>}
-            </button>
-          )}
-          <button className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }}
-            onClick={() => navigator.clipboard.writeText(sequence)}>
-            <Copy size={14} /> Copy
-          </button>
-        </div>
-      </div>
-
       {/* ── Selection banner ── */}
       {selection && (() => {
         const selSeq = sequence.substring(selection.start - 1, selection.end).toUpperCase();
@@ -1219,62 +1177,122 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
         * the tools wrap underneath and the work gets the whole width, which is
         * the right way round.
         */}
-      <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
-        {/* ── Left column ── */}
-        <div style={{ flex: '1 1 420px', minWidth: 'min(420px, 100%)' }}>
+        {/*
+          * ── Rail ──
+          *
+          * The views, the map's own topology switch and the record's numbers,
+          * down the side instead of across the top.
+          *
+          * Every one of these was a horizontal band above the work: the stats
+          * row, the tab row -- which wrapped to two lines as soon as a tool
+          * opened -- and the Linear/Circular pair inside the map's controls.
+          * Together they were most of the 174px of chrome sitting on top of a
+          * pane whose whole problem is vertical room. Sideways they cost
+          * nothing, because the width is there and the height is not.
+          */}
+        <nav style={{ width: 178, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
 
-          {/* View tabs */}
-          <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--glass-border)', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            {dirty && (
+              <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem' }} onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : <><Save size={13} /> Save</>}
+              </button>
+            )}
+            <button className="btn btn-secondary" style={{ flex: dirty ? 0 : 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem' }}
+              title="Copy the whole sequence"
+              onClick={() => navigator.clipboard.writeText(sequence)}>
+              <Copy size={13} />{dirty ? '' : ' Copy'}
+            </button>
+          </div>
+
+          {/* Views */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             {VIEW_TABS.map(([t, label]) => (
-              <button key={t} onClick={() => setLeftTab(t)} style={{ padding: '0.5rem 1.1rem', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: leftTab === t ? 600 : 400, color: leftTab === t ? 'var(--accent-blue)' : 'var(--text-muted)', borderBottom: `2px solid ${leftTab === t ? 'var(--accent-blue)' : 'transparent'}`, fontFamily: 'inherit', transition: 'all 0.15s', letterSpacing: '0.01em' }}>
+              <button key={t} onClick={() => setLeftTab(t)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.4rem', textAlign: 'left',
+                  padding: '0.32rem 0.55rem', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: '0.82rem', fontFamily: 'inherit',
+                  fontWeight: leftTab === t ? 600 : 400,
+                  color: leftTab === t ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                  background: leftTab === t ? 'var(--accent-blue-15)' : 'transparent',
+                  borderLeft: `2px solid ${leftTab === t ? 'var(--accent-blue)' : 'transparent'}`,
+                }}>
                 {label}
               </button>
             ))}
-            <button
-              onClick={() => setSidebarOpen(o => !o)}
-              title={sidebarOpen ? 'Fold the tools away and give the room to the sequence' : 'Show the tools'}
-              style={{ marginLeft: 'auto', alignSelf: 'center', display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.3rem 0.6rem', border: '1px solid var(--glass-border)', borderRadius: 6, background: sidebarOpen ? 'white' : 'var(--accent-blue-15)', color: sidebarOpen ? 'var(--text-muted)' : 'var(--accent-blue)', cursor: 'pointer', fontSize: '0.75rem', fontFamily: 'inherit', fontWeight: 600 }}
-            >
-              {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
-              {sidebarOpen ? 'Wide' : 'Tools'}
-            </button>
 
             {/*
-              A tool gets its own tab while it is open, so the bar never claims
-              you are somewhere you are not, and there is always a way back to
-              the view you came from.
+              A tool keeps its own entry while it is open, so the rail never
+              claims you are somewhere you are not, and there is always a way
+              back to the view you came from.
             */}
             {TOOL_NAMES[leftTab] && (
               <span style={{
-                display: 'flex', alignItems: 'center', gap: '0.4rem',
-                padding: '0.5rem 0.7rem 0.5rem 1.1rem', fontSize: '0.85rem', fontWeight: 600,
-                color: 'var(--accent-blue)', borderBottom: '2px solid var(--accent-blue)',
-                marginLeft: 'auto',
+                display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.3rem',
+                padding: '0.32rem 0.55rem', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
+                background: 'var(--accent-purple-15, rgba(168,85,247,0.12))', color: 'var(--accent-purple)',
               }}>
                 {TOOL_NAMES[leftTab]}
-                <button
-                  onClick={() => setLeftTabRaw(lastView)}
-                  title={`Close and go back to ${VIEW_TABS.find(([v]) => v === lastView)?.[1] ?? 'Map'}`}
-                  aria-label="Close this tool"
-                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
-                >
+                <button onClick={() => setLeftTab(lastView)} aria-label="Close this tool"
+                  style={{ marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontSize: '0.9rem', lineHeight: 1, padding: 0, fontFamily: 'inherit' }}>
                   &times;
                 </button>
               </span>
             )}
           </div>
 
+          {/* The map's own topology, next to the view it belongs to. */}
+          {leftTab === 'map' && (
+            <div style={{ display: 'flex', gap: '0.3rem' }}>
+              {(['linear', 'circular'] as const).map(v => (
+                <button key={v} onClick={() => setMapView(v)}
+                  style={{ flex: 1, padding: '0.28rem 0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: mapView === v ? 'var(--accent-blue-15)' : 'white', color: mapView === v ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: mapView === v ? 600 : 400 }}>
+                  {v === 'linear' ? 'Linear' : 'Circular'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* The record's numbers. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', borderTop: '1px solid var(--glass-border)', paddingTop: '0.7rem' }}>
+            <RailStat label="Length" value={sequenceEdited
+              ? `${sequence.length.toLocaleString()} bp (was ${size.toLocaleString()})`
+              : `${sequence.length.toLocaleString()} bp`} />
+            <RailStat label="GC" value={`${gcContent}%`} />
+            <RailStat label="Type" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
+            <RailStat label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
+            <RailStat label="Features" value={`${features.length}`} />
+            {findHost(host) && <RailStat label="Host" value={findHost(host)!.organism.name} />}
+            {findStrain(strain) && (
+              <RailStat
+                label="Strain"
+                value={strainSummary(strain)!}
+                title={[findStrain(strain)!.strain.genotype, findStrain(strain)!.strain.use].filter(Boolean).join('\n')}
+              />
+            )}
+          </div>
+
+          <button
+            onClick={() => setSidebarOpen(o => !o)}
+            title={sidebarOpen ? 'Fold the tools away and give the room to the sequence' : 'Show the tools'}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.28rem 0.5rem', border: '1px solid var(--glass-border)', borderRadius: 6, background: sidebarOpen ? 'white' : 'var(--accent-blue-15)', color: sidebarOpen ? 'var(--text-muted)' : 'var(--accent-blue)', cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: 600 }}
+          >
+            {sidebarOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+            {sidebarOpen ? 'Wide' : 'Tools'}
+          </button>
+        </nav>
+
+        {/* ── Left column ── */}
+        <div style={{ flex: '1 1 360px', minWidth: 'min(360px, 100%)' }}>
+
           {/* Tab content */}
           {leftTab === 'map' && (
             <div>
+              {/* Linear/Circular lives in the rail now, beside the view it belongs to. */}
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                {(['linear', 'circular'] as const).map(v => (
-                  <button key={v} onClick={() => setMapView(v)} style={{ padding: '0.3rem 0.8rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: mapView === v ? 'var(--accent-blue-15)' : 'white', color: mapView === v ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: mapView === v ? 600 : 400 }}>
-                    {v.charAt(0).toUpperCase() + v.slice(1)}
-                  </button>
-                ))}
-
                 <span style={{ flex: 1 }} />
 
                 {/*
@@ -2504,14 +2522,21 @@ function Badge({ label, color }: { label: string; color: string }) {
 
 // ─── Pill ────────────────────────────────────────────────────────────────────
 
-function Pill({ label, value }: { label: string; value: string }) {
+/**
+ * One of the record's numbers, in the rail.
+ *
+ * Label over value rather than beside it: the rail is 178px and "RE sites"
+ * with "389 enzymes - 3383 cuts" beside it fits in neither half.
+ */
+function RailStat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <span style={{ fontSize: '0.78rem', display: 'flex', gap: '0.3rem' }}>
-      <span style={{ color: 'var(--text-muted)' }}>{label}:</span>
-      <strong style={{ color: 'var(--text-primary)' }}>{value}</strong>
-    </span>
+    <div title={title} style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+      <span style={{ fontSize: '0.64rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>{label}</span>
+      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>{value}</span>
+    </div>
   );
 }
+
 
 // ─── Linear Map ──────────────────────────────────────────────────────────────
 
