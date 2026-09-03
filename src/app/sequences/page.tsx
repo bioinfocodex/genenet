@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
-import { Database, Plus, Scissors } from 'lucide-react';
+import { Columns, Database, Plus, Scissors } from 'lucide-react';
 import SequenceLibrary from '@/components/SequenceLibrary';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +20,10 @@ export default async function SequencesPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
+          {/* Several at once, with the folders down the side. */}
+          <Link href="/sequences/workspace" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Columns size={16} /> Workspace
+          </Link>
           <Link href="/sequences/clone" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Scissors size={16} /> Cloning Wizard
           </Link>
