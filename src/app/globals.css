@@ -353,3 +353,7 @@ select {
 @keyframes seq-caret-blink { 0%, 45% { opacity: 1 } 55%, 100% { opacity: 0 } }
 .seq-caret { animation: seq-caret-blink 1.1s step-end infinite; }
 @media (prefers-reduced-motion: reduce) { .seq-caret { animation: none } }
+
+/* Panels either side of the sequence slide rather than blink out of existence. */
+.pane-slide { transition: width 0.18s ease; }
+@media (prefers-reduced-motion: reduce) { .pane-slide { transition: none } }

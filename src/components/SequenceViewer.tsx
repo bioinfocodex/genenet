@@ -1,10 +1,9 @@
 'use client';
 import React, { useState, useMemo, useTransition, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import {
+import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
   FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2,
-  PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
@@ -113,6 +112,10 @@ const FEATURE_TYPES = [
   'rep_origin', 'regulatory', 'misc_feature', 'RBS', 'enhancer', 'reporter',
   'selectable_marker', 'tag', "5'UTR", "3'UTR",
 ];
+/** The two panels either side of the work, and how wide they are when open. */
+const RAIL_W = 178;
+const SIDEBAR_W = 272;
+
 const RE_COLORS = ['#ef4444','#3b82f6','#22c55e','#a855f7','#f59e0b','#06b6d4','#f97316','#ec4899','#84cc16','#78716c','#0ea5e9','#d946ef'];
 
 interface Props {
@@ -313,6 +316,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * one click away, which is the difference between a panel and a decision.
    */
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** The rail of views and numbers slides away the same way the tools do. */
+  const [railOpen, setRailOpen] = useState(true);
 
   const enzymeSetNames = useMemo(() => {
     if (enzymeSet === 'all') return null;
@@ -1192,7 +1197,11 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           * pane whose whole problem is vertical room. Sideways they cost
           * nothing, because the width is there and the height is not.
           */}
-        <nav style={{ width: 178, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+        <div
+          className="pane-slide"
+          style={{ width: railOpen ? RAIL_W : 0, flexShrink: 0, overflow: 'hidden' }}
+        >
+        <nav style={{ width: RAIL_W, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
 
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             {dirty && (
@@ -1275,15 +1284,22 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             )}
           </div>
 
-          <button
-            onClick={() => setSidebarOpen(o => !o)}
-            title={sidebarOpen ? 'Fold the tools away and give the room to the sequence' : 'Show the tools'}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.28rem 0.5rem', border: '1px solid var(--glass-border)', borderRadius: 6, background: sidebarOpen ? 'white' : 'var(--accent-blue-15)', color: sidebarOpen ? 'var(--text-muted)' : 'var(--accent-blue)', cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: 600 }}
-          >
-            {sidebarOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
-            {sidebarOpen ? 'Wide' : 'Tools'}
-          </button>
         </nav>
+        </div>
+
+        {/*
+          * The handle stays whether or not the panel does.
+          *
+          * A panel that slides fully away has to leave something behind to
+          * bring it back, and it cannot be a button inside the panel. Twenty
+          * pixels a side is the rent for being able to reclaim three hundred.
+          */}
+        <PaneHandle
+          side="left"
+          open={railOpen}
+          onClick={() => setRailOpen(o => !o)}
+          title={railOpen ? 'Slide the views and numbers away' : 'Show the views and numbers'}
+        />
 
         {/* ── Left column ── */}
         <div style={{ flex: '1 1 360px', minWidth: 'min(360px, 100%)' }}>
@@ -1945,8 +1961,16 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           {leftTab === 'fold' && <FoldPanel sequence={sequence} selection={selection} />}
         </div>
 
+        <PaneHandle
+          side="right"
+          open={sidebarOpen}
+          onClick={() => setSidebarOpen(o => !o)}
+          title={sidebarOpen ? 'Slide the tools away and give the room to the sequence' : 'Show the tools'}
+        />
+
         {/* ── Right sidebar ── */}
-        <div style={{ width: 272, flexShrink: 0, display: sidebarOpen ? undefined : 'none' }}>
+        <div className="pane-slide" style={{ width: sidebarOpen ? SIDEBAR_W : 0, flexShrink: 0, overflow: 'hidden' }}>
+        <div style={{ width: SIDEBAR_W }}>
 
           {/* 1. Add Elements */}
 
@@ -1995,6 +2019,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             </div>
           )}
 
+        </div>
         </div>
       </div>
 
@@ -2528,6 +2553,40 @@ function Badge({ label, color }: { label: string; color: string }) {
  * Label over value rather than beside it: the rail is 178px and "RE sites"
  * with "389 enzymes - 3383 cuts" beside it fits in neither half.
  */
+/**
+ * The tab that brings a slid-away panel back.
+ *
+ * Always rendered, whichever state the panel is in -- a panel that can hide
+ * completely cannot keep its own reopen button, and a hidden panel with no
+ * handle is a feature nobody finds twice.
+ */
+function PaneHandle(
+  { side, open, onClick, title }:
+  { side: 'left' | 'right'; open: boolean; onClick: () => void; title: string },
+) {
+  const Icon = (side === 'left') === open ? ChevronLeft : ChevronRight;
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      aria-expanded={open}
+      style={{
+        alignSelf: 'stretch', width: 18, flexShrink: 0, marginTop: 2,
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        paddingTop: '0.4rem',
+        border: '1px solid var(--glass-border)',
+        borderRadius: side === 'left' ? '0 7px 7px 0' : '7px 0 0 7px',
+        background: open ? 'transparent' : 'var(--accent-blue-15)',
+        color: open ? 'var(--text-muted)' : 'var(--accent-blue)',
+        cursor: 'pointer',
+      }}
+    >
+      <Icon size={13} />
+    </button>
+  );
+}
+
 function RailStat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div title={title} style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
