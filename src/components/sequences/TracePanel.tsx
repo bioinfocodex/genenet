@@ -3,8 +3,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { isAb1, parseAb1 } from '@/lib/formats/ab1';
 import {
   verifyTrace, peakWindow,
-  type TraceVerification, type TraceDiscrepancy, type OrientedTrace,
+  type TraceVerification, type TraceDiscrepancy, type OrientedTrace, type TraceRead,
 } from '@/lib/trace-alignment';
+import { deleteRead } from '@/app/actions/reads';
 
 /**
  * Sanger traces against this sequence: load the .ab1 files a facility sends
@@ -17,55 +18,130 @@ const KIND_LABEL: Record<TraceDiscrepancy['kind'], string> = {
   match: 'match', mismatch: 'mismatch', insertion: 'insertion', deletion: 'deletion', mixed: 'mixed peak',
 };
 
+/** A read stored with the sequence, as the page lists it. */
+export interface SavedReadInfo {
+  id: string;
+  fileName: string;
+  sampleName: string | null;
+  runDate: string | null;
+  uploadedBy: string;
+}
+
 interface LoadedRead {
+  /** Set once the read is stored with the sequence. */
+  id?: string;
   file: string;
   sampleName: string;
   runDate: string;
-  result: TraceVerification | null;
+  uploadedBy?: string;
+  trace: TraceRead | null;
   error?: string;
 }
 
-export default function TracePanel({ reference, circular }: { reference: string; circular: boolean }) {
+function parseTrace(file: string, bytes: Uint8Array): LoadedRead {
+  if (!isAb1(bytes)) return { file, sampleName: '', runDate: '', trace: null, error: 'Not an ABI trace file' };
+  const t = parseAb1(bytes, { includeTraces: true });
+  if (!t) return { file, sampleName: '', runDate: '', trace: null, error: 'The trace file could not be read' };
+  return {
+    file, sampleName: t.sampleName, runDate: t.runDate,
+    trace: {
+      name: t.sampleName || file, sequence: t.sequence, quality: t.quality,
+      baseOrder: t.baseOrder, traces: t.traces, peakLocations: t.peakLocations,
+    },
+  };
+}
+
+export default function TracePanel({ sequenceId, reference, circular, savedReads = [] }: {
+  sequenceId: string;
+  reference: string;
+  circular: boolean;
+  savedReads?: SavedReadInfo[];
+}) {
   const [reads, setReads] = useState<LoadedRead[]>([]);
   const [selected, setSelected] = useState(0);
   const [focus, setFocus] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [showLow, setShowLow] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Reads stored with the sequence are fetched and parsed once, on opening.
+  const savedKey = savedReads.map(r => r.id).join(',');
+  useEffect(() => {
+    if (!savedReads.length) return;
+    let cancelled = false;
+    setBusy(true);
+    Promise.all(savedReads.map(async info => {
+      try {
+        const res = await fetch(`/api/reads/${info.id}`);
+        if (!res.ok) throw new Error(`could not be fetched (${res.status})`);
+        const parsed = parseTrace(info.fileName, new Uint8Array(await res.arrayBuffer()));
+        return { ...parsed, id: info.id, uploadedBy: info.uploadedBy };
+      } catch (e) {
+        return { id: info.id, file: info.fileName, sampleName: info.sampleName ?? '', runDate: info.runDate ?? '', trace: null, error: (e as Error).message };
+      }
+    })).then(loaded => {
+      if (cancelled) return;
+      setReads(prev => [...loaded, ...prev.filter(p => !p.id || !loaded.some(l => l.id === p.id))]);
+      setBusy(false);
+    });
+    return () => { cancelled = true; };
+    // Keyed on the ids, not the array, which is a new object every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedKey]);
+
+  // Verdicts are worked out against the sequence as it is now, so editing the
+  // sequence re-judges every read rather than leaving an old verdict standing.
+  const results = useMemo(() => reads.map(r => {
+    if (!r.trace) return null;
+    try { return verifyTrace(reference, circular, r.trace); } catch { return null; }
+  }), [reads, reference, circular]);
 
   const load = async (files: FileList | null) => {
     if (!files?.length) return;
     setBusy(true);
-    const loaded: LoadedRead[] = [];
-    for (const f of Array.from(files)) {
-      const bytes = new Uint8Array(await f.arrayBuffer());
-      if (!isAb1(bytes)) {
-        loaded.push({ file: f.name, sampleName: '', runDate: '', result: null, error: 'Not an ABI trace file' });
-        continue;
-      }
-      const t = parseAb1(bytes, { includeTraces: true });
-      if (!t) {
-        loaded.push({ file: f.name, sampleName: '', runDate: '', result: null, error: 'The trace file could not be read' });
-        continue;
-      }
-      // Let the browser paint between reads; each alignment is a few hundred ms.
-      await new Promise(r => setTimeout(r, 0));
+    setNotice(null);
+    const list = Array.from(files);
+    const parsed = await Promise.all(list.map(async f => parseTrace(f.name, new Uint8Array(await f.arrayBuffer()))));
+
+    // Store the readable ones with the sequence; the rest are shown with why.
+    const form = new FormData();
+    list.forEach((f, i) => { if (parsed[i].trace) form.append('files', f); });
+    if (form.getAll('files').length) {
       try {
-        const result = verifyTrace(reference, circular, {
-          name: t.sampleName || f.name, sequence: t.sequence, quality: t.quality,
-          baseOrder: t.baseOrder, traces: t.traces, peakLocations: t.peakLocations,
+        const res = await fetch(`/api/sequences/${sequenceId}/reads`, { method: 'POST', body: form });
+        const body = await res.json() as { saved?: { id: string; fileName: string }[]; rejected?: { fileName: string; error: string }[]; error?: string };
+        if (!res.ok) throw new Error(body.error ?? `upload failed (${res.status})`);
+        const unclaimed = [...(body.saved ?? [])];
+        parsed.forEach(p => {
+          const k = unclaimed.findIndex(s => s.fileName === p.file);
+          if (k >= 0 && p.trace) { p.id = unclaimed[k].id; unclaimed.splice(k, 1); }
         });
-        loaded.push({ file: f.name, sampleName: t.sampleName, runDate: t.runDate, result });
+        for (const r of body.rejected ?? []) {
+          const p = parsed.find(x => x.file === r.fileName && !x.id);
+          if (p) p.error = r.error;
+        }
       } catch (e) {
-        loaded.push({ file: f.name, sampleName: t.sampleName, runDate: t.runDate, result: null, error: (e as Error).message });
+        setNotice(`Shown here but not saved: ${(e as Error).message}`);
       }
     }
-    setReads(prev => [...prev, ...loaded]);
+    setReads(prev => [...prev, ...parsed]);
     setSelected(reads.length);
     setFocus(null);
     setBusy(false);
   };
 
-  const current = reads[selected]?.result ?? null;
+  const remove = async (i: number) => {
+    const r = reads[i];
+    if (r.id) {
+      const res = await deleteRead(r.id);
+      if ('error' in res) { setNotice(res.error); return; }
+    }
+    setReads(prev => prev.filter((_, j) => j !== i));
+    setSelected(sel => (sel >= i && sel > 0 ? sel - 1 : sel));
+    setFocus(null);
+  };
+
+  const current = results[selected] ?? null;
   const shown = useMemo(
     () => current?.discrepancies.filter(d => showLow || d.confidence === 'high') ?? [],
     [current, showLow],
@@ -83,25 +159,26 @@ export default function TracePanel({ reference, circular }: { reference: string;
     <div>
       <div style={{ marginBottom: '0.75rem' }}>
         <label className="btn btn-primary" style={{ fontSize: '0.82rem', cursor: 'pointer', display: 'inline-block' }}>
-          {busy ? 'Aligning…' : 'Load .ab1 trace files'}
+          {busy ? 'Working…' : 'Add .ab1 trace files'}
           <input type="file" accept=".ab1,.abi,.ab!" multiple hidden disabled={busy} onChange={e => { load(e.target.files); e.target.value = ''; }} />
         </label>
         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '0.75rem' }}>
-          Ends below Q20 are trimmed. A difference counts when its call is Q30 or better.
+          Saved with this sequence. Ends below Q20 are trimmed; a difference counts when its call is Q30 or better.
         </span>
       </div>
 
       {reads.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem' }}>
           {reads.map((r, i) => {
-            const v = r.result;
+            const v = results[i];
             const high = v?.discrepancies.filter(d => d.confidence === 'high').length ?? 0;
-            const chip = r.error ? ['error', '#dc2626'] : v!.verdict === 'confirmed' ? ['confirmed', '#16a34a'] : v!.verdict === 'differs' ? [`${high} difference${high === 1 ? '' : 's'}`, '#ea580c'] : ['unusable', '#64748b'];
+            const chip = r.error || !v ? ['error', '#dc2626'] : v.verdict === 'confirmed' ? ['confirmed', '#16a34a'] : v.verdict === 'differs' ? [`${high} difference${high === 1 ? '' : 's'}`, '#ea580c'] : ['unusable', '#64748b'];
             return (
+              <div key={r.id ?? `local-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
               <button
-                key={i}
                 onClick={() => { setSelected(i); setFocus(null); }}
                 style={{
+                  flex: 1, minWidth: 0,
                   display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.45rem 0.7rem', textAlign: 'left',
                   border: `1px solid ${i === selected ? 'var(--accent-blue)' : 'var(--glass-border)'}`,
                   background: i === selected ? 'var(--accent-blue-15)' : 'white', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
@@ -114,10 +191,21 @@ export default function TracePanel({ reference, circular }: { reference: string;
                   </span>
                 )}
                 <span style={{ fontSize: '0.7rem', fontWeight: 700, color: chip[1], background: `${chip[1]}18`, padding: '0.1rem 0.45rem', borderRadius: 4 }}>{chip[0]}</span>
+                {!r.id && !r.error && <span title="Shown here but not stored with the sequence" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>unsaved</span>}
               </button>
+              <button
+                onClick={() => remove(i)}
+                title={r.id ? 'Remove this read from the sequence' : 'Close this read'}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0 0.25rem' }}
+              >✕</button>
+              </div>
             );
           })}
         </div>
+      )}
+
+      {notice && (
+        <div style={{ padding: '0.5rem 0.8rem', marginBottom: '0.6rem', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 7, fontSize: '0.8rem', color: '#92400e' }}>{notice}</div>
       )}
 
       {reads[selected]?.error && (

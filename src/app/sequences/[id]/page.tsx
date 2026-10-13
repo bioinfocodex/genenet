@@ -34,6 +34,12 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
     fullLibrary(),
     prisma.oligo.findMany({ where: { archived: false }, select: { id: true, code: true, name: true, sequence: true } }),
   ]);
+  // Metadata only; the trace files themselves are fetched by the panel.
+  const reads = await prisma.sequencingRead.findMany({
+    where: { geneSequenceId: seq.id },
+    select: { id: true, fileName: true, sampleName: true, runDate: true, uploadedBy: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
 
   return (
     <div>
@@ -98,6 +104,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         initialFeatures={normaliseFeatures(seq.features)}
         library={library}
         collection={collection}
+        savedReads={reads.map(r => ({ id: r.id, fileName: r.fileName, sampleName: r.sampleName, runDate: r.runDate, uploadedBy: r.uploadedBy.name }))}
         initialPrimers={seq.primers.map(p => ({
           id: p.id,
           name: p.name,

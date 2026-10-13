@@ -60,6 +60,7 @@ model User {
   gelsCreated        GelSimulation[]    @relation("GelCreator")
   samplesCreated     Sample[]           @relation("SampleCreator")
   oligosCreated      Oligo[]            @relation("OligoCreator")
+  readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
   entityTypesCreated   EntityType[]    @relation("EntityTypeCreator")
   entitiesCreated      Entity[]        @relation("EntityCreator")
@@ -453,6 +454,7 @@ model GeneSequence {
   updatedAt   DateTime @updatedAt
 
   primers     Primer[]
+  reads       SequencingRead[]
   simulations Simulation[]
   proteins    Protein[]    @relation("ProteinFromGene")
   tasks       Task[]       @relation("TaskSequences")
@@ -460,6 +462,31 @@ model GeneSequence {
   lineage     SequenceLineage[] @relation("LineageChild")
 
   wells PlateWell[] @relation("SequenceWells")
+}
+
+/// A Sanger read attached to the construct it was meant to confirm. The .ab1
+/// file is kept whole, so the trace can be redrawn and re-read later; the
+/// verdict is not stored, because it is recomputed against the sequence as it
+/// stands every time the read is shown and so cannot go stale when the
+/// sequence is edited.
+model SequencingRead {
+  id         String   @id @default(cuid())
+  fileName   String
+  /// As entered at the sequencer, which is what facilities name files by.
+  sampleName String?
+  runDate    String?
+  /// Number of basecalls, for listing reads without opening the file.
+  bases      Int
+  data       Bytes
+  createdAt  DateTime @default(now())
+
+  geneSequence   GeneSequence @relation(fields: [geneSequenceId], references: [id], onDelete: Cascade)
+  geneSequenceId String
+
+  uploadedBy   User   @relation("ReadUploader", fields: [uploadedById], references: [id])
+  uploadedById String
+
+  @@index([geneSequenceId])
 }
 
 /// The lab's oligo collection: one record per tube, used on any template it
