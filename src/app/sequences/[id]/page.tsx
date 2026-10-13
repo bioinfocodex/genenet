@@ -26,12 +26,13 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   if (!seq) notFound();
 
   // Where it came from, what came from it, and what has been done to it since.
-  const [ancestry, descendants, history, candidates, library] = await Promise.all([
+  const [ancestry, descendants, history, candidates, library, collection] = await Promise.all([
     ancestryOf(seq.id),
     descendantsOf(seq.id),
     historyFor('GeneSequence', seq.id),
     candidatesForSequence(seq.id),
     fullLibrary(),
+    prisma.oligo.findMany({ where: { archived: false }, select: { id: true, code: true, name: true, sequence: true } }),
   ]);
 
   return (
@@ -96,6 +97,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         strain={seq.strain}
         initialFeatures={normaliseFeatures(seq.features)}
         library={library}
+        collection={collection}
         initialPrimers={seq.primers.map(p => ({
           id: p.id,
           name: p.name,

@@ -5,7 +5,7 @@ import { searchWorkspace } from '@/lib/search';
 import type { ResultKind } from '@/lib/search';
 import {
   FlaskConical, Dna, ClipboardList, FolderKanban, CheckSquare,
-  FileText, Microscope, Atom, Snowflake, Library, Ruler, Search as SearchIcon,
+  FileText, Microscope, Atom, Snowflake, Library, Ruler, AudioLines, Search as SearchIcon,
 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +22,7 @@ const ICONS: Record<ResultKind, React.ReactNode> = {
   freezer: <Snowflake size={15} />,
   collection: <Library size={15} />,
   primer: <Ruler size={15} />,
+  oligo: <AudioLines size={15} />,
 };
 
 export default async function SearchPage({

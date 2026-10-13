@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, CheckSquare, Dna, Settings, Users, Database, Scissors,
   BookOpen, FolderKanban, FileText, FlaskConical, Layers, Activity, TestTube,
-  ChevronDown, ChevronRight, Thermometer, ImageIcon, Box, ShieldAlert, Download, GitBranch, ScanSearch, Layers3, Wand2, Grid3x3, NotebookPen, Boxes, LineChart,
+  ChevronDown, ChevronRight, Thermometer, ImageIcon, Box, ShieldAlert, Download, GitBranch, ScanSearch, Layers3, Wand2, Grid3x3, NotebookPen, Boxes, LineChart, AudioLines,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -33,6 +33,7 @@ export default function Sidebar({ userRole = 'MEMBER', userName = '' }: Props) {
     { group: 'Molecular Biology', items: [
       { name: 'Sequences',      path: '/sequences',       icon: Database },
       { name: 'Proteins',       path: '/proteins',        icon: FlaskConical },
+      { name: 'Oligos',         path: '/oligos',          icon: AudioLines },
       { name: 'Cloning Wizard', path: '/sequences/clone', icon: Scissors },
       { name: 'Search by Seq',  path: '/sequences/find',  icon: ScanSearch },
       { name: 'Assemble Reads', path: '/sequences/assemble', icon: Layers3 },

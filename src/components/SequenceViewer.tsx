@@ -3,7 +3,7 @@ import React, { useState, useMemo, useTransition, useRef, useCallback, useEffect
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
-  FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2,
+  FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check,
 } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
@@ -25,7 +25,10 @@ import type { SequenceFeature } from '@/lib/features';
 import { colourFor } from '@/lib/features';
 import { insertBases, deleteRange, replaceRange, cleanTyped, pushHistory, type EditSnapshot } from '@/lib/edit';
 import { findHost, findStrain, strainSummary, carriesMethylation } from '@/lib/hosts';
-import { placePrimers, bindingTitle } from '@/lib/primer-binding';
+import { placePrimers, bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
+import { collectionOnTemplate, type CollectionOligo } from '@/lib/oligos';
+import { addPrimerToCollection } from '@/app/actions/oligos';
+import Link from 'next/link';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
@@ -136,6 +139,11 @@ interface Props {
    * half lives in the database.
    */
   library?: LibraryFeature[];
+  /**
+   * The lab's oligo collection. Where each anneals is worked out here, against
+   * the sequence as currently edited, rather than passed in already placed.
+   */
+  collection?: CollectionOligo[];
 }
 
 // ─── Auto-suggest feature type from name ─────────────────────────────────────
@@ -198,7 +206,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [] }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -406,6 +414,39 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     () => placePrimers(primers, sequence, { circular: seqType === 'plasmid' }),
     [primers, sequence, seqType],
   );
+
+  // Collection oligos that anneal here. One already saved on this sequence with
+  // the same bases is that primer, not a second one, so it is drawn once.
+  const collectionSites = useMemo(() => {
+    const saved = new Set(primers.map(p => p.sequence.toUpperCase()));
+    return collectionOnTemplate(
+      collection.filter(o => !saved.has(o.sequence.toUpperCase())),
+      sequence,
+      seqType === 'plasmid',
+    );
+  }, [collection, primers, sequence, seqType]);
+
+  // What the maps draw: this sequence's primers, then the collection's.
+  const mapPrimers = useMemo<PlacedPrimer[]>(
+    () => [
+      ...placedPrimers,
+      ...collectionSites.map(c => ({
+        ...c, id: `oligo-${c.oligoId}`, name: `${c.code} ${c.name}`, recordedDirection: null, directionMismatch: false,
+      })),
+    ],
+    [placedPrimers, collectionSites],
+  );
+
+  const [filed, setFiled] = useState<Record<string, string>>({});
+  const fileToCollection = (primerId: string) => {
+    setFiled(prev => ({ ...prev, [primerId]: '…' }));
+    addPrimerToCollection(primerId).then(r => {
+      setFiled(prev => ({
+        ...prev,
+        [primerId]: 'error' in r ? r.error : r.existed ? `already ${r.code}` : `filed as ${r.code}`,
+      }));
+    });
+  };
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -1447,8 +1488,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               </div>
               <div ref={mapRef}>
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={placedPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={placedPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
+                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
               }
               </div>
 
@@ -1807,6 +1848,9 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                             <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{pr.gcContent}%</td>
                             <td style={{ padding: '0.45rem 0.75rem' }}>
                               <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
+                                {filed[pr.id]
+                                  ? <span style={{ fontSize: '0.7rem', color: filed[pr.id].startsWith('filed') || filed[pr.id].startsWith('already') ? 'var(--accent-green)' : 'var(--text-muted)', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 2 }}>{filed[pr.id] !== '…' && <Check size={11} />}{filed[pr.id]}</span>
+                                  : <button onClick={() => fileToCollection(pr.id)} title="Add to the lab's oligo collection" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><LibraryBig size={13} /></button>}
                                 <button onClick={() => navigator.clipboard.writeText(pr.sequence)} title="Copy sequence" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><Copy size={13} /></button>
                                 <button onClick={() => openEditPrimer(pr)} title="Edit" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><Pencil size={13} /></button>
                                 <button onClick={() => handleDeletePrimer(pr.id)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 2 }}><Trash2 size={13} /></button>
@@ -1815,6 +1859,38 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                           </tr>
                         );
                       })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '1.25rem 0 0.5rem' }}>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700 }}>From the oligo collection ({collectionSites.length})</div>
+                <Link href="/oligos" style={{ fontSize: '0.76rem' }}>All oligos →</Link>
+              </div>
+              {collectionSites.length === 0 ? (
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  {collection.length === 0 ? 'The collection is empty.' : `None of the ${collection.length} oligos in the collection anneals here by 15 or more bases of its 3′ end.`}
+                </div>
+              ) : (
+                <div style={{ border: '1px solid var(--glass-border)', borderRadius: 8, overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                    <tbody>
+                      {collectionSites.map((c, i) => (
+                        <tr key={`${c.oligoId}-${c.start}-${c.strand}`} style={{ borderTop: i ? '1px solid var(--glass-border)' : 'none' }}>
+                          <td style={{ padding: '0.4rem 0.75rem', whiteSpace: 'nowrap' }}>
+                            <Link href={`/oligos/${c.oligoId}`} style={{ fontFamily: 'monospace', fontWeight: 700 }}>{c.code}</Link>{' '}
+                            <span style={{ fontWeight: 600 }}>{c.name}</span>
+                          </td>
+                          <td style={{ padding: '0.4rem 0.75rem', fontFamily: 'monospace', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                            {(c.start + 1).toLocaleString()}&ndash;{(c.end + 1).toLocaleString()}
+                          </td>
+                          <td style={{ padding: '0.4rem 0.75rem', color: 'var(--text-muted)' }}>{c.strand}</td>
+                          <td style={{ padding: '0.4rem 0.75rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                            {c.exact ? `${c.annealLength} nt, full length` : `${c.annealLength} nt + ${c.tailLength} nt tail`}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
