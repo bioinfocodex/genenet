@@ -103,7 +103,7 @@ export default async function OligosPage({ searchParams }: { searchParams: Promi
         </div>
       )}
       <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.6rem' }}>
-        {oligos.length} oligo{oligos.length === 1 ? '' : 's'}. Tm is nearest-neighbour for the whole oligo at 50 mM Na⁺; a tailed oligo anneals at the Tm of its 3′ part, shown on each sequence it binds.
+        {oligos.length} oligo{oligos.length === 1 ? '' : 's'}. Tm is nearest-neighbour for the whole oligo in a standard PCR buffer (50 mM Na⁺, 1.5 mM Mg²⁺, 0.6 mM dNTP); a tailed oligo anneals at the Tm of its 3′ part, shown on each sequence it binds.
       </p>
     </div>
   );
