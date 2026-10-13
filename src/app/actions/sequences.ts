@@ -189,26 +189,33 @@ export async function importSequence(formData: FormData) {
 
 // ─── Primer CRUD ──────────────────────────────────────────────────────────────
 
-export async function addPrimer(formData: FormData) {
+/**
+ * Returns the stored row's id. The viewer shows a new primer at once under a
+ * temporary id and swaps this in when it arrives; without it, a primer added
+ * in this session could not be edited, deleted or filed until a reload.
+ */
+export async function addPrimer(formData: FormData): Promise<{ id: string } | null> {
   const geneSequenceId = formData.get('geneSequenceId') as string;
   const name = (formData.get('name') as string).trim();
   const rawSeq = (formData.get('sequence') as string).trim();
   const direction = (formData.get('direction') as string) || 'forward';
   const notes = (formData.get('notes') as string | null)?.trim() || null;
 
-  if (!geneSequenceId || !name || !rawSeq) return;
+  if (!geneSequenceId || !name || !rawSeq) return null;
 
   const sequence = rawSeq.toUpperCase().replace(/[^ACGT]/g, '');
-  if (!sequence) return;
+  if (!sequence) return null;
 
   const tm = calcTm(sequence);
   const gcContent = calcGC(sequence);
 
-  await prisma.primer.create({
+  const created = await prisma.primer.create({
     data: { name, sequence, direction, tm, gcContent, notes, geneSequenceId },
+    select: { id: true },
   });
 
   revalidatePath(`/sequences/${geneSequenceId}`);
+  return created;
 }
 
 export async function deletePrimer(formData: FormData) {
@@ -253,7 +260,7 @@ export async function updatePrimer(formData: FormData) {
  * on a results panel. The parts it came from are recorded in the description,
  * because a construct whose provenance is lost is a construct nobody trusts.
  */
-export type SaveConstructResult = { error: string } | { id: string };
+export type SaveConstructResult = { error: string } | { id: string; features: number };
 
 export async function saveConstruct(formData: FormData): Promise<SaveConstructResult> {
   const session = await requireUser();
@@ -306,7 +313,7 @@ export async function saveConstruct(formData: FormData): Promise<SaveConstructRe
   await recordLineage(built.id, parents, method, session.id);
 
   revalidatePath('/sequences');
-  return { id: built.id };
+  return { id: built.id, features: (JSON.parse(features) as unknown[]).length };
 }
 
 export async function saveSimulation(formData: FormData) {
