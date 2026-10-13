@@ -6,6 +6,7 @@ import {
   type TraceVerification, type TraceDiscrepancy, type OrientedTrace, type TraceRead,
 } from '@/lib/trace-alignment';
 import { deleteRead } from '@/app/actions/reads';
+import { coverageOf, unresolved, type Agreement, type Coverage } from '@/lib/read-coverage';
 
 /**
  * Sanger traces against this sequence: load the .ab1 files a facility sends
@@ -142,6 +143,13 @@ export default function TracePanel({ sequenceId, reference, circular, savedReads
   };
 
   const current = results[selected] ?? null;
+
+  // All usable reads together: what is covered, and what each difference
+  // looks like across every read that sees it.
+  const coverage = useMemo(() => coverageOf(
+    reference.replace(/[^A-Za-z]/g, '').length,
+    results.flatMap((v, i) => (v ? [{ name: v.name || reads[i].file, verification: v }] : [])),
+  ), [results, reads, reference]);
   const shown = useMemo(
     () => current?.discrepancies.filter(d => showLow || d.confidence === 'high') ?? [],
     [current, showLow],
@@ -166,6 +174,14 @@ export default function TracePanel({ sequenceId, reference, circular, savedReads
           Saved with this sequence. Ends below Q20 are trimmed; a difference counts when its call is Q30 or better.
         </span>
       </div>
+
+      {coverage && coverage.spans.length > 0 && (
+        <ReadsOverview
+          coverage={coverage}
+          reads={reads.map((r, i) => ({ name: results[i]?.name ?? r.file, verification: results[i] }))}
+          onPickRead={(i, column) => { setSelected(i); setFocus(column); }}
+        />
+      )}
 
       {reads.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem' }}>
@@ -279,6 +295,138 @@ const cell: React.CSSProperties = { padding: '0.3rem 0.4rem', borderBottom: '1px
 
 // ─── Chromatogram ─────────────────────────────────────────────────────────────
 
+// ─── Several reads together ───────────────────────────────────────────────────
+
+const AGREEMENT: Record<Agreement, { label: string; colour: string; meaning: string }> = {
+  confirmed: { label: 'confirmed', colour: '#dc2626', meaning: 'two or more reads agree: this is in the plasmid' },
+  contested: { label: 'contested', colour: '#7c3aed', meaning: 'reads clearly disagree, or a mixed peak: a mixed template?' },
+  single: { label: 'one read', colour: '#ea580c', meaning: 'only one read covers it: sequence again to settle' },
+  contradicted: { label: 'read error', colour: '#64748b', meaning: 'another read clearly reads the reference base' },
+};
+
+const VERDICT_COLOUR: Record<string, string> = { confirmed: '#16a34a', differs: '#ea580c', unusable: '#94a3b8' };
+
+function ReadsOverview({ coverage, reads, onPickRead }: {
+  coverage: Coverage;
+  reads: { name: string; verification: TraceVerification | null }[];
+  onPickRead: (readIndex: number, column: number) => void;
+}) {
+  const [comparePos, setComparePos] = useState<number | null>(null);
+  const n = coverage.length;
+  const pct = (x: number) => `${((x / n) * 100).toFixed(x === n ? 0 : 1)}%`;
+  const open = unresolved(coverage);
+  const lanes = coverage.spans;
+  const W = 1000;
+  const laneH = 9;
+  const top = 12;
+  const H = top + lanes.length * (laneH + 3) + 4;
+  const x = (p: number) => ((p - 1) / n) * W;
+
+  const pieces = (start: number, end: number) =>
+    end >= start ? [[start, end]] : [[start, n], [1, end]];
+
+  // Readings of every read that has a base at the chosen position.
+  const atPos = comparePos == null ? [] : reads.flatMap((r, i) => {
+    const v = r.verification;
+    if (!v) return [];
+    const column = v.columns.findIndex(c => c.refPos === comparePos && c.kind !== 'insertion');
+    return column >= 0 ? [{ i, name: r.name, v, column }] : [];
+  });
+
+  return (
+    <div style={{ marginBottom: '1rem', padding: '0.75rem 0.9rem', border: '1px solid var(--glass-border)', borderRadius: 8, background: 'white' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem', marginBottom: '0.4rem' }}>
+        <strong>All reads together</strong>
+        <span style={{ color: 'var(--text-secondary)' }}>
+          {coverage.covered.toLocaleString()} of {n.toLocaleString()} bp covered ({pct(coverage.covered)}) ·
+          {' '}{coverage.bothStrands.toLocaleString()} bp from both strands ·
+          {' '}{coverage.singleRead.toLocaleString()} bp on one read only
+        </span>
+      </div>
+
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: H, cursor: 'crosshair', display: 'block' }}
+        onClick={e => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setComparePos(Math.min(n, Math.max(1, Math.round(((e.clientX - rect.left) / rect.width) * n) + 1)));
+        }}
+      >
+        <title>Click a position to compare every read there</title>
+        {/* Depth: red where nothing covers, amber on one read, green on two or more. */}
+        {coverage.depth.map((d, i) => (i % Math.max(1, Math.floor(n / W)) === 0 ? (
+          <rect key={i} x={x(i + 1)} y={0} width={Math.max(1, W / n * Math.max(1, Math.floor(n / W)))} height={6}
+            fill={d === 0 ? '#fecaca' : d === 1 ? '#fde68a' : '#86efac'} />
+        ) : null))}
+        {lanes.map((sp, k) => pieces(sp.start, sp.end).map(([a, b], j) => (
+          <rect key={`${k}-${j}`} x={x(a)} y={top + k * (laneH + 3)} width={Math.max(2, x(b + 1) - x(a))} height={laneH}
+            rx={2} fill={VERDICT_COLOUR[sp.verdict]} opacity={0.75}>
+            <title>{`${sp.read}: ${sp.start.toLocaleString()}–${sp.end.toLocaleString()} ${sp.reversed ? '(reverse)' : '(forward)'}`}</title>
+          </rect>
+        )))}
+        {coverage.disagreements.map(d => (
+          <line key={`${d.position}-${d.reference}`} x1={x(d.position)} x2={x(d.position)} y1={0} y2={H}
+            stroke={AGREEMENT[d.agreement].colour} strokeWidth={2} opacity={0.8} />
+        ))}
+        {comparePos != null && <line x1={x(comparePos)} x2={x(comparePos)} y1={0} y2={H} stroke="#2563eb" strokeWidth={2} />}
+      </svg>
+
+      {coverage.gaps.length > 0 && (
+        <div style={{ fontSize: '0.76rem', color: '#b91c1c', marginTop: '0.35rem' }}>
+          Not covered: {coverage.gaps.slice(0, 6).map(g => `${g.start.toLocaleString()}–${g.end.toLocaleString()}`).join(', ')}
+          {coverage.gaps.length > 6 ? ` and ${coverage.gaps.length - 6} more` : ''}
+        </div>
+      )}
+
+      {coverage.disagreements.length > 0 ? (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', marginTop: '0.5rem' }}>
+          <tbody>
+            {coverage.disagreements.map(d => (
+              <tr key={`${d.position}-${d.reference}`} onClick={() => setComparePos(d.position)}
+                style={{ cursor: 'pointer', borderTop: '1px solid var(--glass-border)', background: comparePos === d.position ? 'var(--accent-blue-15)' : undefined }}>
+                <td style={{ padding: '0.3rem 0.4rem', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{d.change}</td>
+                <td style={{ padding: '0.3rem 0.4rem', whiteSpace: 'nowrap' }}>
+                  <span title={AGREEMENT[d.agreement].meaning} style={{ fontWeight: 700, color: AGREEMENT[d.agreement].colour }}>{AGREEMENT[d.agreement].label}</span>
+                </td>
+                <td style={{ padding: '0.3rem 0.4rem', color: 'var(--text-secondary)' }}>
+                  {d.calls.map(c => `${c.read} ${c.reversed ? '◀' : '▶'} ${c.base || '—'}${c.quality != null ? ` Q${c.quality}` : ''}${c.mixed ? ' (mixed)' : ''}`).join(' · ')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div style={{ fontSize: '0.78rem', color: '#16a34a', marginTop: '0.4rem' }}>No read differs from the reference anywhere it covers.</div>
+      )}
+
+      <div style={{ fontSize: '0.76rem', marginTop: '0.4rem', color: open.length ? '#b91c1c' : 'var(--text-muted)' }}>
+        {open.length
+          ? `${open.length} difference${open.length === 1 ? '' : 's'} not explained as a read error.`
+          : coverage.disagreements.length ? 'Every difference is explained as a read error.' : ''}
+      </div>
+
+      {comparePos != null && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <div style={{ fontSize: '0.78rem', fontWeight: 700, marginBottom: '0.3rem' }}>
+            Every read at {comparePos.toLocaleString()}
+            <button onClick={() => setComparePos(null)} style={{ marginLeft: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+          </div>
+          {atPos.length === 0 && <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No read covers this position.</div>}
+          {atPos.map(r => (
+            <div key={r.i} style={{ marginBottom: '0.5rem' }}>
+              <button onClick={() => onPickRead(r.i, r.column)} style={{ fontSize: '0.74rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-blue)', padding: 0 }}>
+                {r.name} {r.v.reversed ? '◀' : '▶'} — open this read here
+              </button>
+              <TraceViewer key={`${r.i}-${comparePos}`} verification={r.v} focus={r.column} onFocus={() => {}} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const COL = 12;
 const ROW = { ruler: 14, ref: 16, read: 16, quality: 18, trace: 120 };
 const HEIGHT = ROW.ruler + ROW.ref + ROW.read + ROW.quality + ROW.trace + 6;
@@ -318,10 +466,20 @@ function TraceViewer({ verification, focus, onFocus }: {
     return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
+  // The first position is jumped to, later ones scrolled to. A smooth scroll
+  // started while the viewer is still being laid out is dropped, so a viewer
+  // opened at a position showed the start of its read instead.
+  const placed = useRef(false);
+  useLayoutEffect(() => {
     if (focus == null || !scroller.current) return;
     const el = scroller.current;
-    el.scrollTo({ left: Math.max(0, focus * COL - el.clientWidth / 2), behavior: 'smooth' });
+    const left = Math.max(0, focus * COL - el.clientWidth / 2);
+    if (placed.current) el.scrollTo({ left, behavior: 'smooth' });
+    else {
+      el.scrollLeft = left;
+      setScrollLeft(el.scrollLeft);
+      placed.current = true;
+    }
   }, [focus]);
 
   const draw = useCallback(() => {
