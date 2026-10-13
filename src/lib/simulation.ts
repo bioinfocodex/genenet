@@ -1,3 +1,5 @@
+import { nnTm } from './tm';
+
 // ─── Nucleotide utilities ─────────────────────────────────────────────────────
 
 const COMPLEMENT: Record<string, string> = {
@@ -17,13 +19,23 @@ export function calcGC(seq: string): number {
   return Math.round(((s.match(/[GC]/g) ?? []).length / s.length) * 100);
 }
 
-/** Wallace rule Tm (°C). For primers >13 bp uses nearest-neighbour approximation. */
+/**
+ * Tm in °C, to one decimal, in a standard PCR buffer.
+ *
+ * This was the Wallace rule below 14 bases and a GC-content formula above,
+ * with a comment calling the second nearest-neighbour. Neither can see base
+ * order, neither counted magnesium, and the two disagreed with lib/tm.ts --
+ * which the primer designer and cloning methods use -- by six to ten degrees
+ * on an ordinary primer, so one oligo showed two temperatures depending on
+ * which panel was open. It is now that same calculation; see lib/tm.ts for the
+ * model and the buffer.
+ *
+ * Returns 0 for fewer than two bases, as the old formula did for an empty
+ * string, so callers that print the number never print NaN.
+ */
 export function calcTm(seq: string): number {
-  const s = seq.toUpperCase().replace(/[^ACGT]/g, '');
-  const gc = (s.match(/[GC]/g) ?? []).length;
-  const at = (s.match(/[AT]/g) ?? []).length;
-  if (s.length <= 13) return 2 * at + 4 * gc;
-  return Math.round(64.9 + 41 * (gc - 16.4) / s.length);
+  const t = nnTm(seq.toUpperCase().replace(/[^ACGT]/g, ''));
+  return Number.isFinite(t) ? Math.round(t * 10) / 10 : 0;
 }
 
 // ─── PCR Simulation ───────────────────────────────────────────────────────────

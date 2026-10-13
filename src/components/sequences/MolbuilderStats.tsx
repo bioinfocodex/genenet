@@ -11,7 +11,7 @@ import {
 // This panel reports DNA statistics; the amino-acid tables and the protein
 // molecular-weight helper were imported but never used. estimateProteinMW does
 // not exist in molbuilder-logic at all, which broke the build.
-import { wallaceTm } from '@/lib/molbuilder-logic';
+import { calcTm } from '@/lib/simulation';
 import type { SequenceFeature } from '@/components/SequenceViewer';
 
 interface MolbuilderStatsProps {
@@ -38,7 +38,7 @@ export default function MolbuilderStats({
   const G = (targetSeq.match(/G/gi) || []).length;
   const C = (targetSeq.match(/C/gi) || []).length;
   const GC = len > 0 ? ((G + C) / len * 100).toFixed(1) : '0';
-  const tm = wallaceTm(targetSeq);
+  const tm = calcTm(targetSeq);
   // ~650 Da per base pair, the standard double-stranded approximation. This
   // was 330, which is the per-nucleotide figure for a single strand and so
   // reported half the mass of any plasmid or other duplex shown here.
@@ -91,7 +91,7 @@ export default function MolbuilderStats({
             }} />
           </div>
 
-          <StatRow label="Tm (Wallace)" value={`${tm}°C`} icon={<Info size={14} />} />
+          <StatRow label="Tm" value={`${tm}°C`} icon={<Info size={14} />} />
           <StatRow label="Molecular Weight (dsDNA)" value={`${mw} kDa`} icon={<Dna size={14} />} />
         </div>
       </div>

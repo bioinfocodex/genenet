@@ -78,14 +78,6 @@ export function getFeatureColor(type: string): string {
   return '#94a3b8'; // Default
 }
 
-/** Wallace rule Tm calculation (matching Molbuilder's implementation) */
-export function wallaceTm(seq: string): number {
-  const s = seq.toUpperCase().replace(/[^ACGT]/g, '');
-  const gc = (s.match(/[GC]/g) ?? []).length;
-  const at = (s.match(/[AT]/g) ?? []).length;
-  return 2 * at + 4 * gc;
-}
-
 
 // ─── AMINO ACIDS (Translation) ────────────────────────────────────────────────
 
