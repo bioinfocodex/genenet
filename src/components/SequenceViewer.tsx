@@ -16,7 +16,7 @@ import {
   type ORF, type PCRResult, type LigationResult,
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
-import TracePanel, { type SavedReadInfo } from './sequences/TracePanel';
+import TracePanel, { type SavedReadInfo, type VerificationInfo } from './sequences/TracePanel';
 import { annotate } from '@/lib/annotation';
 import { dormantEnzymes, blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
@@ -154,6 +154,8 @@ interface Props {
   collection?: CollectionOligo[];
   /** Sanger reads stored with this sequence. */
   savedReads?: SavedReadInfo[];
+  /** Sign-offs that this sequence was confirmed by sequencing. */
+  verifications?: VerificationInfo[];
 }
 
 // ─── Auto-suggest feature type from name ─────────────────────────────────────
@@ -216,7 +218,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [] }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [] }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -2065,7 +2067,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             />
           )}
           {leftTab === 'aigen'  && <AIGenePanel sequence={sequence} />}
-          {leftTab === 'sanger' && <SangerPanel sequenceId={id} reference={sequence} circular={seqType === 'plasmid'} savedReads={savedReads} />}
+          {leftTab === 'sanger' && <SangerPanel sequenceId={id} reference={sequence} circular={seqType === 'plasmid'} savedReads={savedReads} verifications={verifications} />}
           {leftTab === 'crispr' && <CrisprPanel sequence={sequence} selection={selection} onSelect={setSelection} />}
           {leftTab === 'dimer'  && <DimerPanel primers={primers} />}
           {leftTab === 'design' && (
@@ -4253,7 +4255,7 @@ function AIGenePanel({ sequence }: { sequence: string }) {
 // by verifyRead from lib/alignment: affine gaps, free reference ends, both
 // orientations tried, and differences reported by position in the reference.
 
-function SangerPanel({ sequenceId, reference, circular, savedReads }: { sequenceId: string; reference: string; circular: boolean; savedReads: SavedReadInfo[] }) {
+function SangerPanel({ sequenceId, reference, circular, savedReads, verifications }: { sequenceId: string; reference: string; circular: boolean; savedReads: SavedReadInfo[]; verifications: VerificationInfo[] }) {
   const [mode, setMode] = useState<'traces' | 'paste'>('traces');
   return (
     <div>
@@ -4276,7 +4278,7 @@ function SangerPanel({ sequenceId, reference, circular, savedReads }: { sequence
         </div>
       </div>
       {/* Both stay mounted so switching does not throw away loaded traces. */}
-      <div style={{ display: mode === 'traces' ? 'block' : 'none' }}><TracePanel sequenceId={sequenceId} reference={reference} circular={circular} savedReads={savedReads} /></div>
+      <div style={{ display: mode === 'traces' ? 'block' : 'none' }}><TracePanel sequenceId={sequenceId} reference={reference} circular={circular} savedReads={savedReads} verifications={verifications} /></div>
       <div style={{ display: mode === 'paste' ? 'block' : 'none' }}><PastedReadPanel reference={reference} /></div>
     </div>
   );

@@ -7,6 +7,8 @@ import {
 } from '@/lib/trace-alignment';
 import { deleteRead } from '@/app/actions/reads';
 import { coverageOf, unresolved, type Agreement, type Coverage } from '@/lib/read-coverage';
+import { signRecord } from '@/app/actions/signatures';
+import { useRouter } from 'next/navigation';
 
 /**
  * Sanger traces against this sequence: load the .ab1 files a facility sends
@@ -18,6 +20,16 @@ const BASE_COLOUR: Record<string, string> = { A: '#16a34a', C: '#2563eb', G: '#1
 const KIND_LABEL: Record<TraceDiscrepancy['kind'], string> = {
   match: 'match', mismatch: 'mismatch', insertion: 'insertion', deletion: 'deletion', mixed: 'mixed peak',
 };
+
+/** A sign-off that the sequence matches its reads. */
+export interface VerificationInfo {
+  id: string;
+  at: string;
+  signerName: string;
+  note: string | null;
+  /** False once the sequence has been edited since. */
+  current: boolean;
+}
 
 /** A read stored with the sequence, as the page lists it. */
 export interface SavedReadInfo {
@@ -52,11 +64,12 @@ function parseTrace(file: string, bytes: Uint8Array): LoadedRead {
   };
 }
 
-export default function TracePanel({ sequenceId, reference, circular, savedReads = [] }: {
+export default function TracePanel({ sequenceId, reference, circular, savedReads = [], verifications = [] }: {
   sequenceId: string;
   reference: string;
   circular: boolean;
   savedReads?: SavedReadInfo[];
+  verifications?: VerificationInfo[];
 }) {
   const [reads, setReads] = useState<LoadedRead[]>([]);
   const [selected, setSelected] = useState(0);
@@ -183,6 +196,15 @@ export default function TracePanel({ sequenceId, reference, circular, savedReads
         />
       )}
 
+      {(coverage.spans.length > 0 || verifications.length > 0) && (
+        <SignOff
+          sequenceId={sequenceId}
+          coverage={coverage}
+          verifications={verifications}
+          unsaved={reads.filter(r => !r.id && r.trace).map(r => r.file)}
+        />
+      )}
+
       {reads.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem' }}>
           {reads.map((r, i) => {
@@ -294,6 +316,102 @@ export default function TracePanel({ sequenceId, reference, circular, savedReads
 const cell: React.CSSProperties = { padding: '0.3rem 0.4rem', borderBottom: '1px solid var(--glass-border)' };
 
 // ─── Chromatogram ─────────────────────────────────────────────────────────────
+
+// ─── Signing off ──────────────────────────────────────────────────────────────
+
+/**
+ * Record that the sequence on file is what sequencing shows.
+ *
+ * The note is written from the evidence rather than typed: which reads, how
+ * much they cover, and every difference not explained as a read error, which
+ * the signer has to accept in so many words. A sign-off that does not say what
+ * it accepted is a tick, not a record.
+ */
+function SignOff({ sequenceId, coverage, verifications, unsaved }: {
+  sequenceId: string;
+  coverage: Coverage;
+  verifications: VerificationInfo[];
+  unsaved: string[];
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [accept, setAccept] = useState(false);
+  const [password, setPassword] = useState('');
+  const [extra, setExtra] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const outstanding = unresolved(coverage);
+  const n = coverage.length;
+
+  const evidence = [
+    `Reads: ${coverage.spans.map(s => `${s.read} ${s.reversed ? '(rev)' : '(fwd)'} ${s.start}-${s.end}`).join('; ')}.`,
+    `Covered ${coverage.covered} of ${n} bp (${((coverage.covered / n) * 100).toFixed(1)}%), ${coverage.bothStrands} bp from both strands.`,
+    outstanding.length
+      ? `Accepted differences: ${outstanding.map(d => `${d.change} (${d.agreement})`).join(', ')}.`
+      : 'No unexplained differences.',
+  ].join(' ');
+
+  const sign = async () => {
+    setError(null);
+    setPending(true);
+    const fd = new FormData();
+    fd.set('model', 'GeneSequence');
+    fd.set('recordId', sequenceId);
+    fd.set('meaning', 'verified');
+    fd.set('password', password);
+    fd.set('note', extra.trim() ? `${evidence} ${extra.trim()}` : evidence);
+    const r = await signRecord(fd);
+    setPending(false);
+    if ('error' in r) { setError(r.error); return; }
+    setPassword(''); setExtra(''); setAccept(false); setOpen(false);
+    router.refresh();
+  };
+
+  return (
+    <div style={{ marginBottom: '1rem', padding: '0.7rem 0.9rem', border: '1px solid var(--glass-border)', borderRadius: 8, background: 'white', fontSize: '0.8rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <strong>Sequence verification</strong>
+        {!open && coverage.spans.length > 0 && (
+          <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem' }} onClick={() => setOpen(true)}>
+            Sign off as sequence-verified
+          </button>
+        )}
+      </div>
+      {verifications.length === 0 && <div style={{ color: 'var(--text-muted)', marginTop: '0.3rem' }}>Not signed off yet.</div>}
+      {verifications.map(v => (
+        <div key={v.id} style={{ marginTop: '0.35rem', color: v.current ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+          {v.current ? '✓' : '○'} {v.signerName}, {new Date(v.at).toLocaleString()}{v.current ? '' : ' — superseded: the sequence was edited afterwards'}
+          {v.note && <div style={{ color: 'var(--text-secondary)', marginLeft: '1rem' }}>{v.note}</div>}
+        </div>
+      ))}
+
+      {open && (
+        <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+          <div style={{ padding: '0.5rem 0.65rem', background: 'var(--bg-secondary)', borderRadius: 6, color: 'var(--text-secondary)' }}>{evidence}</div>
+          {unsaved.length > 0 && (
+            <div style={{ color: '#b91c1c' }}>Not stored with the sequence, so not part of the record: {unsaved.join(', ')}.</div>
+          )}
+          {outstanding.length > 0 && (
+            <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
+              <input type="checkbox" checked={accept} onChange={e => setAccept(e.target.checked)} />
+              <span>I accept {outstanding.length === 1 ? 'this difference' : `these ${outstanding.length} differences`} as part of the construct, or as understood.</span>
+            </label>
+          )}
+          <input value={extra} onChange={e => setExtra(e.target.value)} placeholder="Note (optional), e.g. which clone or prep" className="input-control" style={{ padding: '0.35rem 0.55rem', fontSize: '0.8rem' }} />
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Your password, to sign" className="input-control" style={{ padding: '0.35rem 0.55rem', fontSize: '0.8rem' }} />
+          {error && <div style={{ color: '#b91c1c' }}>{error}</div>}
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <button className="btn btn-secondary" style={{ fontSize: '0.78rem' }} onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn btn-primary" style={{ fontSize: '0.78rem' }} onClick={sign}
+              disabled={pending || !password || (outstanding.length > 0 && !accept)}>
+              {pending ? 'Signing…' : 'Sign'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Several reads together ───────────────────────────────────────────────────
 
