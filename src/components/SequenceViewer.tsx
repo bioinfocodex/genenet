@@ -27,7 +27,7 @@ import { insertBases, deleteRange, replaceRange, cleanTyped, pushHistory, type E
 import { findHost, findStrain, strainSummary, carriesMethylation } from '@/lib/hosts';
 import { placePrimers, bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
 import { collectionOnTemplate, type CollectionOligo } from '@/lib/oligos';
-import { codingChanges, type Effect } from '@/lib/point-mutation';
+import MutagenesisPanel, { type NewPrimer } from './sequences/MutagenesisPanel';
 import { addPrimerToCollection } from '@/app/actions/oligos';
 import Link from 'next/link';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
@@ -835,6 +835,29 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
       fd.append('direction', modalPrimer.strand);
       fd.append('notes', modalPrimer.notes || '');
       await addPrimer(fd);
+    });
+  };
+
+  /** Primers designed by a panel rather than typed: shown at once, then stored. */
+  const saveDesignedPrimers = (list: NewPrimer[]) => {
+    setPrimers(prev => [
+      ...prev,
+      ...list.map((p, i) => ({
+        id: `primer-${Date.now()}-${i}`, name: p.name, sequence: p.sequence, direction: p.direction,
+        tm: calcTm(p.sequence), gcContent: calcGC(p.sequence), notes: p.notes,
+      })),
+    ]);
+    setMolLayers(prev => ({ ...prev, primer: true }));
+    startTransition(async () => {
+      for (const p of list) {
+        const fd = new FormData();
+        fd.append('geneSequenceId', id);
+        fd.append('name', p.name);
+        fd.append('sequence', p.sequence);
+        fd.append('direction', p.direction);
+        fd.append('notes', p.notes);
+        await addPrimer(fd);
+      }
     });
   };
 
@@ -2034,7 +2057,17 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               }}
             />
           )}
-          {leftTab === 'mutagenesis' && <MutagenesisPanel sequence={sequence} selection={selection} features={features} />}
+          {leftTab === 'mutagenesis' && (
+            <MutagenesisPanel
+              sequenceId={id}
+              sequenceName={seqName}
+              sequence={sequence}
+              circular={seqType === 'plasmid'}
+              selection={selection}
+              features={features}
+              onSavePrimers={saveDesignedPrimers}
+            />
+          )}
           {leftTab === 'gel'  && <VirtualGelPanel sequence={sequence} reSitesByEnzyme={reSitesByEnzyme} seqType={seqType} />}
           {leftTab === 'fold' && <FoldPanel sequence={sequence} selection={selection} />}
         </div>
@@ -4666,172 +4699,6 @@ function LiveDesignPanel({
       >
         Create Primer from Region
       </button>
-    </div>
-  );
-}
-
-// ─── Site-Directed Mutagenesis Panel ──────────────────────────────────────────
-
-// The protein consequence comes from lib/point-mutation, which reads the
-// change in the frame of the annotated CDS that contains it. This panel used
-// to translate a window starting wherever the window started -- the wrong
-// frame two times in three, and the wrong strand for any gene on the bottom.
-
-const EFFECT_STYLE: Record<Effect | 'non-coding' | 'none', { label: string; colour: string }> = {
-  silent: { label: 'Silent', colour: '#16a34a' },
-  missense: { label: 'Missense', colour: '#dc2626' },
-  nonsense: { label: 'Nonsense', colour: '#7c3aed' },
-  'stop-loss': { label: 'Stop lost', colour: '#7c3aed' },
-  'start-loss': { label: 'Start lost', colour: '#7c3aed' },
-  'non-coding': { label: 'Not in a CDS', colour: '#64748b' },
-  none: { label: 'No change', colour: '#64748b' },
-};
-
-function MutagenesisPanel({ sequence, selection, features }: {
-  sequence: string;
-  selection: { start: number; end: number } | null;
-  features: SequenceFeature[];
-}) {
-  const defaultPos = selection ? selection.start : 1;
-  const [mutPos, setMutPos] = useState(defaultPos);
-  const [newBase, setNewBase] = useState<'A' | 'T' | 'C' | 'G'>('A');
-  const [showMutSeq, setShowMutSeq] = useState(false);
-
-  const pos = Math.max(1, Math.min(mutPos, sequence.length));
-  const origBase = sequence[pos - 1]?.toUpperCase() ?? '';
-
-  // Region: 15 bases around mutation (or use selection)
-  const regionStart = selection ? selection.start : Math.max(1, pos - 14);
-  const regionEnd   = selection ? selection.end   : Math.min(sequence.length, pos + 14);
-  const origRegion  = sequence.substring(regionStart - 1, regionEnd).toUpperCase();
-
-  const relPos = pos - regionStart; // 0-indexed within region
-  const mutRegion = origRegion.substring(0, relPos) + newBase + origRegion.substring(relPos + 1);
-
-  const origTm = origRegion.length >= 8 ? calcTm(origRegion) : 0;
-  const mutTm  = mutRegion.length  >= 8 ? calcTm(mutRegion)  : 0;
-  const tmDelta = mutTm - origTm;
-
-  const unchanged = newBase === origBase;
-  const changes = unchanged ? [] : codingChanges(sequence, features, pos, newBase);
-  const headline = unchanged ? 'none' : changes[0]?.effect ?? 'non-coding';
-  const impact = EFFECT_STYLE[headline].label;
-  const impactColor = EFFECT_STYLE[headline].colour;
-
-  const mutFullSeq = sequence.substring(0, pos - 1) + newBase + sequence.substring(pos);
-
-  return (
-    <div>
-      <div style={{ marginBottom: '1rem' }}>
-        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Site-Directed Mutagenesis</h3>
-        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
-          Substitute a single base and see what it does to the Tm of the region and to any annotated protein it falls in, read in that protein’s own frame.
-        </p>
-      </div>
-
-      {/* Controls */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.75rem', alignItems: 'end', marginBottom: '0.75rem' }}>
-        <div>
-          <label style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '0.2rem' }}>
-            Base Position (1 – {sequence.length})
-          </label>
-          <input
-            type="number" min={1} max={sequence.length} className="input-control"
-            value={mutPos} onChange={e => setMutPos(parseInt(e.target.value) || 1)}
-            style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' }}
-          />
-        </div>
-        <div>
-          <div style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.2rem' }}>
-            Original: <span style={{ color: '#ea580c', fontFamily: 'monospace' }}>{origBase}</span>
-          </div>
-          <div style={{ display: 'flex', gap: '0.3rem' }}>
-            {(['A', 'T', 'C', 'G'] as const).map(b => (
-              <button key={b} onClick={() => setNewBase(b)} disabled={b === origBase} style={{ width: 32, height: 32, borderRadius: '5px', border: `1px solid ${newBase === b ? 'var(--accent-blue)' : 'var(--glass-border)'}`, background: newBase === b ? 'var(--accent-blue-15)' : b === origBase ? '#f1f5f9' : 'white', color: newBase === b ? 'var(--accent-blue)' : b === origBase ? '#94a3b8' : 'var(--text-primary)', cursor: b === origBase ? 'not-allowed' : 'pointer', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
-                {b}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Impact summary */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
-        <div style={{ padding: '0.5rem 0.6rem', background: 'white', border: '1px solid var(--glass-border)', borderRadius: '7px' }}>
-          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Mutant Tm</div>
-          <div style={{ fontFamily: 'monospace', fontSize: '1.1rem', fontWeight: 800, color: '#2563eb' }}>{mutTm}°C</div>
-          <div style={{ fontSize: '0.68rem', color: tmDelta >= 0 ? '#16a34a' : '#dc2626', fontWeight: 600 }}>
-            {tmDelta >= 0 ? '+' : ''}{tmDelta.toFixed(1)}°C vs original
-          </div>
-        </div>
-        <div style={{ padding: '0.5rem 0.6rem', background: 'white', border: '1px solid var(--glass-border)', borderRadius: '7px' }}>
-          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Substitution</div>
-          <div style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: 800 }}>
-            <span style={{ color: '#ea580c' }}>{origBase}</span>
-            <span style={{ color: 'var(--text-muted)' }}> → </span>
-            <span style={{ color: '#3b82f6' }}>{newBase}</span>
-          </div>
-          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>pos {pos}</div>
-        </div>
-        <div style={{ padding: '0.5rem 0.6rem', background: impactColor + '10', border: `1px solid ${impactColor}33`, borderRadius: '7px' }}>
-          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Protein Impact</div>
-          <div style={{ fontSize: '1rem', fontWeight: 800, color: impactColor }}>{impact}</div>
-          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-            {changes[0] ? `${changes[0].feature} ${changes[0].notation}${changes.length > 1 ? ` +${changes.length - 1} more` : ''}` : unchanged ? 'pick another base' : 'no reading frame here'}
-          </div>
-        </div>
-      </div>
-
-      {/* Before / after translation */}
-      <div style={{ background: '#0f172a', borderRadius: '8px', padding: '0.75rem 1rem', fontFamily: 'monospace', fontSize: '0.76rem', lineHeight: 1.85, marginBottom: '0.75rem' }}>
-        <div style={{ marginBottom: '0.4rem' }}>
-          <span style={{ color: '#64748b' }}>Orig: </span>
-          {origRegion.split('').map((b, i) => (
-            <span key={i} style={{ color: i === relPos ? '#fbbf24' : '#86efac', fontWeight: i === relPos ? 900 : 400 }}>{b}</span>
-          ))}
-        </div>
-        <div style={{ marginBottom: '0.4rem' }}>
-          <span style={{ color: '#64748b' }}>Mut:  </span>
-          {mutRegion.split('').map((b, i) => (
-            <span key={i} style={{ color: i === relPos ? '#f87171' : '#86efac', fontWeight: i === relPos ? 900 : 400 }}>{b}</span>
-          ))}
-        </div>
-        <div style={{ borderTop: '1px solid #1e293b', paddingTop: '0.4rem', marginTop: '0.2rem' }}>
-          {changes.length === 0 ? (
-            <span style={{ color: '#64748b' }}>
-              {unchanged
-                ? 'Choose a base different from the original.'
-                : 'This base is not inside an annotated CDS, so there is no reading frame to judge it by. Annotate the gene to see its effect on the protein.'}
-            </span>
-          ) : changes.map(c => (
-            <div key={c.feature}>
-              <span style={{ color: '#64748b' }}>{c.feature}{c.strand === -1 ? ' (−)' : ''} codon {c.codonNumber}: </span>
-              <span style={{ color: '#a5b4fc' }}>{c.originalCodon} ({c.originalAA})</span>
-              <span style={{ color: '#64748b' }}> → </span>
-              <span style={{ color: c.effect === 'silent' ? '#a5b4fc' : '#f87171', fontWeight: 700 }}>{c.mutantCodon} ({c.mutantAA})</span>
-              <span style={{ color: '#fbbf24' }}>  {c.notation}</span>
-              {c.caution && <div style={{ color: '#fbbf24', fontSize: '0.7rem' }}>⚠ {c.caution}</div>}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Full mutant sequence toggle */}
-      <button onClick={() => setShowMutSeq(v => !v)} style={{ fontSize: '0.75rem', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: '0.4rem' }}>
-        {showMutSeq ? '▲ Hide' : '▶ Show'} full mutant sequence
-      </button>
-      {showMutSeq && (
-        <div style={{ background: '#f8fafc', border: '1px solid var(--glass-border)', borderRadius: '7px', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.72rem', wordBreak: 'break-all', maxHeight: 120, overflowY: 'auto' }}>
-          {mutFullSeq.split('').map((b, i) => (
-            <span key={i} style={{ color: i === pos - 1 ? '#dc2626' : '#374151', fontWeight: i === pos - 1 ? 800 : 400 }}>{b}</span>
-          ))}
-        </div>
-      )}
-      <div style={{ marginTop: '0.5rem' }}>
-        <button onClick={() => navigator.clipboard.writeText(mutFullSeq)} style={{ fontSize: '0.72rem', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          <Copy size={13} /> Copy mutant sequence
-        </button>
-      </div>
     </div>
   );
 }

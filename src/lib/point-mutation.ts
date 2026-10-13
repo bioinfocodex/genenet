@@ -57,8 +57,8 @@ export function isCoding(type: string): boolean {
   return /^(cds|orf)$/i.test(type.trim());
 }
 
-/** Genomic positions of a CDS in reading order: 5'->3' along the coding strand. */
-function readingOrder(f: CodingFeature): number[] {
+/** Genomic positions (1-indexed) of a CDS in reading order: 5'->3' along the coding strand. */
+export function readingOrder(f: CodingFeature): number[] {
   const blocks = (f.segments?.length ? f.segments : [{ start: f.start, end: f.end }])
     .map(b => ({ start: Math.min(b.start, b.end), end: Math.max(b.start, b.end) }))
     .sort((a, b) => a.start - b.start);
