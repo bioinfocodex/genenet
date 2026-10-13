@@ -55,7 +55,7 @@ export default function MutagenesisPanel({
   const [bases, setBases] = useState('');
 
   const [saved, setSaved] = useState<string | null>(null);
-  const [mutantSaved, setMutantSaved] = useState<{ id: string } | { error: string } | null>(null);
+  const [mutantSaved, setMutantSaved] = useState<{ id: string; features: number } | { error: string } | null>(null);
   const [pending, start_] = useTransition();
 
   // Everything below derives from one Mutation.
@@ -257,7 +257,9 @@ export default function MutagenesisPanel({
           {saved && <div style={{ fontSize: '0.78rem', color: 'var(--accent-green)', marginTop: '0.35rem' }}>{saved}</div>}
           {mutantSaved && ('error' in mutantSaved
             ? <Message tone="error">{mutantSaved.error}</Message>
-            : <div style={{ fontSize: '0.78rem', color: 'var(--accent-green)', marginTop: '0.35rem' }}>Saved. <Link href={`/sequences/${mutantSaved.id}`}>Open the mutant →</Link></div>)}
+            : <div style={{ fontSize: '0.78rem', color: 'var(--accent-green)', marginTop: '0.35rem' }}>
+                Saved with {mutantSaved.features} annotation{mutantSaved.features === 1 ? '' : 's'} carried over. <Link href={`/sequences/${mutantSaved.id}`}>Open the mutant →</Link>
+              </div>)}
         </div>
       )}
     </div>

@@ -167,7 +167,8 @@ export function ConstructPanel({
       <div style={{ marginTop: '1.1rem', paddingTop: '1rem', borderTop: '1px solid var(--glass-border)' }}>
         {saved ? (
           <div style={{ fontSize: '0.85rem' }}>
-            Saved. <a href={`/sequences/${saved}`} style={{ color: accent, fontWeight: 600 }}>Open the construct &rarr;</a>
+            Saved, without annotations: the assembly engine does not carry the parts&apos; features across yet,
+            so run Annotate on the new sequence. <a href={`/sequences/${saved}`} style={{ color: accent, fontWeight: 600 }}>Open the construct &rarr;</a>
           </div>
         ) : (
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>

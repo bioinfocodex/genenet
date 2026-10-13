@@ -121,6 +121,13 @@ const FEATURE_TYPES = [
 const RAIL_W = 178;
 const SIDEBAR_W = 272;
 
+/**
+ * Prefix of the id a primer carries between being added here and the server
+ * returning its stored id. Rows under it cannot be edited, deleted or filed
+ * yet: those actions would be sent for a row that does not exist.
+ */
+const PENDING = 'pending-';
+
 const RE_COLORS = ['#ef4444','#3b82f6','#22c55e','#a855f7','#f59e0b','#06b6d4','#f97316','#ec4899','#84cc16','#78716c','#0ea5e9','#d946ef'];
 
 interface Props {
@@ -812,8 +819,9 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     const fullSeq = reSeq + bindingSeq;
 
     // Optimistic local state update
+    const tempId = `${PENDING}${Date.now()}`;
     const p: SavedPrimer = {
-      id: `primer-${Date.now()}`,
+      id: tempId,
       name: modalPrimer.name,
       sequence: fullSeq,
       direction: modalPrimer.strand,
@@ -834,31 +842,40 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
       fd.append('sequence', fullSeq);
       fd.append('direction', modalPrimer.strand);
       fd.append('notes', modalPrimer.notes || '');
-      await addPrimer(fd);
+      const created = await addPrimer(fd);
+      if (created) swapPrimerId(tempId, created.id);
     });
   };
 
   /** Primers designed by a panel rather than typed: shown at once, then stored. */
   const saveDesignedPrimers = (list: NewPrimer[]) => {
+    const stamp = Date.now();
+    const tempIds = list.map((_, i) => `${PENDING}${stamp}-${i}`);
     setPrimers(prev => [
       ...prev,
       ...list.map((p, i) => ({
-        id: `primer-${Date.now()}-${i}`, name: p.name, sequence: p.sequence, direction: p.direction,
+        id: tempIds[i], name: p.name, sequence: p.sequence, direction: p.direction,
         tm: calcTm(p.sequence), gcContent: calcGC(p.sequence), notes: p.notes,
       })),
     ]);
     setMolLayers(prev => ({ ...prev, primer: true }));
     startTransition(async () => {
-      for (const p of list) {
+      for (const [i, p] of list.entries()) {
         const fd = new FormData();
         fd.append('geneSequenceId', id);
         fd.append('name', p.name);
         fd.append('sequence', p.sequence);
         fd.append('direction', p.direction);
         fd.append('notes', p.notes);
-        await addPrimer(fd);
+        const created = await addPrimer(fd);
+        if (created) swapPrimerId(tempIds[i], created.id);
       }
     });
+  };
+
+  /** Replace a primer's temporary id with the stored one, once it exists. */
+  const swapPrimerId = (tempId: string, realId: string) => {
+    setPrimers(prev => prev.map(p => (p.id === tempId ? { ...p, id: realId } : p)));
   };
 
   const handleDeletePrimer = (primerId: string) => {
@@ -1872,12 +1889,14 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                             <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{pr.gcContent}%</td>
                             <td style={{ padding: '0.45rem 0.75rem' }}>
                               <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
-                                {filed[pr.id]
+                                {pr.id.startsWith(PENDING)
+                                  ? <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>saving…</span>
+                                  : filed[pr.id]
                                   ? <span style={{ fontSize: '0.7rem', color: filed[pr.id].startsWith('filed') || filed[pr.id].startsWith('already') ? 'var(--accent-green)' : 'var(--text-muted)', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 2 }}>{filed[pr.id] !== '…' && <Check size={11} />}{filed[pr.id]}</span>
                                   : <button onClick={() => fileToCollection(pr.id)} title="Add to the lab's oligo collection" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><LibraryBig size={13} /></button>}
                                 <button onClick={() => navigator.clipboard.writeText(pr.sequence)} title="Copy sequence" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><Copy size={13} /></button>
-                                <button onClick={() => openEditPrimer(pr)} title="Edit" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><Pencil size={13} /></button>
-                                <button onClick={() => handleDeletePrimer(pr.id)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 2 }}><Trash2 size={13} /></button>
+                                <button onClick={() => openEditPrimer(pr)} disabled={pr.id.startsWith(PENDING)} title="Edit" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}><Pencil size={13} /></button>
+                                <button onClick={() => handleDeletePrimer(pr.id)} disabled={pr.id.startsWith(PENDING)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 2 }}><Trash2 size={13} /></button>
                               </div>
                             </td>
                           </tr>
