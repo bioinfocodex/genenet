@@ -928,7 +928,8 @@ export default function CircularMap({ sequence, features, reSites, selection, on
             return (
               <g key={`${pr.id}-${i}`} style={{ cursor: 'help' }}>
                 <title>{bindingTitle(pr)}</title>
-                <path d={arc} fill="none" stroke={colour} strokeWidth={2} opacity={0.9} />
+                {/* Dashed where the primer anneals with mismatches. */}
+                <path d={arc} fill="none" stroke={colour} strokeWidth={2} opacity={0.9} strokeDasharray={pr.mismatches?.length ? '3,2' : undefined} />
                 <polygon points={head} fill={colour} />
                 {/* The tail, dashed and outside the arc, so it reads as not annealed. */}
                 {pr.tailLength > 0 && (

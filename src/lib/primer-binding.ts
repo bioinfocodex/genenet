@@ -42,6 +42,11 @@ export interface PrimerBinding {
   exact: boolean;
   /** True when the annealing region runs through the origin of a circle. */
   wrapsOrigin: boolean;
+  /**
+   * Primer positions (0-based from its 5' end) inside the annealing region
+   * that do not pair with the template. Absent or empty for a perfect match.
+   */
+  mismatches?: number[];
 }
 
 export interface BindingOptions {
@@ -50,6 +55,20 @@ export interface BindingOptions {
   circular?: boolean;
   /** Stop after this many sites per direction. */
   maxSites?: number;
+  /**
+   * Tolerate up to this many mismatches inside the annealing region. Off (0)
+   * by default: an exact search is what most callers want, and it is the only
+   * one that cannot invent a site.
+   */
+  maxMismatches?: number;
+  /** Bases at the 3' end that must pair exactly; polymerase extends nothing else. */
+  protect3?: number;
+  /**
+   * Shortest annealing region accepted for a site that only exists because
+   * mismatches were allowed. Longer than `minAnneal`, because a short stretch
+   * with two mismatches turns up by chance on any plasmid.
+   */
+  minMismatchedAnneal?: number;
 }
 
 /** Every index at which `needle` occurs in `haystack`, overlaps included. */
@@ -135,7 +154,98 @@ export function findBindings(
     }
   }
 
-  return out.sort((a, b) => a.start - b.start);
+  out.sort((a, b) => a.start - b.start);
+  if (!opts.maxMismatches) return out;
+  return mergeMismatched(out, imperfectSites(primer, top, opts));
+}
+
+/**
+ * Sites found by extending from an exact 3' seed and tolerating mismatches.
+ *
+ * A primer anneals from its 3' end, and that end is what has to pair: a
+ * mismatch in the last few bases stops extension, one further in usually does
+ * not. So the seed is the 3'-most `protect3` bases, matched exactly, and the
+ * region grows toward the 5' end until a mismatch would exceed the allowance.
+ * It is then trimmed back to its last pairing base, since an unpaired 5'-most
+ * base is tail, not a mismatch. This is how a mutagenic primer -- matching on
+ * both sides of its change -- is seen at its true extent, and how an off-target
+ * site with a couple of mismatches is seen at all.
+ */
+function imperfectSites(primer: string, top: string, opts: BindingOptions): PrimerBinding[] {
+  const { circular = false, maxMismatches = 0, protect3 = 5, maxSites = 20 } = opts;
+  const minLen = opts.minMismatchedAnneal ?? Math.max(16, (opts.minAnneal ?? 12) + 4);
+  const L = primer.length;
+  const n = top.length;
+  if (L < protect3 || n === 0) return [];
+  const at = (i: number) => (circular ? top[((i % n) + n) % n] : top[i]);
+  const out: PrimerBinding[] = [];
+
+  for (const strand of ['forward', 'reverse'] as Strand[]) {
+    const asTop = strand === 'forward' ? primer : revComp(primer);
+    const seed = strand === 'forward' ? asTop.slice(L - protect3) : asTop.slice(0, protect3);
+    const scan = circular && n > protect3 ? top + top.slice(0, protect3 - 1) : top;
+    const seeds = occurrences(scan, seed, maxSites * 50).filter(i => i < n);
+
+    for (const seedAt of seeds) {
+      // Position on the template of the primer's 3' end, and the direction
+      // the annealing region grows from it.
+      const anchor = strand === 'forward' ? seedAt + protect3 - 1 : seedAt;
+      const step = strand === 'forward' ? -1 : 1;
+      let misses: number[] = [];
+      let best = 0;
+      let bestMisses: number[] = [];
+      for (let k = 1; k <= L; k++) {
+        const t = anchor + step * (k - 1);
+        if (!circular && (t < 0 || t >= n)) break;
+        if (circular && k > n) break;
+        const primerBase = strand === 'forward' ? asTop[L - k] : asTop[k - 1];
+        if (primerBase === at(t)) {
+          best = k;
+          bestMisses = misses;
+        } else {
+          if (k <= protect3) break;
+          if (misses.length >= maxMismatches) break;
+          misses = [...misses, L - k];
+        }
+      }
+      if (best < minLen || bestMisses.length === 0) continue;
+
+      let s = strand === 'forward' ? anchor - best + 1 : anchor;
+      let e = strand === 'forward' ? anchor : anchor + best - 1;
+      if (circular) {
+        const shift = Math.floor(s / n) * n;
+        s -= shift;
+        e -= shift;
+      }
+      out.push({
+        start: s,
+        end: circular ? e % n : e,
+        strand,
+        annealLength: best,
+        tailLength: L - best,
+        exact: false,
+        wrapsOrigin: circular && e >= n,
+        mismatches: bestMisses.sort((a, b) => a - b),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Fold imperfect sites into the exact ones. One that ends at the same 3'
+ * position as an exact site is the same site seen further -- it replaces the
+ * exact one if it anneals over more bases. Anything else is a new site.
+ */
+function mergeMismatched(exact: PrimerBinding[], imperfect: PrimerBinding[]): PrimerBinding[] {
+  const threePrime = (b: PrimerBinding) => `${b.strand}:${b.strand === 'forward' ? b.end : b.start}`;
+  const byEnd = new Map(exact.map(b => [threePrime(b), b]));
+  for (const b of imperfect) {
+    const key = threePrime(b);
+    const known = byEnd.get(key);
+    if (!known || b.annealLength > known.annealLength) byEnd.set(key, b);
+  }
+  return [...byEnd.values()].sort((a, b) => a.start - b.start);
 }
 
 export interface PrimerLike {
@@ -190,6 +300,9 @@ export function bindingTitle(p: PlacedPrimer): string {
   ];
   if (p.tailLength > 0) {
     lines.push(`${p.annealLength} nt anneal, ${p.tailLength} nt 5′ tail that does not bind here`);
+  }
+  if (p.mismatches?.length) {
+    lines.push(`${p.mismatches.length} mismatch${p.mismatches.length === 1 ? '' : 'es'} in the annealing region (at ${p.mismatches.map(m => m + 1).join(', ')} from the 5′ end)`);
   }
   if (p.wrapsOrigin) lines.push('Runs through the origin');
   if (p.directionMismatch) {

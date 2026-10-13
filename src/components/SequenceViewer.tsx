@@ -419,7 +419,9 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   };
 
   const placedPrimers = useMemo(
-    () => placePrimers(primers, sequence, { circular: seqType === 'plasmid' }),
+    // Up to two mismatches, so a mutagenic or degenerate primer is drawn where
+    // it anneals rather than reported as binding nowhere.
+    () => placePrimers(primers, sequence, { circular: seqType === 'plasmid', maxMismatches: 2 }),
     [primers, sequence, seqType],
   );
 
@@ -1879,6 +1881,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                                     <span key={`${x.start}`} title={bindingTitle(x)} style={{ marginRight: '0.5rem', cursor: 'help' }}>
                                       {(x.start + 1).toLocaleString()}&ndash;{(x.end + 1).toLocaleString()}
                                       {x.tailLength > 0 && <span style={{ color: 'var(--text-muted)' }}> (+{x.tailLength} nt tail)</span>}
+                                      {!!x.mismatches?.length && <span style={{ color: '#a3560a' }}> ({x.mismatches.length} mismatch{x.mismatches.length === 1 ? '' : 'es'})</span>}
                                       {x.directionMismatch && <span style={{ color: '#b91c1c' }}> &#9888;</span>}
                                     </span>
                                   ))}

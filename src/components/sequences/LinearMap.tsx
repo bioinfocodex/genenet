@@ -569,7 +569,10 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
                   const shape = p.strand === 'forward'
                     ? `${sx},${y - 3} ${sx + sw - head},${y - 3} ${sx + sw},${y} ${sx + sw - head},${y + 3} ${sx},${y + 3}`
                     : `${sx + sw},${y - 3} ${sx + head},${y - 3} ${sx},${y} ${sx + head},${y + 3} ${sx + sw},${y + 3}`;
-                  return <polygon key={k} points={shape} fill={colour} opacity={0.85} />;
+                  // Hollow and dashed where the primer anneals with mismatches.
+                  return p.mismatches?.length
+                    ? <polygon key={k} points={shape} fill={colour} fillOpacity={0.25} stroke={colour} strokeWidth={1} strokeDasharray="2,1.5" />
+                    : <polygon key={k} points={shape} fill={colour} opacity={0.85} />;
                 })}
                 {/*
                   * Labelled by the room available, not by the primer's own
