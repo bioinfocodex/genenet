@@ -72,8 +72,11 @@ a scratch database before it is called done.
      swap the id in;
    - `saveConstruct` returns no feature count — have the mutagenesis and
      cloning panels say how many annotations came across.
-4. Seed the oligo collection from the per-sequence primers already in the
-   database (one-off script, duplicates by sequence skipped).
+4. File the per-sequence primers already in the database into the oligo
+   collection. Built as an "Import primers saved on sequences" button on
+   /oligos rather than a script: it previews what it would add, merges the
+   same primer saved on several sequences into one oligo, and is safe to run
+   again.
 
 **Done when:** `main` contains all seven, the live database has the new
 columns and table, and the debts above are closed.
@@ -164,6 +167,11 @@ partial digests, several homology/assembly methods, and a graphical history.
    edges already exist; this is a view plus the operation recorded per edge.
 4. **PCR realism.** Simulate with mismatch-tolerant binding from Phase 1: show
    every product a primer pair makes, not only the intended one.
+5. **Annotations through assembly.** The assembly engine (`lib/assembly.ts`)
+   has no notion of features, so every construct saved from the Cloning
+   Wizard starts with an empty map. Carry each part's features through
+   `Placement` (shifted, flipped, dropped when cut) and save them with the
+   product, as the mutagenesis panel already does.
 
 **Done when:** a construct built by digest → fill-in → blunt ligation → Gibson
 shows each step in its history graph, and every intermediate opens as a map.
