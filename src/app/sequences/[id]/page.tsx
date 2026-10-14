@@ -10,6 +10,7 @@ import SequenceLineage from '@/components/SequenceLineage';
 import RecordHistory from '@/components/RecordHistory';
 import FeatureCandidates from '@/components/FeatureCandidates';
 import { candidatesForSequence, fullLibrary } from '@/lib/feature-library';
+import { signaturesFor } from '@/lib/signature';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,17 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
     fullLibrary(),
     prisma.oligo.findMany({ where: { archived: false }, select: { id: true, code: true, name: true, sequence: true } }),
   ]);
+  // Sign-offs that the bases match sequencing, newest first, each marked
+  // current or superseded by a later edit.
+  const verifications = (await signaturesFor('GeneSequence', seq.id)).filter(s => s.meaning === 'verified');
+  const verified = verifications.find(v => v.current);
+
+  // Metadata only; the trace files themselves are fetched by the panel.
+  const reads = await prisma.sequencingRead.findMany({
+    where: { geneSequenceId: seq.id },
+    select: { id: true, fileName: true, sampleName: true, runDate: true, uploadedBy: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
 
   return (
     <div>
@@ -65,6 +77,15 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
               <Dna size={22} color="var(--accent-blue)" />
               {seq.name}
             </h1>
+            {verified ? (
+              <div title={verified.note ?? undefined} style={{ fontSize: '0.8rem', color: 'var(--accent-green)', marginTop: '0.3rem', fontWeight: 600 }}>
+                ✓ Sequence-verified by {verified.signerName}, {verified.at.toLocaleDateString()}
+              </div>
+            ) : verifications.length > 0 ? (
+              <div style={{ fontSize: '0.8rem', color: '#a3560a', marginTop: '0.3rem' }}>
+                Verified by {verifications[0].signerName} before the sequence was last edited; it needs confirming again.
+              </div>
+            ) : null}
             {seq.description && (
               <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>{seq.description}</p>
             )}
@@ -98,6 +119,8 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         initialFeatures={normaliseFeatures(seq.features)}
         library={library}
         collection={collection}
+        verifications={verifications.map(v => ({ id: v.id, at: v.at.toISOString(), signerName: v.signerName, note: v.note, current: v.current }))}
+        savedReads={reads.map(r => ({ id: r.id, fileName: r.fileName, sampleName: r.sampleName, runDate: r.runDate, uploadedBy: r.uploadedBy.name }))}
         initialPrimers={seq.primers.map(p => ({
           id: p.id,
           name: p.name,

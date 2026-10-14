@@ -16,7 +16,7 @@ import {
   type ORF, type PCRResult, type LigationResult,
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
-import TracePanel from './sequences/TracePanel';
+import TracePanel, { type SavedReadInfo, type VerificationInfo } from './sequences/TracePanel';
 import { annotate } from '@/lib/annotation';
 import { dormantEnzymes, blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
@@ -152,6 +152,10 @@ interface Props {
    * the sequence as currently edited, rather than passed in already placed.
    */
   collection?: CollectionOligo[];
+  /** Sanger reads stored with this sequence. */
+  savedReads?: SavedReadInfo[];
+  /** Sign-offs that this sequence was confirmed by sequencing. */
+  verifications?: VerificationInfo[];
 }
 
 // ─── Auto-suggest feature type from name ─────────────────────────────────────
@@ -214,7 +218,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [] }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [] }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -419,7 +423,9 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   };
 
   const placedPrimers = useMemo(
-    () => placePrimers(primers, sequence, { circular: seqType === 'plasmid' }),
+    // Up to two mismatches, so a mutagenic or degenerate primer is drawn where
+    // it anneals rather than reported as binding nowhere.
+    () => placePrimers(primers, sequence, { circular: seqType === 'plasmid', maxMismatches: 2 }),
     [primers, sequence, seqType],
   );
 
@@ -1879,6 +1885,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                                     <span key={`${x.start}`} title={bindingTitle(x)} style={{ marginRight: '0.5rem', cursor: 'help' }}>
                                       {(x.start + 1).toLocaleString()}&ndash;{(x.end + 1).toLocaleString()}
                                       {x.tailLength > 0 && <span style={{ color: 'var(--text-muted)' }}> (+{x.tailLength} nt tail)</span>}
+                                      {!!x.mismatches?.length && <span style={{ color: '#a3560a' }}> ({x.mismatches.length} mismatch{x.mismatches.length === 1 ? '' : 'es'})</span>}
                                       {x.directionMismatch && <span style={{ color: '#b91c1c' }}> &#9888;</span>}
                                     </span>
                                   ))}
@@ -2060,7 +2067,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             />
           )}
           {leftTab === 'aigen'  && <AIGenePanel sequence={sequence} />}
-          {leftTab === 'sanger' && <SangerPanel reference={sequence} circular={seqType === 'plasmid'} />}
+          {leftTab === 'sanger' && <SangerPanel sequenceId={id} reference={sequence} circular={seqType === 'plasmid'} savedReads={savedReads} verifications={verifications} />}
           {leftTab === 'crispr' && <CrisprPanel sequence={sequence} selection={selection} onSelect={setSelection} />}
           {leftTab === 'dimer'  && <DimerPanel primers={primers} />}
           {leftTab === 'design' && (
@@ -4248,7 +4255,7 @@ function AIGenePanel({ sequence }: { sequence: string }) {
 // by verifyRead from lib/alignment: affine gaps, free reference ends, both
 // orientations tried, and differences reported by position in the reference.
 
-function SangerPanel({ reference, circular }: { reference: string; circular: boolean }) {
+function SangerPanel({ sequenceId, reference, circular, savedReads, verifications }: { sequenceId: string; reference: string; circular: boolean; savedReads: SavedReadInfo[]; verifications: VerificationInfo[] }) {
   const [mode, setMode] = useState<'traces' | 'paste'>('traces');
   return (
     <div>
@@ -4271,7 +4278,7 @@ function SangerPanel({ reference, circular }: { reference: string; circular: boo
         </div>
       </div>
       {/* Both stay mounted so switching does not throw away loaded traces. */}
-      <div style={{ display: mode === 'traces' ? 'block' : 'none' }}><TracePanel reference={reference} circular={circular} /></div>
+      <div style={{ display: mode === 'traces' ? 'block' : 'none' }}><TracePanel sequenceId={sequenceId} reference={reference} circular={circular} savedReads={savedReads} verifications={verifications} /></div>
       <div style={{ display: mode === 'paste' ? 'block' : 'none' }}><PastedReadPanel reference={reference} /></div>
     </div>
   );

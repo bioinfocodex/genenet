@@ -45,6 +45,12 @@ export async function contentHashFor(model: SignableModel, recordId: string): Pr
     parts.push(p.steps.map(s => [s.stepNumber, s.title, s.description]));
     parts.push(p.materials.map(m => [m.materialName, m.quantity, m.unit]));
     parts.push(p.equipment.map(e => [e.equipmentName]));
+  } else if (model === 'GeneSequence') {
+    // The bases only. A sign-off says this sequence is what the reads show;
+    // renaming it or re-annotating it does not change that, editing a base does.
+    const g = await prisma.geneSequence.findUnique({ where: { id: recordId }, select: { sequence: true } });
+    if (!g) return null;
+    parts.push(g.sequence.toUpperCase());
   } else if (model === 'Experiment') {
     const e = await prisma.experiment.findUnique({ where: { id: recordId } });
     if (!e) return null;

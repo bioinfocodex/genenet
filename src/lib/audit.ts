@@ -45,8 +45,19 @@ interface Actor { id: string | null; email: string | null }
  */
 export type ActorResolver = () => Promise<Actor>;
 
-function redact(value: unknown): unknown {
+/**
+ * Make a row safe and readable for the trail.
+ *
+ * Dates are written as ISO strings: walked as plain objects they have no
+ * enumerable keys, and every timestamp in the trail came out as {}. Binary
+ * columns (a stored trace file) are summarised by size rather than copied: a
+ * byte array serialises to JSON several times its own size, and the trail is
+ * for what changed, not a second copy of the file.
+ */
+export function redact(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Uint8Array) return `[binary, ${value.byteLength} bytes]`;
   if (Array.isArray(value)) return value.map(redact);
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {

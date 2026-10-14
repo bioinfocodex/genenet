@@ -7,7 +7,7 @@
  * session into the client bundle, which fails the build.
  */
 
-export type SignableModel = 'Procedure' | 'Experiment' | 'Report';
+export type SignableModel = 'Procedure' | 'Experiment' | 'Report' | 'GeneSequence';
 
 /**
  * What a signature asserts. 21 CFR Part 11 requires the meaning to be recorded
@@ -20,6 +20,8 @@ export const MEANINGS = {
   reviewed:  'I have reviewed this record',
   approved:  'I approve this record',
   witnessed: 'I witnessed this work being performed',
+  // Sequences only: the bases on record match what sequencing reads.
+  verified:  'I have confirmed this sequence by sequencing',
 } as const;
 
 export type Meaning = keyof typeof MEANINGS;
