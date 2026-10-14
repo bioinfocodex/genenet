@@ -18,6 +18,7 @@ import {
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import TracePanel, { type SavedReadInfo, type VerificationInfo } from './sequences/TracePanel';
 import { annotate } from '@/lib/annotation';
+import { annotationReport, type AnnotationReport } from '@/lib/annotation-report';
 import { dormantEnzymes, blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
@@ -1026,19 +1027,21 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     });
   };
 
+  const [autoReport, setAutoReport] = useState<AnnotationReport | null>(null);
   const handleAutoDetect = () => {
     // Circular when the record says so, because a part sitting across the
     // origin is otherwise invisible -- and an origin of replication is exactly
     // the sort of thing that ends up there.
-    const detected = annotate(sequence, { circular: seqType === 'plasmid', extra: library });
-    const newFeats: SequenceFeature[] = detected
-      .filter(d => !features.some(f => f.name === d.name && Math.abs(f.start - d.start) < 50))
-      .map(d => ({
-        id: `auto-${crypto.randomUUID()}`,
-        name: d.name, start: d.start, end: d.end,
-        color: d.color, type: d.type, strand: d.strand,
-      }));
+    const circular = seqType === 'plasmid';
+    const detected = annotate(sequence, { circular, extra: library });
+    // A detection the map already has -- same kind over most of the span,
+    // under whatever name -- is not added again; the rest are, and the report
+    // says which matched only approximately and what is still unaccounted for.
+    const report = annotationReport(sequence.length, circular, features, detected);
+    const newFeats = report.added.map(f => ({ ...f, id: `auto-${crypto.randomUUID()}` }));
     if (newFeats.length > 0) { setFeatures(prev => [...prev, ...newFeats]); setDirty(true); }
+    setAutoReport(report);
+    setLeftTab('feature');
   };
 
   const addLibraryFeature = (item: typeof LIBRARY_FEATURES[0]) => {
@@ -1746,6 +1749,30 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                   <button onClick={() => openAddFeature()} style={{ padding: '0.3rem 0.75rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.77rem', fontFamily: 'inherit' }}>+ Add Feature</button>
                 </div>
               </div>
+              {autoReport && (
+                <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.75rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'white', fontSize: '0.78rem', lineHeight: 1.5 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                    <strong>
+                      Added {autoReport.added.length} feature{autoReport.added.length === 1 ? '' : 's'}
+                      {autoReport.alreadyThere ? `; ${autoReport.alreadyThere} already on the map` : ''}
+                    </strong>
+                    <button onClick={() => setAutoReport(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+                  </div>
+                  {autoReport.partial.length > 0 && (
+                    <div style={{ color: '#a3560a' }}>
+                      Approximate matches, worth a look: {autoReport.partial.map(p => `${p.name} ${Math.round(p.identity * 100)}% (${p.start.toLocaleString()}–${p.end.toLocaleString()})`).join(', ')}
+                    </div>
+                  )}
+                  {autoReport.unannotated.length > 0 ? (
+                    <div style={{ color: 'var(--text-secondary)' }}>
+                      Nothing recognised over: {autoReport.unannotated.slice(0, 5).map(u => `${u.start.toLocaleString()}–${u.end.toLocaleString()} (${u.length.toLocaleString()} bp)`).join(', ')}
+                      {autoReport.unannotated.length > 5 ? ` and ${autoReport.unannotated.length - 5} more` : ''}. An insert, or a part the library does not know.
+                    </div>
+                  ) : (
+                    <div style={{ color: 'var(--accent-green)' }}>Every stretch of 300 bp or more is covered by a feature.</div>
+                  )}
+                </div>
+              )}
               {features.length === 0 ? (
                 <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', border: '1px dashed var(--glass-border)', borderRadius: '8px' }}>
                   No features annotated yet. Click Auto-detect or add a feature manually.
