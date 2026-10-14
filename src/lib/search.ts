@@ -21,7 +21,7 @@ import { prisma } from '@/lib/prisma';
 
 export type ResultKind =
   | 'sample' | 'sequence' | 'procedure' | 'project' | 'task'
-  | 'report' | 'experiment' | 'protein' | 'freezer' | 'collection' | 'primer';
+  | 'report' | 'experiment' | 'protein' | 'freezer' | 'collection' | 'primer' | 'oligo';
 
 export interface SearchHit {
   kind: ResultKind;
@@ -48,7 +48,7 @@ const LABELS: Record<ResultKind, string> = {
   sample: 'Samples', sequence: 'Sequences', procedure: 'Procedures',
   project: 'Projects', task: 'Tasks', report: 'Reports',
   experiment: 'Experiments', protein: 'Proteins', freezer: 'Freezers',
-  collection: 'Collections', primer: 'Primers',
+  collection: 'Collections', primer: 'Primers', oligo: 'Oligos',
 };
 
 /** Per record type, so one noisy type cannot bury the rest. */
@@ -75,7 +75,7 @@ export async function searchWorkspace(rawQuery: string): Promise<SearchResults> 
 
   const [
     samples, sequences, procedures, projects, tasks,
-    reports, experiments, proteins, freezers, collections, primers,
+    reports, experiments, proteins, freezers, collections, primers, oligos,
   ] = await Promise.all([
     prisma.sample.findMany({
       where: { OR: [{ sampleId: contains }, { name: contains }, { description: contains }, { notes: contains }, { box: contains }, { rack: contains }] },
@@ -121,6 +121,10 @@ export async function searchWorkspace(rawQuery: string): Promise<SearchResults> 
     prisma.primer.findMany({
       where: { OR: [{ name: contains }, { sequence: contains }, { notes: contains }] },
       take: PER_KIND,
+    }),
+    prisma.oligo.findMany({
+      where: { OR: [{ code: contains }, { name: contains }, { sequence: { contains: q.toUpperCase() } }, { location: contains }, { notes: contains }] },
+      take: PER_KIND, orderBy: { code: 'asc' },
     }),
   ]);
 
@@ -206,6 +210,14 @@ export async function searchWorkspace(rawQuery: string): Promise<SearchResults> 
         kind: 'primer' as const, id: p.id, title: p.name,
         subtitle: p.sequence ? `${p.sequence.slice(0, 40)}${p.sequence.length > 40 ? '…' : ''}` : firstLine(p.notes),
         href: p.geneSequenceId ? `/sequences/${p.geneSequenceId}` : '/sequences',
+      })),
+    },
+    {
+      kind: 'oligo', label: LABELS.oligo,
+      hits: oligos.map(o => ({
+        kind: 'oligo' as const, id: o.id, ref: o.code, title: o.name,
+        subtitle: o.location ?? `${o.sequence.slice(0, 40)}${o.sequence.length > 40 ? '…' : ''}`,
+        href: `/oligos/${o.id}`, exact: isExact(o.code),
       })),
     },
   ];

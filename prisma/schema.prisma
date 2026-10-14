@@ -59,6 +59,7 @@ model User {
   simulations        Simulation[]       @relation("SimulationCreator")
   gelsCreated        GelSimulation[]    @relation("GelCreator")
   samplesCreated     Sample[]           @relation("SampleCreator")
+  oligosCreated      Oligo[]            @relation("OligoCreator")
 
   entityTypesCreated   EntityType[]    @relation("EntityTypeCreator")
   entitiesCreated      Entity[]        @relation("EntityCreator")
@@ -459,6 +460,31 @@ model GeneSequence {
   lineage     SequenceLineage[] @relation("LineageChild")
 
   wells PlateWell[] @relation("SequenceWells")
+}
+
+/// The lab's oligo collection: one record per tube, used on any template it
+/// anneals to. Where it binds is computed from the sequences, never stored --
+/// stored positions go stale the moment someone edits a plasmid. Primer rows
+/// above are the older per-sequence kind and are left as they are.
+model Oligo {
+  id            String   @id @default(cuid())
+  /// OL-001 and up, issued from the highest ever used and never reissued.
+  code          String   @unique
+  name          String
+  sequence      String
+  /// 5' phosphate, biotin, HPLC purified -- whatever was on the order.
+  modifications String?
+  /// Box and position, as written on the tube rack.
+  location      String?
+  notes         String?
+  archived      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  createdBy   User   @relation("OligoCreator", fields: [createdById], references: [id])
+  createdById String
+
+  @@index([sequence])
 }
 
 model Primer {
