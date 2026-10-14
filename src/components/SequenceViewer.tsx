@@ -16,6 +16,7 @@ import {
   type ORF, type PCRResult, type LigationResult,
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
+import TracePanel from './sequences/TracePanel';
 import { annotate } from '@/lib/annotation';
 import { dormantEnzymes, blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
@@ -1940,7 +1941,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             />
           )}
           {leftTab === 'aigen'  && <AIGenePanel sequence={sequence} />}
-          {leftTab === 'sanger' && <SangerPanel reference={sequence} />}
+          {leftTab === 'sanger' && <SangerPanel reference={sequence} circular={seqType === 'plasmid'} />}
           {leftTab === 'crispr' && <CrisprPanel sequence={sequence} selection={selection} onSelect={setSelection} />}
           {leftTab === 'dimer'  && <DimerPanel primers={primers} />}
           {leftTab === 'design' && (
@@ -4118,7 +4119,36 @@ function AIGenePanel({ sequence }: { sequence: string }) {
 // by verifyRead from lib/alignment: affine gaps, free reference ends, both
 // orientations tried, and differences reported by position in the reference.
 
-function SangerPanel({ reference }: { reference: string }) {
+function SangerPanel({ reference, circular }: { reference: string; circular: boolean }) {
+  const [mode, setMode] = useState<'traces' | 'paste'>('traces');
+  return (
+    <div>
+      <div style={{ marginBottom: '1rem' }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Sanger Sequencing</h3>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 0.6rem' }}>
+          Check sequencing reads against this construct. Trace files show the peaks under every difference, so a weak call can be told from a real mutation.
+        </p>
+        <div style={{ display: 'flex', gap: '0.35rem' }}>
+          {([['traces', 'Trace files (.ab1)'], ['paste', 'Paste a read']] as const).map(([m, label]) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={mode === m ? 'btn btn-primary' : 'btn btn-secondary'}
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.75rem' }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Both stay mounted so switching does not throw away loaded traces. */}
+      <div style={{ display: mode === 'traces' ? 'block' : 'none' }}><TracePanel reference={reference} circular={circular} /></div>
+      <div style={{ display: mode === 'paste' ? 'block' : 'none' }}><PastedReadPanel reference={reference} /></div>
+    </div>
+  );
+}
+
+function PastedReadPanel({ reference }: { reference: string }) {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<ReadVerification | null | 'overflow'>(null);
   const [running, setRunning] = useState(false);
@@ -4149,12 +4179,6 @@ function SangerPanel({ reference }: { reference: string }) {
 
   return (
     <div>
-      <div style={{ marginBottom: '1rem' }}>
-        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Sanger Sequencing Alignment</h3>
-        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
-          Compare a sequencing read to this reference. Both orientations are tried, so it does not matter which primer the read came from, and gaps are scored so a real indel stays in one piece.
-        </p>
-      </div>
 
       <div style={{ marginBottom: '0.75rem' }}>
         <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '0.3rem' }}>
