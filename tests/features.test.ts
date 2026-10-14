@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseFeatures, codingLength, intronsOf, colourForType } from '../src/lib/features.ts';
+import { normaliseFeatures, codingLength, intronsOf, colourForType, colourFor } from '../src/lib/features.ts';
 import { parseGenBankFile } from '../src/lib/sequence-import.ts';
 
 describe('reading stored features', () => {
@@ -111,14 +111,49 @@ ORIGIN
 });
 
 describe('colours', () => {
-  test('the same type always gets the same colour', () => {
+  test('the same feature always gets the same colour', () => {
     assert.equal(colourForType('CDS'), colourForType('CDS'));
+    assert.equal(colourFor('CDS', 'AmpR'), colourFor('CDS', 'AmpR'));
   });
-  test('the types that share a map do not share a colour', () => {
-    // These co-occur constantly; a collision between any two is a real defect,
-    // and CDS/promoter did collide before they were pinned.
-    const common = ['CDS', 'gene', 'promoter', 'terminator', 'rep_origin', 'primer_bind'];
-    const seen = new Set(common.map(colourForType));
-    assert.equal(seen.size, common.length, 'every common feature type needs its own colour');
+
+  test('the roles that share a map do not share a colour', () => {
+    // Colour is keyed on role now, not on type. Two plain genes being the same
+    // lavender is the intent -- their names tell them apart, and spending a
+    // colour on the difference costs the palette one it needs elsewhere. What
+    // must never collide is one role with another.
+    const roles = [
+      colourFor('CDS', 'AmpR'),          // resistance
+      colourFor('promoter', 'CMV'),      // promoter
+      colourFor('terminator', 'rrnB'),   // regulatory
+      colourFor('CDS', 'EGFP'),          // reporter
+      colourFor('rep_origin', 'ori'),    // origin
+      colourFor('CDS', 'yfgA'),          // generic
+    ];
+    assert.equal(new Set(roles).size, roles.length, 'every role needs its own colour');
+  });
+
+  test('the resistance marker is coloured as one whatever the file called it', () => {
+    // All plain CDS records; type alone cannot tell them apart, which is why
+    // the old table put the marker in with every other gene.
+    const resistance = colourFor('CDS', 'AmpR');
+    for (const name of ['AmpR', 'KanR', 'CmR', 'blaTEM-1', 'Hygromycin resistance']) {
+      assert.equal(colourFor('CDS', name), resistance, name);
+    }
+    assert.notEqual(colourFor('CDS', 'yfgA'), resistance);
+  });
+
+  test('a promoter named after a marker is still a promoter', () => {
+    // "AmpR promoter" contains "AmpR"; a substring test coloured it as the
+    // resistance gene, which is the one place on a plasmid it is not.
+    assert.equal(colourFor('promoter', 'AmpR promoter'), colourFor('promoter', 'CMV promoter'));
+    assert.notEqual(colourFor('promoter', 'AmpR promoter'), colourFor('CDS', 'AmpR'));
+  });
+
+  test('reporters are one colour, and it is not the generic one', () => {
+    const reporter = colourFor('CDS', 'EGFP');
+    for (const name of ['EGFP', 'mCherry', 'mScarlet-I', 'luciferase', 'lacZ', '6xHis']) {
+      assert.equal(colourFor('CDS', name), reporter, name);
+    }
+    assert.notEqual(reporter, colourFor('CDS', 'yfgA'));
   });
 });

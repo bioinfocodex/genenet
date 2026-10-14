@@ -1,5 +1,5 @@
 'use client';
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { 
   NT_COL, 
   NT_BOT, 
@@ -25,18 +25,61 @@ import type { SequenceFeature, SavedPrimer } from '@/components/SequenceViewer';
  * than once if it anneals in more than one place.
  */
 export type DrawablePrimer = SavedPrimer & { start: number; end: number };
-import type { ORF } from '@/lib/simulation';
+
+/*
+ * Row heights, in one place.
+ *
+ * The block sum below has to agree with what is actually drawn, so the
+ * numbers the drawing uses and the numbers the height uses are the same
+ * constants rather than two sets that happen to match today.
+ */
+const STRAND_H = 17;      // one nucleotide row
+/** The sequence's own font size. Every `ch` offset must be measured in it. */
+const STRAND_FS = 14;
+const RULER_H = 16;
+/** .seq-line-header carries this in CSS; stated here so the block sum can see it. */
+const RULER_GAP = 2;
+const TRANS_ROW_H = 18;   // one translated frame
+const ORF_ROW_H = 9;      // one reading frame's bar
+const PRIMER_ROW_H = 14;
+const FEAT_H = 14, FEAT_PITCH = 19;
+/*
+ * The gap between lines.
+ *
+ * It was 24px against a 35px pair of strands -- more than a quarter of a bare
+ * line spent on the space after it. On a 780px window that is the difference
+ * between nine lines of sequence and thirteen, which is the difference the
+ * request was actually about: not a bigger box, more sequence in it.
+ */
+const BLOCK_GAP = 10;
+
+/** Cuts once, so it is a site you could clone into. */
+const UNIQUE_CUTTER = '#c00000';
+/** Cuts more than once: still worth knowing, not a cloning site. */
+const COMMON_CUTTER = '#0000d0';
+/** Three blocks either side, so a fast scroll never shows a bare edge. */
+const OVERSCAN_BLOCKS = 3;
+import type { MapSite } from '@/lib/map-enzymes';
+import { siteTitle } from '@/lib/map-enzymes';
+import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
+import { shapeFor, labelInk, outlineFor } from '@/lib/map-style';
 
 interface MolbuilderRendererProps {
   sequence: string;
   features: SequenceFeature[];
   /**
-   * Only what a label needs. Typed narrowly on purpose: demanding a full
-   * ReSite is what pushed callers into handing over the raw scan.
+   * The sites already chosen for display.
+   *
+   * This was narrowed to a name and a cut position, to stop callers handing
+   * over the raw 5,000-cut scan. MapSite is the list that has already been
+   * chosen, so it closes that door just as firmly, and it carries what
+   * drawing a cut actually needs: the recognition span to highlight, and the
+   * bottom-strand cut, without which a digest looks blunt whatever it leaves.
    */
-  enzymes?: { enzyme: string; cutPos: number }[];
+  enzymes?: MapSite[];
   primers?: DrawablePrimer[];
-  orfs?: ORF[];
+  /** Reading frames worth drawing, already chosen — not the raw six-frame scan. */
+  orfs?: MapOrf[];
   lineLen: number;
   layers: {
     feat: boolean;
@@ -47,6 +90,9 @@ interface MolbuilderRendererProps {
   frames: Set<number>;
   selection?: { start: number; end: number } | null;
   onSelect: (sel: { start: number; end: number } | null) => void;
+  /** Insertion point, as a 0-indexed gap between bases. Null when not editing. */
+  caret?: number | null;
+  onCaret?: (at: number) => void;
   onFeatureClick?: (feat: SequenceFeature) => void;
 }
 
@@ -61,7 +107,9 @@ export default function MolbuilderRenderer({
   frames,
   selection,
   onSelect,
-  onFeatureClick
+  caret = null,
+  onCaret,
+  onFeatureClick,
 }: MolbuilderRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number | null>(null);
@@ -71,9 +119,19 @@ export default function MolbuilderRenderer({
 
   // ─── Rendering Helpers ───────────────────────────────────────────────────────
 
-  const handleMouseDown = (pos: number) => {
+  const handleMouseDown = (pos: number, e?: React.MouseEvent) => {
     dragStartRef.current = pos;
     onSelect({ start: pos + 1, end: pos + 1 });
+    /*
+     * The caret goes to the nearer edge of the base clicked, so clicking the
+     * right half of a base puts the insertion point after it. Typing then
+     * lands where the eye expects rather than one base back.
+     */
+    if (onCaret) {
+      const r = (e?.currentTarget as HTMLElement | undefined)?.getBoundingClientRect();
+      const after = r && e ? e.clientX - r.left > r.width / 2 : false;
+      onCaret(after ? pos + 1 : pos);
+    }
   };
 
   const handleMouseMove = (pos: number) => {
@@ -92,9 +150,94 @@ export default function MolbuilderRenderer({
     return () => window.removeEventListener('mouseup', handleMouseUp);
   }, []);
 
+  /*
+   * Which base is at the top of the window.
+   *
+   * The per-line positions scroll away with the lines they belong to, so
+   * halfway down a plasmid the numbers on screen answer "where is this line"
+   * and nothing answers "where am I". This one is pinned to the top of the
+   * scrolling area and recalculated as the sequence slides under it.
+   *
+   * Measured from the blocks rather than computed from scrollTop, because
+   * blocks are not a uniform height -- a line carrying four enzyme labels and
+   * three feature rows is twice the height of a bare one.
+   */
+  /*
+   * Where each block sits, filled in as the window is built.
+   *
+   * Selecting a feature on the map, or a row in the Features table, has to
+   * bring the sequence to it -- otherwise the two panels agree about the
+   * selection and only one of them shows it. Asking the DOM is no good here:
+   * with the sequence virtualized, the block being scrolled to usually does
+   * not exist yet. The offsets do.
+   */
+  const offsetsRef = useRef<number[]>([]);
+  const scrolledTo = useRef<number | null>(null);
+
+  const [view, setView] = useState({ top: 0, height: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      setView(prev =>
+        prev.top === el.scrollTop && prev.height === el.clientHeight
+          ? prev
+          : { top: el.scrollTop, height: el.clientHeight });
+    };
+    // Scheduled rather than called: a setState in an effect body cascades a
+    // second render on every dependency change.
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    schedule();
+    el.addEventListener('scroll', schedule, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', schedule);
+      ro?.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  /*
+   * Bring a selection made elsewhere into view.
+   *
+   * Only when it is not already on screen: a drag inside this pane sets the
+   * selection on every mousemove, and scrolling to it would fight the hand
+   * doing the dragging.
+   */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !selection) return;
+    if (scrolledTo.current === selection.start) return;
+    scrolledTo.current = selection.start;
+
+    const top = offsetsRef.current[Math.floor((selection.start - 1) / lineLen)];
+    if (top == null) return;
+    const onScreen = top >= el.scrollTop && top <= el.scrollTop + el.clientHeight - 40;
+    if (onScreen) return;
+    // A little headroom, so the line lands under the labels above it rather
+    // than flush against the top edge.
+    el.scrollTo({ top: Math.max(0, top - 48), behavior: 'smooth' });
+  }, [selection, lineLen]);
+
   // ─── Render Blocks ──────────────────────────────────────────────────────────
 
+  /*
+   * Where the window sits, in the drawing's own pixels. `height: 0` is the
+   * first render, before the container has been measured -- everything is
+   * built then, which is what the ordinary non-scrolling case wants anyway.
+   */
+  const measured = view.height > 0;
+  const viewTop = measured ? view.top : 0;
+  const viewBottom = measured ? view.top + view.height : Infinity;
+  const OVERSCAN = OVERSCAN_BLOCKS * (STRAND_H * 2 + RULER_H + BLOCK_GAP);
+
   const blocks = [];
+  const offsets: number[] = [];
+  let y = 0;
+  let firstVisible = 1;
   for (let i = 0; i < len; i += lineLen) {
     const chunk = seq.slice(i, i + lineLen);
     const chunkLen = chunk.length;
@@ -102,7 +245,13 @@ export default function MolbuilderRenderer({
     const iEnd1 = i + chunkLen; // 1-indexed block end
 
     /*
-     * 1. Layer: Enzymes (1-indexed cutPos)
+     * 1. Layer: Enzymes
+     *
+     * cutPos is a 0-indexed base index and the cut falls immediately before
+     * that base, so a cut belongs to this block when it lands anywhere from
+     * its first base to just past its last. This used to compare against the
+     * 1-indexed block bounds and position at `cutPos - i1`, which drew every
+     * name and every tick one base to the left of the cut it was pointing at.
      *
      * Labels are stacked into rows by where they would actually land. Every
      * one of these is absolutely positioned at its cut, and two cuts a few
@@ -113,12 +262,19 @@ export default function MolbuilderRenderer({
      * The caller decides *which* enzymes arrive here; this decides where they
      * sit once they have.
      */
-    const activeEnz = layers.enz ? enzymes.filter(e => e.cutPos >= i1 && e.cutPos <= iEnd1) : [];
+    const cutsHere = layers.enz
+      ? enzymes.filter(e => e.cutPos >= i && e.cutPos <= i + chunkLen)
+      : [];
+    // A site can be highlighted in a block its cut does not fall in, when the
+    // recognition sequence straddles the line break.
+    const sitesHere = layers.enz
+      ? enzymes.filter(e => e.recognitionStart < i + chunkLen && e.recognitionStart + e.recognitionLen > i)
+      : [];
 
-    const enzRows: { e: { enzyme: string; cutPos: number }; row: number }[] = [];
+    const enzRows: { e: MapSite; row: number }[] = [];
     const rowEnds: number[] = [];
-    for (const e of [...activeEnz].sort((a, b) => a.cutPos - b.cutPos)) {
-      const col = e.cutPos - i1;
+    for (const e of [...cutsHere].sort((a, b) => a.cutPos - b.cutPos)) {
+      const col = e.cutPos - i;
       // A label is about 0.62ch per character and centred on its cut.
       const halfWidth = e.enzyme.length * 0.31 + 0.5;
       let row = rowEnds.findIndex(end => col - halfWidth > end);
@@ -128,23 +284,116 @@ export default function MolbuilderRenderer({
     }
     const enzHeight = Math.max(1, rowEnds.length) * 13 + 8;
 
-    const enzRow = activeEnz.length > 0 && (
+    /*
+     * Everything the height of this block depends on, worked out before any
+     * of it is drawn.
+     *
+     * That ordering is what makes the window below possible: a block's height
+     * has to be known whether or not it is on screen, and the only honest way
+     * to know it is from the same counts the drawing uses. Deriving it from a
+     * second, parallel guess is how a virtual list ends up jumping.
+     */
+    const orfDataFor = (dir: '+' | '-') => {
+      const here = layers.orf
+        ? orfs.filter(o => o.strand === dir && o.start <= i + chunkLen - 1 && o.end >= i)
+        : [];
+      return {
+        here,
+        frames: [...new Set(here.map(o => o.frame))].sort((a, b) => (dir === '+' ? a - b : b - a)),
+      };
+    };
+    const orfFwdData = orfDataFor('+');
+    const orfRevData = orfDataFor('-');
+
+    const primersFwd = layers.primer ? primers.filter(p => p.direction === 'forward' && p.start <= iEnd1 && p.end >= i1) : [];
+    const primersRev = layers.primer ? primers.filter(p => p.direction === 'reverse' && p.start <= iEnd1 && p.end >= i1) : [];
+    const framesFwd = [1, 2, 3].filter(f => frames.has(f));
+    const framesRev = [-1, -2, -3].filter(f => frames.has(f));
+
+    const feats = layers.feat ? features.filter(f => f.start <= iEnd1 && f.end >= i1) : [];
+    const rowOfFeature = new Map<string, number>();
+    {
+      const ends: number[] = [];
+      for (const f of [...feats].sort((a, b) => a.start - b.start || b.end - a.end)) {
+        // Two bases of clearance, so adjacent features never share an edge.
+        let row = ends.findIndex(e => f.start > e + 1);
+        if (row === -1) { row = ends.length; ends.push(0); }
+        ends[row] = f.end;
+        rowOfFeature.set(f.id, row);
+      }
+    }
+    const featureRowCount = Math.max(0, ...[...rowOfFeature.values()].map(r => r + 1));
+    const drawsFeatures = feats.some(f =>
+      (f.segments ?? [{ start: f.start, end: f.end }]).some(seg => seg.start <= iEnd1 && seg.end >= i1));
+
+    const height =
+      (cutsHere.length ? enzHeight : 0)
+      + (primersFwd.length ? PRIMER_ROW_H + 2 : 0)
+      + (orfFwdData.frames.length ? orfFwdData.frames.length * ORF_ROW_H + 2 : 0)
+      + framesFwd.length * TRANS_ROW_H
+      + RULER_H + RULER_GAP
+      + (drawsFeatures ? featureRowCount * FEAT_PITCH + 4 : 0)
+      + STRAND_H * 2 + 1
+      + framesRev.length * (TRANS_ROW_H + 2)
+      + (orfRevData.frames.length ? orfRevData.frames.length * ORF_ROW_H + 2 : 0)
+      + (primersRev.length ? PRIMER_ROW_H + 2 : 0)
+      + BLOCK_GAP;
+
+    const top = y;
+    offsets.push(top);
+    y += height;
+
+    /*
+     * The window. Only what is on screen is built, plus three blocks either
+     * side so a fast scroll does not show a bare edge before the next frame.
+     *
+     * Blocks are absolutely positioned at their own offset inside a container
+     * of the full height, so skipping one costs nothing and needs no spacer
+     * arithmetic to keep the scrollbar honest.
+     */
+    if (top + height < viewTop - OVERSCAN || top > viewBottom + OVERSCAN) continue;
+
+    const enzRow = cutsHere.length > 0 && (
       <div key={`enz-${i}`} style={{ height: `${enzHeight}px`, position: 'relative', borderLeft: '60px solid transparent', fontFamily: 'var(--font-mono)' }}>
         {enzRows.map(({ e, row }, idx) => (
-          <div key={`${e.enzyme}-${idx}`} title={`${e.enzyme} cuts at ${e.cutPos.toLocaleString()}`} style={{ position: 'absolute', bottom: 0, left: `${e.cutPos - i1}ch`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ef4444', whiteSpace: 'nowrap', paddingRight: '2px', lineHeight: 1.35 }}>{e.enzyme}</span>
+          <div key={`${e.enzyme}-${idx}`} title={siteTitle(e)} style={{ position: 'absolute', bottom: 0, left: `${e.cutPos - i}ch`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {/*
+              * Red and bold when it cuts once, blue and plain when it does
+              * not. An enzyme that cuts this molecule once is a cloning site;
+              * one that cuts eleven times is a fact about the sequence, and
+              * telling them apart is most of what this stack is read for.
+              *
+              * Two colours here rather than one per enzyme, which is what the
+              * maps use: out on a ring a label sits far from its own tick and
+              * hue is the only thing tying the two together, but here the
+              * label is directly above the cut it names and the colour is free
+              * to carry the more useful fact.
+              */}
+            <span style={{ fontSize: '9px', fontWeight: e.cuts === 1 ? 700 : 400, color: e.cuts === 1 ? UNIQUE_CUTTER : COMMON_CUTTER, whiteSpace: 'nowrap', paddingRight: '2px', lineHeight: 1.35 }}>{e.enzyme}</span>
             {/* The tick reaches from the label down to the bases it cuts. */}
-            <div style={{ width: '1px', height: `${(rowEnds.length - row - 1) * 13 + 6}px`, background: '#ef4444' }} />
+            <div style={{ width: '1px', height: `${(rowEnds.length - row - 1) * 13 + 6}px`, background: e.cuts === 1 ? UNIQUE_CUTTER : COMMON_CUTTER }} />
           </div>
         ))}
       </div>
     );
 
+    /*
+     * Which bases each site recognises, so they can be tinted under the
+     * letters. Naming an enzyme and being shown only a tick above the line
+     * leaves the actual question — which bases is it reading — to be counted
+     * off by hand.
+     */
+    const siteInk: (string | null)[] = new Array(chunkLen).fill(null);
+    for (const e of sitesHere) {
+      for (let c = e.recognitionStart - i; c < e.recognitionStart + e.recognitionLen - i; c++) {
+        if (c >= 0 && c < chunkLen) siteInk[c] ??= e.color;
+      }
+    }
+
     // 2. Layer: Primers (1-indexed start/end)
-    const activePrimesFwd = layers.primer ? primers.filter(p => p.direction === 'forward' && p.start <= iEnd1 && p.end >= i1) : [];
-    const primerFwdRow = activePrimesFwd.length > 0 && (
-      <div key={`prim-fwd-${i}`} style={{ height: '14px', position: 'relative', borderLeft: '60px solid transparent', marginBottom: '2px', fontFamily: 'var(--font-mono)' }}>
-        {activePrimesFwd.map((p, idx) => {
+    const primerFwdRow = primersFwd.length > 0 && (
+      <div key={`prim-fwd-${i}`} style={{ height: PRIMER_ROW_H, position: 'relative', borderLeft: '60px solid transparent', marginBottom: 2, fontFamily: 'var(--font-mono)' }}>
+        {primersFwd.map((p, idx) => {
           const start = Math.max(0, p.start - i1);
           const end = Math.min(chunkLen, p.end - i);
           const width = end - start;
@@ -158,11 +407,10 @@ export default function MolbuilderRenderer({
     );
 
     // 3. Translations (Forward: +1, +2, +3)
-    const fwdFrames = [1, 2, 3].filter(f => frames.has(f));
-    const transFwdRows = fwdFrames.map(f => {
+    const transFwdRows = framesFwd.map(f => {
       const aaArray = translateSeq(seq, f);
       return (
-        <div key={`trans-${f}-${i}`} className="seq-row" style={{ height: '18px' }}>
+        <div key={`trans-${f}-${i}`} className="seq-row" style={{ height: TRANS_ROW_H }}>
           <div className="seq-label" style={{ color: '#9333ea' }}>+{f}</div>
           <div className="seq-chars">
             {chunk.split('').map((_, j) => {
@@ -170,8 +418,15 @@ export default function MolbuilderRenderer({
               if (!aa) return <span key={j} className="seq-char" />;
               const style = getAAStyle(aa);
               return (
-                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontSize: '10px', fontWeight: 700 }}>
-                  {aa}
+                /*
+                 * The small size goes on an inner span, never on the cell.
+                 * `.seq-char` is `width: 1ch`, and `ch` is measured against
+                 * the element's own font -- so a 10px cell was 6.02px wide
+                 * against the sequence's 8.42px, and the whole translation
+                 * row slid left by a base every three or four columns.
+                 */
+                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontWeight: 700 }}>
+                  <span style={{ fontSize: '10px', lineHeight: 1 }}>{aa}</span>
                 </span>
               );
             })}
@@ -180,28 +435,84 @@ export default function MolbuilderRenderer({
       );
     });
 
-    // 3b. ORFs (Forward - 0-indexed start/end from logic)
-    const activeOrfsFwd = layers.orf ? orfs.filter(o => o.strand === '+' && o.start < iEnd1 && o.end > i) : [];
-    const orfFwdRow = activeOrfsFwd.length > 0 && (
-      <div key={`orf-fwd-${i}`} style={{ height: '10px', position: 'relative', borderLeft: '60px solid transparent', marginBottom: '2px', fontFamily: 'var(--font-mono)' }}>
-        {activeOrfsFwd.map((o, idx) => {
-          const start = Math.max(0, o.start - i);
-          const end = Math.min(chunkLen, o.end - i);
-          return (
-            <div key={`${o.frame}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${end - start}ch`, height: '6px', background: '#22c55e', opacity: 0.6, borderRadius: '3px' }} />
-          );
-        })}
-      </div>
-    );
+    /*
+     * 3b. ORFs — the ones already chosen, not the whole six-frame scan.
+     *
+     * This layer used to be handed every ORF over 100 nt in all six frames,
+     * including every one lying under a CDS the feature track above already
+     * names. Turning it on filled the page with bars restating the
+     * annotation. The map answers the narrower question — is there coding
+     * sequence I have *not* annotated — and now so does this.
+     *
+     * A row per frame rather than packed by position: two ORFs on one row
+     * being in the same frame is information, and packing by whatever fits
+     * would throw it away.
+     */
+    const orfBand = (dir: '+' | '-', margin: React.CSSProperties) => {
+      const { here, frames } = dir === '+' ? orfFwdData : orfRevData;
+      if (here.length === 0) return false;
+      return (
+        <div key={`orf-${dir}-${i}`} style={{ height: frames.length * ORF_ROW_H, position: 'relative', borderLeft: '60px solid transparent', fontFamily: 'var(--font-mono)', ...margin }}>
+          {here.map((o, idx) => {
+            // MapOrf reports `end` inclusive, unlike the raw scan this used to take.
+            const start = Math.max(0, o.start - i);
+            const end = Math.min(chunkLen, o.end - i + 1);
+            return (
+              <div
+                key={`${o.frame}-${o.start}-${idx}`}
+                title={orfTitle(o)}
+                style={{
+                  position: 'absolute', top: frames.indexOf(o.frame) * ORF_ROW_H,
+                  left: `${start}ch`, width: `${end - start}ch`, height: '6px',
+                  background: frameColour(o.frame),
+                  // Already annotated: present because someone asked, never
+                  // competing with the one that is news.
+                  opacity: o.coveredBy ? 0.35 : 0.8,
+                  borderRadius: '3px', cursor: 'help',
+                }}
+              />
+            );
+          })}
+        </div>
+      );
+    };
+    const orfFwdRow = orfBand('+', { marginBottom: '2px' });
+    const orfRevRow = orfBand('-', { marginTop: '2px' });
 
     // 4. Ruler
     const ruler = (
-      <div key={`ruler-${i}`} className="seq-line-header" style={{ position: 'relative', height: '24px', display: 'flex', alignItems: 'flex-end', paddingLeft: '60px' }}>
+      <div
+        key={`ruler-${i}`}
+        className="seq-line-header"
+        style={{
+          position: 'relative', height: RULER_H, marginBottom: RULER_GAP,
+          display: 'flex', alignItems: 'flex-end', paddingLeft: '60px',
+          /*
+           * The font size has to be the sequence's, because `ch` is measured
+           * against the element's own font and every offset on this row is in
+           * ch. .seq-line-header sets 10px, so a tick declared at 30ch landed
+           * at 21.5 characters -- the numbers drifting further left the
+           * further along the line you read. The label keeps its own smaller
+           * size below; only the unit this row measures in is inherited.
+           */
+          fontSize: STRAND_FS,
+        }}
+      >
         {Array.from({ length: Math.ceil(chunkLen / 10) }).map((_, j) => {
           const pos = i + j * 10;
           if (pos >= len) return null;
           return (
-            <div key={pos} style={{ position: 'absolute', left: `calc(60px + ${j * 10}ch)`, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div
+              key={pos}
+              style={{
+                position: 'absolute',
+                // +0.5 and a half-width shift, so the mark sits over the
+                // middle of the base it names rather than against its edge.
+                left: `calc(60px + ${j * 10 + 0.5}ch)`,
+                transform: 'translateX(-50%)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+              }}
+            >
               <span style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 600, marginBottom: '2px' }}>{pos + 1}</span>
               <div style={{ width: '1px', height: '4px', background: '#cbd5e1' }} />
             </div>
@@ -210,59 +521,155 @@ export default function MolbuilderRenderer({
       </div>
     );
 
-    // 5. Features (1-indexed start/end)
-    const activeFeats = layers.feat ? features.filter(f => f.start <= iEnd1 && f.end >= i1) : [];
+    /*
+     * 5. Features
+     *
+     * A ribbon with a blocky arrow tip when the feature has a direction, a
+     * rounded block with a thin dark outline when it does not. Both used to be
+     * the same flat bar with the name in white on top, which said neither
+     * which way a gene is transcribed nor where one feature ends and the next
+     * begins — and white on the pastel fills these carry is a name you cannot
+     * read at all.
+     */
+    /*
+     * Overlapping features stack rather than pile up (packed above, where the
+     * height needed the row count). Two features on one row drew one over the
+     * other, which is worst exactly where a plasmid is densest — a tag inside
+     * a CDS inside an operon.
+     */
+    const activeFeats = feats;
+    const featRowOf = rowOfFeature;
+    const featRowCount = featureRowCount;
+
     // A spliced feature is drawn as its exons. Painting one bar from first to
     // last base would colour the introns as though they were coding.
     const featBlocks = activeFeats.flatMap((f, idx) =>
       (f.segments ?? [{ start: f.start, end: f.end }])
         .filter(seg => seg.start <= iEnd1 && seg.end >= i1)
-        .map((seg, si) => ({ f, seg, key: `${f.id}-${idx}-${si}` })),
+        .map((seg, si, all) => ({
+          f, seg, key: `${f.id}-${idx}-${si}`,
+          // Only the terminal exon carries the arrowhead: an intron is not a 3' end.
+          terminal: f.strand === 1 ? si === all.length - 1 : si === 0,
+        })),
     );
+
     const featRow = featBlocks.length > 0 && (
-      <div key={`feat-${i}`} style={{ height: '18px', position: 'relative', marginBottom: '4px', paddingLeft: '60px', fontFamily: 'var(--font-mono)' }}>
+      <div
+        key={`feat-${i}`}
+        style={{
+          height: `${featRowCount * FEAT_PITCH}px`, position: 'relative', marginBottom: '4px',
+          /*
+           * A border, not padding. Absolutely positioned children are placed
+           * against the padding box, which *includes* the padding -- so
+           * `paddingLeft: 60px` moved the gutter and left every feature block
+           * sitting 60px, about seven bases, to the left of the sequence it
+           * was drawn over. The enzyme, primer and ORF rows had it right; this
+           * one did not, and nothing on screen said so.
+           */
+          borderLeft: '60px solid transparent',
+          fontFamily: 'var(--font-mono)',
+        }}
+      >
         {/* Intron lines, behind the exon blocks. */}
         {activeFeats.filter(f => f.segments).map((f, idx) => {
           const s = Math.max(0, f.start - i1);
           const e = Math.min(chunkLen, f.end - i + 1);
+          const row = featRowOf.get(f.id) ?? 0;
           return (
             <div
               key={`intron-${f.id}-${idx}`}
               title={`${f.name} — intron`}
               style={{
                 position: 'absolute', left: `${s}ch`, width: `${Math.max(0.5, e - s)}ch`,
-                top: '6px', height: '2px', background: f.color || '#94a3b8',
-                opacity: 0.45, zIndex: 9,
+                top: `${row * FEAT_PITCH + FEAT_H / 2 - 1}px`, height: '2px',
+                background: outlineFor(f.color || '#94a3b8'), opacity: 0.55, zIndex: 9,
               }}
             />
           );
         })}
-        {featBlocks.map(({ f, seg, key }) => {
+        {featBlocks.map(({ f, seg, key, terminal }) => {
           const start = Math.max(0, seg.start - i1);
           const end = Math.min(chunkLen, seg.end - i + 1);
           const width = Math.max(0.5, end - start);
+          const row = featRowOf.get(f.id) ?? 0;
+          const fill = f.color || '#94a3b8';
+          const edge = outlineFor(fill);
+
+          /*
+           * The arrowhead is a clip, and a clip cannot carry a border -- so
+           * the outline is a second copy of the same shape one pixel larger
+           * behind it. Below about two characters there is no room for a head
+           * and the block stays square: a 6 bp feature drawn as a pure
+           * triangle reads as an arrow pointing at nothing.
+           */
+          const directional = shapeFor(f.type) === 'arrow' && terminal && width >= 2;
+          const clip = !directional ? undefined
+            : f.strand === 1
+              ? 'polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%)'
+              : 'polygon(7px 0, 100% 0, 100% 100%, 7px 100%, 0 50%)';
+
+          const label = f.name;
+          // Room for the name plus a character of padding either side.
+          const fits = width >= label.length + 2;
+
+          /*
+           * A name that does not fit goes beside the block rather than nowhere.
+           *
+           * A 17 bp promoter split across a line break has no piece wide
+           * enough to hold "T7 promoter" on either line, so gating on fit
+           * alone left it as an unlabelled stripe on both. Written once, at
+           * the piece where the feature starts, on whichever side has room.
+           */
+          const startsHere = seg.start >= i1;
+          const roomRight = chunkLen - (start + width) >= label.length + 1;
+          const outside = !fits && startsHere;
+
           return (
-            <div 
+            <div
               key={key}
               onClick={() => onFeatureClick?.(f)}
+              title={`${f.name} — ${f.type}, ${f.start}–${f.end} (${f.strand === 1 ? '+' : '−'})${f.segments ? ' · exon' : ''}`}
               style={{
-                position: 'absolute',
-                left: `${start}ch`,
-                width: `${width}ch`,
-                height: '14px',
-                background: f.color || '#94a3b8',
-                borderRadius: '2px',
-                cursor: 'pointer',
-                opacity: 0.8,
-                zIndex: 10,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden'
+                position: 'absolute', left: `${start}ch`, width: `${width}ch`,
+                top: `${row * FEAT_PITCH}px`, height: `${FEAT_H}px`,
+                cursor: 'pointer', zIndex: 10,
+                // The clip goes on an inner layer, never the outer box: a
+                // clipPath here would cut off any label written beside it.
+                ...(clip ? {} : { background: edge, borderRadius: '3px' }),
               }}
-              title={f.segments ? `${f.name} (exon)` : f.name}
             >
-              <span style={{ fontSize: '8px', color: 'white', fontWeight: 700, pointerEvents: 'none' }}>{width > 4 ? f.name : ''}</span>
+              {clip && (
+                <div style={{ position: 'absolute', inset: 0, background: edge, clipPath: clip }} />
+              )}
+              <div style={{
+                position: 'absolute', inset: '1px',
+                background: fill,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                overflow: 'hidden',
+                ...(clip ? { clipPath: clip } : { borderRadius: '2px' }),
+              }}>
+                {fits && (
+                  <span style={{
+                    fontSize: '9px', fontWeight: 700, lineHeight: 1,
+                    color: labelInk(fill), pointerEvents: 'none', whiteSpace: 'nowrap',
+                  }}>
+                    {label}
+                  </span>
+                )}
+              </div>
+              {outside && (
+                <span style={{
+                  position: 'absolute', top: 0, height: `${FEAT_H}px`,
+                  display: 'flex', alignItems: 'center',
+                  ...(roomRight
+                    ? { left: '100%', marginLeft: 3 }
+                    : { right: '100%', marginRight: 3 }),
+                  fontSize: '9px', fontWeight: 700, lineHeight: 1,
+                  color: outlineFor(fill, 0.3), whiteSpace: 'nowrap', pointerEvents: 'none',
+                }}>
+                  {label}
+                </span>
+              )}
             </div>
           );
         })}
@@ -271,20 +678,28 @@ export default function MolbuilderRenderer({
 
     // 6. Sequence Rows (Top/Bottom)
     const topStrand = (
-      <div key={`top-${i}`} className="seq-row">
+      <div key={`top-${i}`} className="seq-row" style={{ height: STRAND_H }}>
         <div className="seq-label">5′</div>
         <div className="seq-chars">
           {chunk.split('').map((c, j) => {
             const pos = i + j;
             const isSelected = selection && pos + 1 >= selection.start && pos + 1 <= selection.end;
+            const ink = siteInk[j];
             return (
               <span 
                 key={j} 
                 className={`seq-char nt-${c} ${isSelected ? 'selected' : ''}`}
-                onMouseDown={() => handleMouseDown(pos)}
+                onMouseDown={(e) => handleMouseDown(pos, e)}
                 onMouseMove={() => handleMouseMove(pos)}
                 onMouseUp={handleMouseUp}
-                style={{ fontWeight: 600, color: NT_COL[c] || '#475569' }}
+                style={{
+                  fontWeight: ink ? 800 : 600,
+                  color: NT_COL[c] || '#475569',
+                  // Selection is set by a class, so leaving the inline
+                  // background off is what lets it win where the two meet.
+                  ...(ink && !isSelected ? { background: `${ink}2e` } : {}),
+                  ...(ink ? { boxShadow: `inset 0 -2px 0 ${ink}` } : {}),
+                }}
               >
                 {c}
               </span>
@@ -301,18 +716,22 @@ export default function MolbuilderRenderer({
     );
 
     const botStrand = (
-      <div key={`bot-${i}`} className="seq-row" style={{ marginTop: '0px' }}>
+      <div key={`bot-${i}`} className="seq-row" style={{ marginTop: 0, height: STRAND_H }}>
         <div className="seq-label">3′</div>
         <div className="seq-chars">
           {chunk.split('').map((c, j) => {
             const pos = i + j;
             const b = COMP_MAP[c] || 'N';
             const isSelected = selection && pos + 1 >= selection.start && pos + 1 <= selection.end;
+            const ink = siteInk[j];
             return (
               <span 
                 key={j} 
                 className={`seq-char ${isSelected ? 'selected' : ''}`}
-                style={{ color: NT_BOT[c] || '#94a3b8' }}
+                style={{
+                  color: ink ? NT_COL[c] || '#475569' : NT_BOT[c] || '#94a3b8',
+                  ...(ink && !isSelected ? { background: `${ink}2e` } : {}),
+                }}
               >
                 {b}
               </span>
@@ -323,11 +742,10 @@ export default function MolbuilderRenderer({
     );
 
     // 7. Translations (Reverse: -1, -2, -3)
-    const revFrames = [-1, -2, -3].filter(f => frames.has(f));
-    const transRevRows = revFrames.map(f => {
+    const transRevRows = framesRev.map(f => {
       const aaArray = translateSeq(seq, f);
       return (
-        <div key={`trans-${f}-${i}`} className="seq-row" style={{ height: '18px', marginTop: '2px' }}>
+        <div key={`trans-${f}-${i}`} className="seq-row" style={{ height: TRANS_ROW_H, marginTop: 2 }}>
           <div className="seq-label" style={{ color: '#7c3aed' }}>{f}</div>
           <div className="seq-chars">
             {chunk.split('').map((_, j) => {
@@ -335,8 +753,15 @@ export default function MolbuilderRenderer({
               if (!aa) return <span key={j} className="seq-char" />;
               const style = getAAStyle(aa);
               return (
-                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontSize: '10px', fontWeight: 700 }}>
-                  {aa}
+                /*
+                 * The small size goes on an inner span, never on the cell.
+                 * `.seq-char` is `width: 1ch`, and `ch` is measured against
+                 * the element's own font -- so a 10px cell was 6.02px wide
+                 * against the sequence's 8.42px, and the whole translation
+                 * row slid left by a base every three or four columns.
+                 */
+                <span key={j} className="seq-char" style={{ background: style.bg, color: style.fg, fontWeight: 700 }}>
+                  <span style={{ fontSize: '10px', lineHeight: 1 }}>{aa}</span>
                 </span>
               );
             })}
@@ -345,25 +770,10 @@ export default function MolbuilderRenderer({
       );
     });
 
-    // 7b. ORFs (Reverse)
-    const activeOrfsRev = layers.orf ? orfs.filter(o => o.strand === '-' && o.start < iEnd1 && o.end > i) : [];
-    const orfRevRow = activeOrfsRev.length > 0 && (
-      <div key={`orf-rev-${i}`} style={{ height: '10px', position: 'relative', borderLeft: '60px solid transparent', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
-        {activeOrfsRev.map((o, idx) => {
-          const start = Math.max(0, o.start - i);
-          const end = Math.min(chunkLen, o.end - i);
-          return (
-            <div key={`${o.frame}-${idx}`} style={{ position: 'absolute', left: `${start}ch`, width: `${end - start}ch`, height: '6px', background: '#9333ea', opacity: 0.6, borderRadius: '3px' }} />
-          );
-        })}
-      </div>
-    );
-
     // 7c. Primers (Reverse: 1-indexed)
-    const activePrimesRev = layers.primer ? primers.filter(p => p.direction === 'reverse' && p.start <= iEnd1 && p.end >= i1) : [];
-    const primerRevRow = activePrimesRev.length > 0 && (
-      <div key={`prim-rev-${i}`} style={{ height: '14px', position: 'relative', borderLeft: '60px solid transparent', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
-        {activePrimesRev.map((p, idx) => {
+    const primerRevRow = primersRev.length > 0 && (
+      <div key={`prim-rev-${i}`} style={{ height: PRIMER_ROW_H, position: 'relative', borderLeft: '60px solid transparent', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+        {primersRev.map((p, idx) => {
           const start = Math.max(0, p.start - i1);
           const end = Math.min(chunkLen, p.end - i);
           const width = end - start;
@@ -376,23 +786,104 @@ export default function MolbuilderRenderer({
       </div>
     );
 
+    /*
+     * The cut itself, drawn where it actually falls: down through the top
+     * strand at cutPos, along the gap between the strands, and down through
+     * the bottom strand at cutBottom.
+     *
+     * The offset between the two is the overhang. Drawing one line through
+     * both strands would show every digest as blunt — EcoRI and SmaI
+     * identical on screen, when which of the two you reach for is decided by
+     * exactly that difference.
+     */
+    const cutMarks = cutsHere.length > 0 && (
+      <div key={`cuts-${i}`} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        {cutsHere.map((e, idx) => {
+          // The cut line carries the same fact as its label. The recognition
+          // tint below stays per-enzyme, because two sites a few bases apart
+          // need to be told apart and only the tint can do it there.
+          const ink = e.cuts === 1 ? UNIQUE_CUTTER : COMMON_CUTTER;
+          const top = e.cutPos - i;
+          const bottom = e.cutBottom - i;
+          const lo = Math.max(0, Math.min(top, bottom));
+          const hi = Math.min(chunkLen, Math.max(top, bottom));
+          const bar = (left: number, from: string, height: string) => (
+            <div style={{
+              position: 'absolute', left: `calc(60px + ${left}ch)`, marginLeft: -1,
+              top: from, height, width: 2, background: ink, borderRadius: 1,
+            }} />
+          );
+          return (
+            <React.Fragment key={`${e.enzyme}-${idx}`}>
+              {bar(top, '0', '50%')}
+              {hi > lo && (
+                <div style={{
+                  position: 'absolute', left: `calc(60px + ${lo}ch)`, width: `${hi - lo}ch`,
+                  top: 'calc(50% - 1px)', height: 2, background: ink,
+                }} />
+              )}
+              {bottom >= 0 && bottom <= chunkLen && bar(bottom, '50%', '50%')}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    );
+
+    /*
+     * The insertion point. Drawn through both strands at the gap it sits in,
+     * which is the same geometry as a blunt cut -- an edit is a cut you then
+     * type into.
+     */
+    const caretMark = caret !== null && caret >= i && caret <= i + chunkLen && (
+      <div
+        key={`caret-${i}`}
+        className="seq-caret"
+        style={{
+          position: 'absolute', left: `calc(60px + ${caret - i}ch)`, marginLeft: -1,
+          top: 0, height: '100%', width: 2, background: 'var(--accent-blue, #3b82f6)',
+          pointerEvents: 'none', zIndex: 20,
+        }}
+      />
+    );
+
+    if (blocks.length === 0) firstVisible = i + 1;
     blocks.push(
-      <div key={`block-${i}`} className="seq-block">
+      <div
+        key={`block-${i}`}
+        className="seq-block"
+        data-block-start={i}
+        style={{ position: 'absolute', top, left: 0, right: 0, marginBottom: 0 }}
+      >
         {enzRow}
         {primerFwdRow}
         {orfFwdRow}
         {transFwdRows}
         {ruler}
         {featRow}
-        {topStrand}
-        {strandSeparator}
-        {botStrand}
+        <div style={{ position: 'relative' }}>
+          {topStrand}
+          {strandSeparator}
+          {botStrand}
+          {cutMarks}
+          {caretMark}
+        </div>
         {transRevRows}
         {orfRevRow}
         {primerRevRow}
       </div>
     );
   }
+
+  /*
+   * The base at the top of the window.
+   *
+   * Read off the same offsets the window is built from rather than by asking
+   * the DOM where the blocks ended up: with most of them not rendered there
+   * is nothing to ask, and the arithmetic already exists.
+   */
+  const topBase = firstVisible;
+  const totalHeight = y;
+  offsetsRef.current = offsets;
 
   return (
     <div 
@@ -401,7 +892,31 @@ export default function MolbuilderRenderer({
       onMouseLeave={handleMouseUp}
       style={{ userSelect: 'none' }}
     >
-      {blocks}
+      {/*
+        * Locked to the top of the scrolling area, so the position on screen is
+        * always the position you are looking at.
+        */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 30, height: 0,
+        display: 'flex', justifyContent: 'flex-start', pointerEvents: 'none',
+      }}>
+        <span style={{
+          transform: 'translateY(-1.4rem)',
+          fontFamily: 'var(--font-mono, monospace)', fontSize: '10px', fontWeight: 700,
+          color: 'var(--text-muted)', background: 'var(--seq-bg, #fff)',
+          border: '1px solid var(--seq-border, #e5e7eb)', borderRadius: 5,
+          padding: '0.1rem 0.4rem', fontVariantNumeric: 'tabular-nums',
+        }}>
+          {topBase.toLocaleString()}
+        </span>
+      </div>
+      {/*
+        * Full height, so the scrollbar describes the whole sequence even
+        * though only a screenful of it exists.
+        */}
+      <div style={{ position: 'relative', height: totalHeight }}>
+        {blocks}
+      </div>
     </div>
   );
 }

@@ -1,14 +1,15 @@
 'use client';
 import React from 'react';
-import { 
-  Layers, 
-  Dna, 
-  Eye, 
-  Search, 
-  BarChart2, 
-  Settings2, 
-  ChevronDown,
-  Hash
+import {
+  Layers,
+  Pencil,
+  Undo2,
+  Dna,
+  Eye,
+  Search,
+  BarChart2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 
 interface MolbuilderToolbarProps {
@@ -29,6 +30,14 @@ interface MolbuilderToolbarProps {
   setShowStats: (show: boolean) => void;
   showFind: boolean;
   setShowFind: (show: boolean) => void;
+  /** Sequence fills the window, app chrome and all. */
+  focused: boolean;
+  onToggleFocus: () => void;
+  /** Armed for editing: typing changes the molecule. */
+  editing: boolean;
+  onToggleEditing: () => void;
+  canUndo: boolean;
+  onUndo: () => void;
 }
 
 export default function MolbuilderToolbar({
@@ -43,7 +52,13 @@ export default function MolbuilderToolbar({
   showStats,
   setShowStats,
   showFind,
-  setShowFind
+  setShowFind,
+  focused,
+  onToggleFocus,
+  editing,
+  onToggleEditing,
+  canUndo,
+  onUndo,
 }: MolbuilderToolbarProps) {
   
   const toggleLayer = (layer: string) => {
@@ -59,7 +74,7 @@ export default function MolbuilderToolbar({
   return (
     <div className="seq-toolbar glass-panel" style={{ borderRadius: '12px 12px 0 0', borderBottom: '1px solid var(--seq-border)' }}>
       {/* Group: Visibility / Layers */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', paddingRight: '1rem', borderRight: '1px solid var(--seq-border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', paddingRight: '0.6rem', borderRight: '1px solid var(--seq-border)' }}>
         <ToolbarGroupLabel icon={<Layers size={14} />} label="Layers" />
         <ToolbarToggle active={layers.feat} onClick={() => toggleLayer('feat')} label="Feat" />
         <ToolbarToggle active={layers.enz} onClick={() => toggleLayer('enz')} label="Enz" />
@@ -68,7 +83,7 @@ export default function MolbuilderToolbar({
       </div>
 
       {/* Group: Translation / Frames */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', paddingRight: '1rem', borderRight: '1px solid var(--seq-border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', paddingRight: '0.6rem', borderRight: '1px solid var(--seq-border)' }}>
         <ToolbarGroupLabel icon={<Dna size={14} />} label="Frames" />
         <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
           {[1, 2, 3].map(f => (
@@ -82,7 +97,7 @@ export default function MolbuilderToolbar({
       </div>
 
       {/* Group: View Settings */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingRight: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', paddingRight: '0.6rem' }}>
         <ToolbarGroupLabel icon={<Eye size={14} />} label="View" />
         <select 
           value={lineLen} 
@@ -99,9 +114,42 @@ export default function MolbuilderToolbar({
 
       {/* Group: Search & Tools */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
+        {/*
+          * Editing is armed, not ambient. A view that mutates the molecule
+          * whenever a key is pressed is one nobody can leave open safely.
+          */}
+        <ToolbarBtn
+          active={editing}
+          onClick={onToggleEditing}
+          icon={<Pencil size={16} />}
+          label={editing ? 'Editing' : 'Edit'}
+          title={editing
+            ? 'Typing changes the sequence. Click to stop.'
+            : 'Click a base, then type to insert and ⌫ to delete'}
+        />
+        {editing && (
+          <ToolbarBtn
+            active={false}
+            onClick={onUndo}
+            icon={<Undo2 size={16} />}
+            label="Undo"
+            title={canUndo ? 'Undo the last edit (⌘Z)' : 'Nothing to undo'}
+          />
+        )}
         <ToolbarBtn active={showFind} onClick={() => setShowFind(!showFind)} icon={<Search size={16} />} label="Find" />
         <ToolbarBtn active={showStats} onClick={() => setShowStats(!showStats)} icon={<BarChart2 size={16} />} label="Stats" />
-        <ToolbarBtn active={false} onClick={() => {}} icon={<Settings2 size={16} />} />
+        {/*
+          * The sequence over the whole window. Compacting the chrome buys back
+          * a hundred and fifty pixels; this is the one that actually changes
+          * how much sequence is on screen.
+          */}
+        <ToolbarBtn
+          active={focused}
+          onClick={onToggleFocus}
+          icon={focused ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          label={focused ? 'Exit' : 'Full'}
+          title={focused ? 'Back to the rest of the page (Esc)' : 'Fill the window with the sequence'}
+        />
       </div>
     </div>
   );
@@ -121,9 +169,9 @@ function ToolbarToggle({ active, onClick, label }: { active: boolean; onClick: (
     <button
       onClick={onClick}
       style={{
-        padding: '0.3rem 0.6rem',
+        padding: '0.2rem 0.45rem',
         borderRadius: '6px',
-        fontSize: '0.75rem',
+        fontSize: '0.72rem',
         fontWeight: 600,
         cursor: 'pointer',
         transition: 'all 0.15s',
@@ -137,15 +185,16 @@ function ToolbarToggle({ active, onClick, label }: { active: boolean; onClick: (
   );
 }
 
-function ToolbarBtn({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label?: string }) {
+function ToolbarBtn({ active, onClick, icon, label, title }: { active: boolean; onClick: () => void; icon: React.ReactNode; label?: string; title?: string }) {
   return (
     <button
       onClick={onClick}
+      title={title}
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: '0.4rem',
-        padding: '0.4rem 0.75rem',
+        padding: '0.25rem 0.55rem',
         borderRadius: '8px',
         cursor: 'pointer',
         transition: 'all 0.2s',

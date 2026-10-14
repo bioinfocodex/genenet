@@ -13,6 +13,7 @@ import { isSnapGene, parseSnapGene } from '@/lib/snapgene';
 import { isAb1, parseAb1 } from '@/lib/formats/ab1';
 import { identifyUnsupported } from '@/lib/formats/proprietary';
 import { fetchAccession } from '@/lib/accession';
+import { findHost, findStrain } from '@/lib/hosts';
 
 export async function createSequence(data: FormData) {
   const name = (data.get('name') as string).trim();
@@ -20,6 +21,13 @@ export async function createSequence(data: FormData) {
   const description = (data.get('description') as string | null)?.trim() || null;
   const rawSeq = data.get('sequence') as string;
   const tags = (data.get('tags') as string | null)?.trim() || null;
+  /*
+   * Ids, not labels. Validated against the taxonomy rather than trusted, so a
+   * hand-posted form cannot put free text in a column the digest planner is
+   * going to read as a genotype.
+   */
+  const host = findHost(data.get('host') as string | null) ? (data.get('host') as string) : null;
+  const strain = findStrain(data.get('strain') as string | null) ? (data.get('strain') as string) : null;
 
   // Normalize: uppercase, strip whitespace/numbers
   const sequence = rawSeq.toUpperCase().replace(/[^ACGTRYMKSWHBVDN]/g, '');
@@ -27,7 +35,7 @@ export async function createSequence(data: FormData) {
   if (sequence.length === 0) throw new Error('Sequence must contain valid nucleotides.');
 
   await prisma.geneSequence.create({
-    data: { name, type, description, sequence, size: sequence.length, tags },
+    data: { name, type, description, sequence, size: sequence.length, tags, host, strain },
   });
 
   revalidatePath('/sequences');
@@ -56,6 +64,40 @@ export async function saveFeatures(formData: FormData) {
     data: { features: featuresJson },
   });
   revalidatePath('/sequences');
+}
+
+/**
+ * Save an edited sequence.
+ *
+ * Separate from saveFeatures because it changes the molecule, not the notes on
+ * it: the length changes, so `size` has to change with it, and the two must be
+ * written together or the record disagrees with itself.
+ */
+export async function saveSequenceEdit(formData: FormData) {
+  // A server action is a callable endpoint, and this one overwrites the
+  // molecule. importSequence carries the same guard for the same reason.
+  await requireUser();
+
+  const id = formData.get('id') as string;
+  const raw = formData.get('sequence') as string | null;
+  const featuresJson = formData.get('features') as string | null;
+  if (!id || raw === null) return;
+
+  const sequence = raw.toUpperCase().replace(/[^ACGTRYMKSWHBVDN]/g, '');
+  // An empty result is a mistake, not an edit. Refusing is kinder than
+  // overwriting a plasmid with nothing.
+  if (sequence.length === 0) throw new Error('An edit cannot leave the sequence empty.');
+
+  await prisma.geneSequence.update({
+    where: { id },
+    data: {
+      sequence,
+      size: sequence.length,
+      ...(featuresJson ? { features: featuresJson } : {}),
+    },
+  });
+  revalidatePath('/sequences');
+  revalidatePath(`/sequences/${id}`);
 }
 
 // ─── Import from FASTA / GenBank ──────────────────────────────────────────────

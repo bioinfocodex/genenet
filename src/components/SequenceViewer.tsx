@@ -1,12 +1,12 @@
 'use client';
 import React, { useState, useMemo, useTransition, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import {
+import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
   FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2,
 } from 'lucide-react';
 import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
-import { saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
+import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
   findORFs, reverseComplement,
   reverseTranslate,
@@ -17,16 +17,20 @@ import {
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import { annotate } from '@/lib/annotation';
-import { blockedSites, type BlockedSite } from '@/lib/methylation';
+import { dormantEnzymes, blockedSites, type BlockedSite } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
+import { colourFor } from '@/lib/features';
+import { insertBases, deleteRange, replaceRange, cleanTyped, pushHistory, type EditSnapshot } from '@/lib/edit';
+import { findHost, findStrain, strainSummary, carriesMethylation } from '@/lib/hosts';
 import { placePrimers, bindingTitle } from '@/lib/primer-binding';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
+import EnzymePicker from './sequences/EnzymePicker';
 import MolbuilderRenderer from './sequences/MolbuilderRenderer';
 import MolbuilderStats from './sequences/MolbuilderStats';
 import MolbuilderFindReplace from './sequences/MolbuilderFindReplace';
@@ -40,15 +44,17 @@ import CircularMap from './sequences/CircularMap';
 // already import it from this module.
 export type { SequenceFeature } from '@/lib/features';
 
-interface ReSite {
-  enzyme: string;
-  cutPos: number;
-  recognitionStart: number;
-  recognitionLen: number;
-  overhang: string;
-  overhangType: string;
-  color: string;
-}
+/*
+ * One shape for a cut site, not two.
+ *
+ * This file used to declare its own ReSite identical to the map's. Identical
+ * is not the same as shared: adding the bottom-strand cut to one left the
+ * other a structurally different type with the same name, and the compiler
+ * called it what it was. The map exports it, the way CircularMap already
+ * takes it.
+ */
+import type { ReSite } from './sequences/LinearMap';
+export type { ReSite };
 
 export interface SavedPrimer {
   id: string;
@@ -106,6 +112,10 @@ const FEATURE_TYPES = [
   'rep_origin', 'regulatory', 'misc_feature', 'RBS', 'enhancer', 'reporter',
   'selectable_marker', 'tag', "5'UTR", "3'UTR",
 ];
+/** The two panels either side of the work, and how wide they are when open. */
+const RAIL_W = 178;
+const SIDEBAR_W = 272;
+
 const RE_COLORS = ['#ef4444','#3b82f6','#22c55e','#a855f7','#f59e0b','#06b6d4','#f97316','#ec4899','#84cc16','#78716c','#0ea5e9','#d946ef'];
 
 interface Props {
@@ -114,6 +124,9 @@ interface Props {
   sequence: string;
   size: number;
   seqType: string;
+  /** Ids from lib/hosts.ts. Null on records made before the fields existed. */
+  host?: string | null;
+  strain?: string | null;
   initialFeatures: SequenceFeature[];
   initialPrimers?: SavedPrimer[];
   /**
@@ -184,7 +197,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence, size, seqType, initialFeatures, initialPrimers = [], library }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -208,6 +221,59 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     setLeftTabRaw(t);
   }, []);
   const [features, setFeatures] = useState<SequenceFeature[]>(initialFeatures);
+
+  /*
+   * The sequence is editable now, so it is state rather than a prop.
+   *
+   * Editing is behind an explicit switch. Typing a base is a change to the
+   * molecule, and a view you can mutate by resting a finger on the keyboard is
+   * a view nobody can trust; arming it makes the mutation something you asked
+   * for. `caret` is a 0-indexed gap between bases, so 0 is before the first.
+   */
+  const [sequence, setSequence] = useState(initialSequence);
+  const [editing, setEditing] = useState(false);
+  const [caret, setCaret] = useState<number | null>(null);
+  const [history, setHistory] = useState<EditSnapshot[]>([]);
+  // Read through the updater in `redo`, so only the setter is bound here.
+  const [, setRedoStack] = useState<EditSnapshot[]>([]);
+
+  const snapshot = useCallback((label: string): EditSnapshot => ({ sequence, features, label }), [sequence, features]);
+
+  const applyEdit = useCallback((label: string, next: { sequence: string; features: SequenceFeature[] }, nextCaret: number) => {
+    setHistory(h => pushHistory(h, snapshot(label)));
+    setRedoStack([]);
+    setSequence(next.sequence);
+    setFeatures(next.features);
+    setCaret(Math.max(0, Math.min(next.sequence.length, nextCaret)));
+    setSelection(null);
+    setDirty(true);
+  }, [snapshot]);
+
+  const undo = useCallback(() => {
+    setHistory(h => {
+      if (h.length === 0) return h;
+      const last = h[h.length - 1];
+      setRedoStack(r => pushHistory(r, { sequence, features, label: last.label }));
+      setSequence(last.sequence);
+      setFeatures(last.features);
+      setSelection(null);
+      setDirty(true);
+      return h.slice(0, -1);
+    });
+  }, [sequence, features]);
+
+  const redo = useCallback(() => {
+    setRedoStack(r => {
+      if (r.length === 0) return r;
+      const last = r[r.length - 1];
+      setHistory(h => pushHistory(h, { sequence, features, label: last.label }));
+      setSequence(last.sequence);
+      setFeatures(last.features);
+      setSelection(null);
+      setDirty(true);
+      return r.slice(0, -1);
+    });
+  }, [sequence, features]);
   const [primers, setPrimers] = useState<SavedPrimer[]>(initialPrimers);
 
   /*
@@ -231,6 +297,27 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const [enzymeSet, setEnzymeSet] = useState('all');
   const [mapMaxCuts, setMapMaxCuts] = useState(1);
   const [mapMinSite, setMapMinSite] = useState(6);
+  /**
+   * Enzymes asked for by name, shared by the map, the sequence and the panel.
+   *
+   * Empty means "use the filters", which is the default and answers "what
+   * could I clone into". Non-empty means someone named an enzyme, which is a
+   * different question and outranks the filters — see `enzymeDisplay`.
+   */
+  const [pickedEnzymes, setPickedEnzymes] = useState<Set<string>>(new Set());
+
+  /*
+   * The tool sidebar folds away.
+   *
+   * It is 272px of fixed width, which on a laptop is a third of the room the
+   * sequence has to work with -- and the sequence is the thing being read. It
+   * fits its own line length to whatever width it is given, so those 272px are
+   * directly bases per line. Folded rather than removed: the tools are still
+   * one click away, which is the difference between a panel and a decision.
+   */
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** The rail of views and numbers slides away the same way the tools do. */
+  const [railOpen, setRailOpen] = useState(true);
 
   const enzymeSetNames = useMemo(() => {
     if (enzymeSet === 'all') return null;
@@ -238,11 +325,24 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     return set ? resolveSet(set) : null;
   }, [enzymeSet]);
 
-  const enzymeDisplay = useMemo(() => ({
-    minSiteLength: mapMinSite,
-    maxCuts: mapMaxCuts,
-    ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
-  }), [mapMinSite, mapMaxCuts, enzymeSetNames]);
+  /*
+   * Naming an enzyme overrides every filter, rather than intersecting them.
+   *
+   * The filters exist to answer a question nobody asked out loud: of five
+   * thousand cuts, which are worth drawing. Once someone types "AluI" they
+   * have asked out loud, and a four-cutter that cuts forty times failing every
+   * default is the whole reason they had to ask. Silently showing nothing
+   * would look like a broken picker rather than a filter doing its job.
+   */
+  const enzymeDisplay = useMemo(() => (
+    pickedEnzymes.size > 0
+      ? { restrictTo: [...pickedEnzymes], minSiteLength: 0, maxCuts: Infinity, maxLabels: 400 }
+      : {
+          minSiteLength: mapMinSite,
+          maxCuts: mapMaxCuts,
+          ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
+        }
+  ), [pickedEnzymes, mapMinSite, mapMaxCuts, enzymeSetNames]);
 
   const [showExport, setShowExport] = useState(false);
 
@@ -282,6 +382,23 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     } finally {
       setExporting(null);
     }
+  };
+
+  /*
+   * Recolour every feature by what it is for.
+   *
+   * Colours already stored on a record are kept when it is read -- overwriting
+   * what someone chose is not the viewer's call to make -- so a sequence
+   * annotated before the palette changed keeps whatever it was given then.
+   * This is how you ask for the change, on the one sequence you are looking
+   * at, rather than having it happen to every file you own overnight.
+   */
+  const applyStandardColours = () => {
+    setFeatures(prev => {
+      const next = prev.map(f => ({ ...f, color: colourFor(f.type, f.name) }));
+      return next.some((f, i) => f.color !== prev[i].color) ? next : prev;
+    });
+    setDirty(true);
   };
 
   const placedPrimers = useMemo(
@@ -360,6 +477,60 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
   const [fittedLineLen, setFittedLineLen] = useState(60);
   const seqPaneRef = useRef<HTMLDivElement>(null);
 
+  /*
+   * The sequence pane is a window, not a document.
+   *
+   * It used to be `height: 100%` under a parent with no height, which resolves
+   * to "as tall as the content" -- 9,700px on a 2.4 kb plasmid. The page
+   * scrolled instead of the pane, so the toolbar, the enzyme picker and the
+   * position readout all scrolled away with it, and by the time you were
+   * halfway down a sequence nothing on screen said where you were.
+   *
+   * Measured rather than a hardcoded `calc(100vh - 260px)`: what sits above
+   * the pane changes with the menu bar wrapping, the stats row and the tab
+   * rows, and a guessed constant is wrong on every window it was not guessed
+   * for.
+   */
+  /*
+   * The sequence over the whole window.
+   *
+   * Compacting the chrome around it wins back about 150px of a 900px window,
+   * which is worth having and is not what was asked for. The chrome above the
+   * pane -- menu bar, stats, two rows of tabs -- plus the toolbar inside it
+   * came to 334px, and no amount of tightening turns 563px of sequence into
+   * twice that inside the same window. Filling the window does.
+   */
+  const [seqFocus, setSeqFocus] = useState(false);
+  useEffect(() => {
+    if (!seqFocus) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSeqFocus(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [seqFocus]);
+
+  const [seqPaneHeight, setSeqPaneHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (leftTab !== 'sequence') return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const el = seqPaneRef.current;
+      if (!el) return;
+      // Filling the window means the window's height, not the leftovers below
+      // whatever chrome happens to be above the pane.
+      const top = seqFocus ? 12 : el.getBoundingClientRect().top;
+      // A floor, so a short window gives a small scroller rather than none.
+      setSeqPaneHeight(Math.max(320, Math.round(window.innerHeight - top - 24)));
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    schedule();
+    window.addEventListener('resize', schedule);
+    return () => {
+      window.removeEventListener('resize', schedule);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [leftTab, seqFocus]);
+
   useEffect(() => {
     if (molLineLen !== 0) return;
     const measure = () => {
@@ -368,7 +539,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       // The gutter carries the position numbers; the rest is monospace bases.
       const usable = el.clientWidth - 90;
       const probe = document.createElement('span');
-      probe.style.cssText = 'position:absolute;visibility:hidden;font-family:var(--font-mono);font-size:13px';
+      /*
+       * The probe has to be the font the sequence is actually set in. It was
+       * 13px against the sequence's 14px, so every character measured about
+       * 8% narrow and the fit came out too generous.
+       */
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-family:var(--seq-font,var(--font-mono));font-size:14px';
       probe.textContent = 'A'.repeat(100);
       el.appendChild(probe);
       const chWidth = probe.getBoundingClientRect().width / 100;
@@ -381,7 +557,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     };
     measure();
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    /*
+     * The pane changes width without the window doing anything -- folding the
+     * tool sidebar is the obvious case, and it was the case that showed this
+     * up: 292px of new room and the sequence carried on at the old line
+     * length, so the width went to whitespace instead of to bases.
+     */
+    const el = seqPaneRef.current;
+    const ro = el && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (el && ro) ro.observe(el);
+    return () => {
+      window.removeEventListener('resize', measure);
+      ro?.disconnect();
+    };
   }, [molLineLen, leftTab]);
 
   const effectiveLineLen = molLineLen === 0 ? fittedLineLen : molLineLen;
@@ -427,10 +615,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     const sites: ReSite[] = [];
     enzymeList.forEach((enzyme, i) => {
       findCutSites(sequence, enzyme).forEach(cutPos => {
+        const recognitionStart = cutPos - enzyme.cutBefore;
         sites.push({
           enzyme: enzyme.name,
           cutPos,
-          recognitionStart: cutPos - enzyme.cutBefore,
+          /*
+           * Both cut offsets are measured from the start of the recognition
+           * site, so the bottom-strand cut is the site's start plus the
+           * enzyme's own bottom offset. REBASE gives one for every enzyme in
+           * the table, which is what lets the sequence view draw a digest as
+           * the staggered cut it actually is rather than as a single line.
+           */
+          cutBottom: recognitionStart + (enzyme.cutBottom ?? enzyme.cutBefore),
+          recognitionStart,
           recognitionLen: enzyme.pattern.length,
           overhang: enzyme.overhang || 'blunt',
           overhangType: enzyme.overhangType,
@@ -490,12 +687,22 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
    * rest of this map is about. The default once on is the useful question:
    * frames with no CDS already over them.
    */
-  const mapOrfs = useMemo(
-    () => (showOrfs
-      ? chooseMapOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated })
-      : []),
-    [showOrfs, orfIncludeAnnotated, orfs, features],
+  /*
+   * Which reading frames are worth drawing anywhere, decided once.
+   *
+   * This used to be folded together with the map's own on/off switch, so the
+   * sequence view could not use it — and the sequence view was handed the raw
+   * six-frame scan instead: every ORF over 100 nt in all six frames, including
+   * the ones lying under a CDS already annotated. Turning the ORF layer on
+   * there filled the page with bars saying what the feature track above them
+   * already said. Choosing is one question and showing is another.
+   */
+  const chosenOrfs = useMemo(
+    () => chooseMapOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated }),
+    [orfIncludeAnnotated, orfs, features],
   );
+
+  const mapOrfs = showOrfs ? chosenOrfs : [];
 
   const orfSummary = useMemo(
     () => summariseOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated }),
@@ -639,13 +846,92 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
     });
   };
 
+  /*
+   * Typing, only while editing is armed and the sequence view is the one on
+   * screen. Guarded against form fields, because the enzyme picker is an input
+   * on this same page and typing "EcoRI" into it must not insert an E.
+   */
+  useEffect(() => {
+    if (!editing || leftTab !== 'sequence') return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (el?.isContentEditable) return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      /*
+       * A one-base selection is a click, not a range.
+       *
+       * Placing the caret also sets selection to {start: n, end: n}, so
+       * treating any selection as a range to replace meant the first key after
+       * every click overwrote the base clicked instead of inserting beside it:
+       * AAAA became AAA and nothing said so. Only a span of more than one base
+       * is a selection someone made on purpose.
+       */
+      const hasSel = selection && selection.end > selection.start;
+      const at = caret ?? (hasSel ? selection!.start - 1 : null);
+
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        if (hasSel) {
+          applyEdit(`delete ${selection!.end - selection!.start + 1} bp`,
+            deleteRange(sequence, features, selection!.start, selection!.end), selection!.start - 1);
+        } else if (at !== null) {
+          if (e.key === 'Backspace' && at > 0) {
+            applyEdit('delete 1 bp', deleteRange(sequence, features, at, at), at - 1);
+          } else if (e.key === 'Delete' && at < sequence.length) {
+            applyEdit('delete 1 bp', deleteRange(sequence, features, at + 1, at + 1), at);
+          }
+        }
+        return;
+      }
+
+      if (e.key === 'ArrowLeft') { e.preventDefault(); setCaret(c => Math.max(0, (c ?? 0) - 1)); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); setCaret(c => Math.min(sequence.length, (c ?? 0) + 1)); return; }
+
+      // A single printable key that is a base. Anything else is left alone,
+      // so the tab and the shortcuts elsewhere on the page still work.
+      if (e.key.length !== 1) return;
+      const typed = cleanTyped(e.key);
+      if (!typed) return;
+      e.preventDefault();
+      if (hasSel) {
+        applyEdit(`replace with ${typed}`,
+          replaceRange(sequence, features, selection!.start, selection!.end, typed), selection!.start);
+      } else if (at !== null) {
+        applyEdit(`insert ${typed}`, insertBases(sequence, features, at, typed), at + 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editing, leftTab, caret, selection, sequence, features, applyEdit, undo, redo]);
+
+  /** True once the molecule itself differs from what was loaded. */
+  const sequenceEdited = sequence !== initialSequence;
+
   const handleSave = () => {
     setSaving(true);
     const fd = new FormData();
     fd.append('id', id);
     fd.append('features', JSON.stringify(features));
     startTransition(() => {
-      saveFeatures(fd);
+      /*
+       * Two different writes. saveFeatures changes the notes on a molecule;
+       * saveSequenceEdit changes the molecule, and has to move `size` with it
+       * or the record contradicts itself.
+       */
+      if (sequenceEdited) {
+        fd.append('sequence', sequence);
+        saveSequenceEdit(fd);
+      } else {
+        saveFeatures(fd);
+      }
       setSaving(false);
       setDirty(false);
     });
@@ -768,6 +1054,8 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
       { label: 'Add Tag', action: () => openAddFeature('misc_feature') },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Auto-detect Features', action: handleAutoDetect },
+      { label: '──────────', action: () => {}, divider: true },
+      { label: 'Apply Standard Colours', action: applyStandardColours },
     ],
     Primers: [
       { label: 'Add Primer', action: openAddPrimer },
@@ -802,7 +1090,13 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
       {/* ── Menu bar ── */}
       <div
-        style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.35rem', position: 'relative', zIndex: 200 }}
+        /*
+         * Wrapping, because seven menus and the sequence name do not fit a
+         * narrow window on one line -- and not wrapping does not make them
+         * fit, it just pushes the name past the right edge and gives the
+         * whole page a horizontal scrollbar to reach it.
+         */
+        style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.35rem', position: 'relative', zIndex: 200, flexWrap: 'wrap' }}
         onMouseLeave={() => setOpenMenu(null)}
       >
         {Object.entries(menuItems).map(([menuName, items]) => (
@@ -835,28 +1129,19 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             )}
           </div>
         ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', paddingBottom: '0.1rem' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', alignSelf: 'center', fontFamily: 'monospace', background: 'var(--bg-secondary)', padding: '0.15rem 0.5rem', borderRadius: '4px', border: '1px solid var(--glass-border)' }}>{seqName}</span>
-        </div>
-      </div>
-
-      {/* ── Stats bar ── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem' }}>
-        <Pill label="Length" value={`${size.toLocaleString()} bp`} />
-        <Pill label="GC" value={`${gcContent}%`} />
-        <Pill label="Type" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
-        <Pill label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
-        <Pill label="Features" value={`${features.length}`} />
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
-          {dirty && (
-            <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }} onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : <><Save size={14} /> Save</>}
-            </button>
-          )}
-          <button className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem' }}
-            onClick={() => navigator.clipboard.writeText(sequence)}>
-            <Copy size={14} /> Copy
-          </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', paddingBottom: '0.1rem', minWidth: 0 }}>
+          {/*
+            * Truncated rather than pushing. Wrapping alone fixes the seven
+            * short menus; a long construct name is wider than the window on
+            * its own and would still push past the edge. The full name stays
+            * available on hover, which is what a title is for.
+            */}
+          <span
+            title={seqName}
+            style={{ fontSize: '0.75rem', color: 'var(--text-muted)', alignSelf: 'center', fontFamily: 'monospace', background: 'var(--bg-secondary)', padding: '0.15rem 0.5rem', borderRadius: '4px', border: '1px solid var(--glass-border)', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {seqName}
+          </span>
         </div>
       </div>
 
@@ -887,55 +1172,143 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
         );
       })()}
 
-      {/* ── Two-column layout ── */}
-      <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
+      {/*
+        * ── Two-column layout ──
+        *
+        * The sidebar is a fixed 272px that does not shrink, so on a narrow
+        * window it took its width off the top and left the map with 310px of
+        * a 700px window -- narrow enough that the drawing had to scroll
+        * sideways whatever floor it was given. Below the point where both fit,
+        * the tools wrap underneath and the work gets the whole width, which is
+        * the right way round.
+        */}
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
-        {/* ── Left column ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        {/*
+          * ── Rail ──
+          *
+          * The views, the map's own topology switch and the record's numbers,
+          * down the side instead of across the top.
+          *
+          * Every one of these was a horizontal band above the work: the stats
+          * row, the tab row -- which wrapped to two lines as soon as a tool
+          * opened -- and the Linear/Circular pair inside the map's controls.
+          * Together they were most of the 174px of chrome sitting on top of a
+          * pane whose whole problem is vertical room. Sideways they cost
+          * nothing, because the width is there and the height is not.
+          */}
+        <div
+          className="pane-slide"
+          style={{ width: railOpen ? RAIL_W : 0, flexShrink: 0, overflow: 'hidden' }}
+        >
+        <nav style={{ width: RAIL_W, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
 
-          {/* View tabs */}
-          <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--glass-border)', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            {dirty && (
+              <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem' }} onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : <><Save size={13} /> Save</>}
+              </button>
+            )}
+            <button className="btn btn-secondary" style={{ flex: dirty ? 0 : 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem' }}
+              title="Copy the whole sequence"
+              onClick={() => navigator.clipboard.writeText(sequence)}>
+              <Copy size={13} />{dirty ? '' : ' Copy'}
+            </button>
+          </div>
+
+          {/* Views */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             {VIEW_TABS.map(([t, label]) => (
-              <button key={t} onClick={() => setLeftTab(t)} style={{ padding: '0.5rem 1.1rem', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: leftTab === t ? 600 : 400, color: leftTab === t ? 'var(--accent-blue)' : 'var(--text-muted)', borderBottom: `2px solid ${leftTab === t ? 'var(--accent-blue)' : 'transparent'}`, fontFamily: 'inherit', transition: 'all 0.15s', letterSpacing: '0.01em' }}>
+              <button key={t} onClick={() => setLeftTab(t)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.4rem', textAlign: 'left',
+                  padding: '0.32rem 0.55rem', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: '0.82rem', fontFamily: 'inherit',
+                  fontWeight: leftTab === t ? 600 : 400,
+                  color: leftTab === t ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                  background: leftTab === t ? 'var(--accent-blue-15)' : 'transparent',
+                  borderLeft: `2px solid ${leftTab === t ? 'var(--accent-blue)' : 'transparent'}`,
+                }}>
                 {label}
               </button>
             ))}
 
             {/*
-              A tool gets its own tab while it is open, so the bar never claims
-              you are somewhere you are not, and there is always a way back to
-              the view you came from.
+              A tool keeps its own entry while it is open, so the rail never
+              claims you are somewhere you are not, and there is always a way
+              back to the view you came from.
             */}
             {TOOL_NAMES[leftTab] && (
               <span style={{
-                display: 'flex', alignItems: 'center', gap: '0.4rem',
-                padding: '0.5rem 0.7rem 0.5rem 1.1rem', fontSize: '0.85rem', fontWeight: 600,
-                color: 'var(--accent-blue)', borderBottom: '2px solid var(--accent-blue)',
-                marginLeft: 'auto',
+                display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.3rem',
+                padding: '0.32rem 0.55rem', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
+                background: 'var(--accent-purple-15, rgba(168,85,247,0.12))', color: 'var(--accent-purple)',
               }}>
                 {TOOL_NAMES[leftTab]}
-                <button
-                  onClick={() => setLeftTabRaw(lastView)}
-                  title={`Close and go back to ${VIEW_TABS.find(([v]) => v === lastView)?.[1] ?? 'Map'}`}
-                  aria-label="Close this tool"
-                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
-                >
+                <button onClick={() => setLeftTab(lastView)} aria-label="Close this tool"
+                  style={{ marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontSize: '0.9rem', lineHeight: 1, padding: 0, fontFamily: 'inherit' }}>
                   &times;
                 </button>
               </span>
             )}
           </div>
 
+          {/* The map's own topology, next to the view it belongs to. */}
+          {leftTab === 'map' && (
+            <div style={{ display: 'flex', gap: '0.3rem' }}>
+              {(['linear', 'circular'] as const).map(v => (
+                <button key={v} onClick={() => setMapView(v)}
+                  style={{ flex: 1, padding: '0.28rem 0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: mapView === v ? 'var(--accent-blue-15)' : 'white', color: mapView === v ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: mapView === v ? 600 : 400 }}>
+                  {v === 'linear' ? 'Linear' : 'Circular'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* The record's numbers. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', borderTop: '1px solid var(--glass-border)', paddingTop: '0.7rem' }}>
+            <RailStat label="Length" value={sequenceEdited
+              ? `${sequence.length.toLocaleString()} bp (was ${size.toLocaleString()})`
+              : `${sequence.length.toLocaleString()} bp`} />
+            <RailStat label="GC" value={`${gcContent}%`} />
+            <RailStat label="Type" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
+            <RailStat label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
+            <RailStat label="Features" value={`${features.length}`} />
+            {findHost(host) && <RailStat label="Host" value={findHost(host)!.organism.name} />}
+            {findStrain(strain) && (
+              <RailStat
+                label="Strain"
+                value={strainSummary(strain)!}
+                title={[findStrain(strain)!.strain.genotype, findStrain(strain)!.strain.use].filter(Boolean).join('\n')}
+              />
+            )}
+          </div>
+
+        </nav>
+        </div>
+
+        {/*
+          * The handle stays whether or not the panel does.
+          *
+          * A panel that slides fully away has to leave something behind to
+          * bring it back, and it cannot be a button inside the panel. Twenty
+          * pixels a side is the rent for being able to reclaim three hundred.
+          */}
+        <PaneHandle
+          side="left"
+          open={railOpen}
+          onClick={() => setRailOpen(o => !o)}
+          title={railOpen ? 'Slide the views and numbers away' : 'Show the views and numbers'}
+        />
+
+        {/* ── Left column ── */}
+        <div style={{ flex: '1 1 360px', minWidth: 'min(360px, 100%)' }}>
+
           {/* Tab content */}
           {leftTab === 'map' && (
             <div>
+              {/* Linear/Circular lives in the rail now, beside the view it belongs to. */}
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                {(['linear', 'circular'] as const).map(v => (
-                  <button key={v} onClick={() => setMapView(v)} style={{ padding: '0.3rem 0.8rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: mapView === v ? 'var(--accent-blue-15)' : 'white', color: mapView === v ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: mapView === v ? 600 : 400 }}>
-                    {v.charAt(0).toUpperCase() + v.slice(1)}
-                  </button>
-                ))}
-
                 <span style={{ flex: 1 }} />
 
                 {/*
@@ -976,9 +1349,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 <select
                   value={enzymeSet}
                   onChange={e => setEnzymeSet(e.target.value)}
+                  disabled={pickedEnzymes.size > 0}
                   className="input-control"
-                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
-                  title="Narrow the map to a working set. Shared with the Sites panel."
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem', opacity: pickedEnzymes.size ? 0.45 : 1 }}
+                  title={pickedEnzymes.size
+                    ? 'Not in use: the map is showing the enzymes you named'
+                    : 'Narrow the map to a working set. Shared with the Sites panel.'}
                 >
                   <option value="all">All</option>
                   {STARTER_SETS.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
@@ -987,9 +1363,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 <select
                   value={mapMaxCuts}
                   onChange={e => setMapMaxCuts(Number(e.target.value))}
+                  disabled={pickedEnzymes.size > 0}
                   className="input-control"
-                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
-                  title="An enzyme cutting many times is not a cloning site"
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem', opacity: pickedEnzymes.size ? 0.45 : 1 }}
+                  title={pickedEnzymes.size
+                    ? 'Not in use: an enzyme you named is shown however often it cuts'
+                    : 'An enzyme cutting many times is not a cloning site'}
                 >
                   <option value={1}>cutting once</option>
                   <option value={2}>up to twice</option>
@@ -1000,14 +1379,24 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 <select
                   value={mapMinSite}
                   onChange={e => setMapMinSite(Number(e.target.value))}
+                  disabled={pickedEnzymes.size > 0}
                   className="input-control"
-                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem' }}
-                  title="A four-cutter lands every few hundred bases"
+                  style={{ fontSize: '0.76rem', padding: '0.22rem 0.4rem', opacity: pickedEnzymes.size ? 0.45 : 1 }}
+                  title={pickedEnzymes.size
+                    ? 'Not in use: an enzyme you named is shown whatever its site length'
+                    : 'A four-cutter lands every few hundred bases'}
                 >
                   <option value={6}>6 bp sites and up</option>
                   <option value={5}>5 bp and up</option>
                   <option value={4}>4 bp and up</option>
                 </select>
+
+                <EnzymePicker
+                  sitesByEnzyme={reSitesByEnzyme}
+                  picked={pickedEnzymes}
+                  onChange={setPickedEnzymes}
+                  compact
+                />
 
                 {/*
                   Reading frames are opt-in. Six-frame translation finds them
@@ -1043,11 +1432,15 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                       title={siteCounts.drawn < siteCounts.eligible
                         ? 'Too many to label legibly, so they are thinned evenly round the molecule rather than truncated on one side'
                         : undefined}>
-                  {siteCounts.drawn === 0
-                    ? `nothing to draw from ${allReSites.length.toLocaleString()} cuts found`
-                    : siteCounts.drawn < siteCounts.eligible
-                      ? `${siteCounts.drawn} of ${siteCounts.eligible} matching sites drawn — too many to label`
-                      : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} drawn of ${allReSites.length.toLocaleString()} cuts found`}
+                  {pickedEnzymes.size > 0
+                    ? (siteCounts.drawn === 0
+                        ? `${[...pickedEnzymes].join(', ')} ${pickedEnzymes.size === 1 ? 'does' : 'do'} not cut this sequence`
+                        : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} from ${pickedEnzymes.size} enzyme${pickedEnzymes.size === 1 ? '' : 's'} you named`)
+                    : siteCounts.drawn === 0
+                      ? `nothing to draw from ${allReSites.length.toLocaleString()} cuts found`
+                      : siteCounts.drawn < siteCounts.eligible
+                        ? `${siteCounts.drawn} of ${siteCounts.eligible} matching sites drawn — too many to label`
+                        : `${siteCounts.drawn} site${siteCounts.drawn === 1 ? '' : 's'} drawn of ${allReSites.length.toLocaleString()} cuts found`}
                   {showOrfs && ` · ${orfSummary.drawn} of ${orfSummary.total.toLocaleString()} reading frames`}
                 </span>
               </div>
@@ -1092,7 +1485,16 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           )}
 
           {leftTab === 'sequence' && (
-            <div ref={seqPaneRef} className="seq-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 600 }}>
+            <div
+              ref={seqPaneRef}
+              className="seq-container"
+              style={{
+                display: 'flex', flexDirection: 'column', height: seqPaneHeight ?? 600,
+                ...(seqFocus
+                  ? { position: 'fixed', inset: 12, zIndex: 400, boxShadow: '0 24px 64px rgba(0,0,0,0.22)' }
+                  : {}),
+              }}
+            >
 
               {/* ── Selection action bar ── */}
               {selection && (() => {
@@ -1143,6 +1545,12 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                 setShowStats={setShowMolStats}
                 showFind={showMolFind}
                 setShowFind={setShowMolFind}
+                focused={seqFocus}
+                onToggleFocus={() => setSeqFocus(f => !f)}
+                editing={editing}
+                onToggleEditing={() => { setEditing(e => !e); setCaret(c => (c === null ? 0 : c)); }}
+                canUndo={history.length > 0}
+                onUndo={undo}
               />
               {showMolFind && (
                 <MolbuilderFindReplace 
@@ -1159,6 +1567,32 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   onClose={() => setShowMolFind(false)} 
                 />
               )}
+              {/*
+                * The same picker the map has, because the question is the
+                * same one and the answer has to be. Naming an enzyme here was
+                * impossible: the Sites panel listed every one that cuts and
+                * no view could be pointed at any of them, so "where does
+                * BamHI cut" ended at a table of numbers to count off by hand.
+                */}
+              {molLayers.enz && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', padding: '0.45rem 0.75rem', borderBottom: '1px solid var(--glass-border)', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                  <span style={{ fontWeight: 600 }}>Enzymes</span>
+                  <EnzymePicker
+                    sitesByEnzyme={reSitesByEnzyme}
+                    picked={pickedEnzymes}
+                    onChange={setPickedEnzymes}
+                    compact
+                  />
+                  <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                    {pickedEnzymes.size > 0
+                      ? (displayedSites.length === 0
+                          ? `${[...pickedEnzymes].join(', ')} ${pickedEnzymes.size === 1 ? 'does' : 'do'} not cut this sequence`
+                          : `${displayedSites.length} cut${displayedSites.length === 1 ? '' : 's'} shown`)
+                      : `${displayedSites.length} site${displayedSites.length === 1 ? '' : 's'} — the map's filters. Name one to see any enzyme.`}
+                  </span>
+                </div>
+              )}
+
               {molLayers.primer && unlocatedPrimers.length > 0 && (
                 <div style={{ padding: '0.4rem 0.75rem', fontSize: '0.72rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', background: 'rgba(245,158,11,0.06)' }}>
                   Not shown on the map: {unlocatedPrimers.map(p => p.name).join(', ')} &mdash;{' '}
@@ -1168,19 +1602,34 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
                   Mutagenesis primers and primers carrying a tail behave this way.
                 </div>
               )}
-              <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                <div style={{ flex: 1, overflowY: 'auto' }}>
+              {/*
+                * One scroller, and it is the sequence itself.
+                *
+                * This wrapper used to declare `overflowY: auto` of its own,
+                * which made it the scroller and left .seq-viewport inside it
+                * free to grow to its full 9,700px. Nothing in the sequence
+                * view could then pin itself to the top of the window, because
+                * the element it would pin to was not the one moving.
+                *
+                * minHeight: 0 is what lets a flex child shrink below its
+                * content; without it the column refuses to be shorter than the
+                * sequence and the bound is silently ignored.
+                */}
+              <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                   <MolbuilderRenderer
                     sequence={sequence}
                     features={visibleFeatures}
                     enzymes={displayedSites}
                     primers={drawablePrimers}
-                    orfs={orfs}
+                    orfs={chosenOrfs}
                     lineLen={effectiveLineLen}
                     layers={molLayers}
                     frames={molFrames}
                     selection={selection}
                     onSelect={setSelection}
+                    caret={editing ? caret : null}
+                    onCaret={editing ? setCaret : undefined}
                     onFeatureClick={(f) => {
                       setSelection({ start: f.start, end: f.end });
                       setSelectedFeature(f);
@@ -1374,7 +1823,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
 
           {leftTab === 'sites' && (
             <div>
-              <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} />
+              <RESitesPanel reSitesByEnzyme={reSitesByEnzyme} sequence={sequence} circular={seqType === 'plasmid'} setName={enzymeSet} onSetName={setEnzymeSet} picked={pickedEnzymes} onPicked={setPickedEnzymes} strain={strain} />
 
               {/*
                 The quick digest, moved here from a sidebar accordion called
@@ -1512,8 +1961,16 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
           {leftTab === 'fold' && <FoldPanel sequence={sequence} selection={selection} />}
         </div>
 
+        <PaneHandle
+          side="right"
+          open={sidebarOpen}
+          onClick={() => setSidebarOpen(o => !o)}
+          title={sidebarOpen ? 'Slide the tools away and give the room to the sequence' : 'Show the tools'}
+        />
+
         {/* ── Right sidebar ── */}
-        <div style={{ width: 272, flexShrink: 0 }}>
+        <div className="pane-slide" style={{ width: sidebarOpen ? SIDEBAR_W : 0, flexShrink: 0, overflow: 'hidden' }}>
+        <div style={{ width: SIDEBAR_W }}>
 
           {/* 1. Add Elements */}
 
@@ -1562,6 +2019,7 @@ export default function SequenceViewer({ id, name: seqName, sequence, size, seqT
             </div>
           )}
 
+        </div>
         </div>
       </div>
 
@@ -2089,14 +2547,55 @@ function Badge({ label, color }: { label: string; color: string }) {
 
 // ─── Pill ────────────────────────────────────────────────────────────────────
 
-function Pill({ label, value }: { label: string; value: string }) {
+/**
+ * One of the record's numbers, in the rail.
+ *
+ * Label over value rather than beside it: the rail is 178px and "RE sites"
+ * with "389 enzymes - 3383 cuts" beside it fits in neither half.
+ */
+/**
+ * The tab that brings a slid-away panel back.
+ *
+ * Always rendered, whichever state the panel is in -- a panel that can hide
+ * completely cannot keep its own reopen button, and a hidden panel with no
+ * handle is a feature nobody finds twice.
+ */
+function PaneHandle(
+  { side, open, onClick, title }:
+  { side: 'left' | 'right'; open: boolean; onClick: () => void; title: string },
+) {
+  const Icon = (side === 'left') === open ? ChevronLeft : ChevronRight;
   return (
-    <span style={{ fontSize: '0.78rem', display: 'flex', gap: '0.3rem' }}>
-      <span style={{ color: 'var(--text-muted)' }}>{label}:</span>
-      <strong style={{ color: 'var(--text-primary)' }}>{value}</strong>
-    </span>
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      aria-expanded={open}
+      style={{
+        alignSelf: 'stretch', width: 18, flexShrink: 0, marginTop: 2,
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        paddingTop: '0.4rem',
+        border: '1px solid var(--glass-border)',
+        borderRadius: side === 'left' ? '0 7px 7px 0' : '7px 0 0 7px',
+        background: open ? 'transparent' : 'var(--accent-blue-15)',
+        color: open ? 'var(--text-muted)' : 'var(--accent-blue)',
+        cursor: 'pointer',
+      }}
+    >
+      <Icon size={13} />
+    </button>
   );
 }
+
+function RailStat({ label, value, title }: { label: string; value: string; title?: string }) {
+  return (
+    <div title={title} style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+      <span style={{ fontSize: '0.64rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>{label}</span>
+      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>{value}</span>
+    </div>
+  );
+}
+
 
 // ─── Linear Map ──────────────────────────────────────────────────────────────
 
@@ -2116,7 +2615,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
 // ─── RE Sites Panel ──────────────────────────────────────────────────────────
 
 function RESitesPanel({
-  reSitesByEnzyme, sequence, circular, setName, onSetName,
+  reSitesByEnzyme, sequence, circular, setName, onSetName, picked, onPicked, strain,
 }: {
   reSitesByEnzyme: Map<string, ReSite[]>;
   sequence: string;
@@ -2124,20 +2623,66 @@ function RESitesPanel({
   /** Shared with the map, so the two never disagree about what was asked for. */
   setName: string;
   onSetName: (name: string) => void;
+  /** Also shared: this table is the natural place to pick from. */
+  picked: Set<string>;
+  onPicked: (next: Set<string>) => void;
+  /** What it was grown in, which decides whether the prep is methylated. */
+  strain?: string | null;
 }) {
   const [showAll, setShowAll] = useState(false);
+
+  /*
+   * The table was a dead end: it knew every enzyme that cuts and where, and
+   * offered no way to say "show me that one". A row is now the way you ask,
+   * and the map and the sequence answer.
+   */
+  const toggle = (enzyme: string) => {
+    const next = new Set(picked);
+    if (next.has(enzyme)) next.delete(enzyme); else next.add(enzyme);
+    onPicked(next);
+  };
   const entries = useMemo(
     () => [...reSitesByEnzyme.entries()].sort((a, b) => a[1].length - b[1].length),
     [reSitesByEnzyme],
   );
   const uniqueCutters = useMemo(() => entries.filter(([, s]) => s.length === 1), [entries]);
 
-  // Which of these sites carry a methyl group that stops the enzyme binding.
-  // Only enzymes that have sites here can be blocked at one.
+  /*
+   * Which of these sites carry a methyl group that stops the enzyme binding.
+   *
+   * What the DNA actually carries depends on what it was grown in, which the
+   * record now knows. This panel used to warn about Dam blocking on every
+   * plasmid regardless -- including one deliberately prepped in JM110 to
+   * avoid exactly that, where the warning was not merely unhelpful but the
+   * opposite of the truth.
+   */
+  const present = useMemo(() => ({
+    dam: carriesMethylation(strain, 'dam'),
+    dcm: carriesMethylation(strain, 'dcm'),
+  }), [strain]);
+
+  const names = useMemo(() => entries.map(([n]) => n), [entries]);
+
   const blocked = useMemo(
-    () => blockedSites(sequence, entries.map(([n]) => n), { circular }),
-    [sequence, circular, entries],
+    () => blockedSites(sequence, names, { circular, present }),
+    [sequence, circular, names, present],
   );
+
+  /*
+   * What would have been blocked in an ordinary strain. Only used to say how
+   * much the choice of strain bought, which is worth stating: "prepped in
+   * JM110" and "four sites that Dam would have blocked are clear" are the
+   * same fact, and only the second one answers the question being asked.
+   */
+  const wouldBlock = useMemo(
+    () => (present.dam && present.dcm ? [] : blockedSites(sequence, names, { circular })),
+    [sequence, circular, names, present],
+  );
+
+  /** The opposite problem: enzymes that need the methylation this prep lacks. */
+  const dormant = useMemo(() => dormantEnzymes(names, present), [names, present]);
+
+  const strainInfo = findStrain(strain);
 
   const inSet = useMemo(() => {
     if (setName === 'all') return null;
@@ -2145,7 +2690,19 @@ function RESitesPanel({
     return set ? new Set(resolveSet(set)) : null;
   }, [setName]);
 
-  const displayed = (showAll ? entries : uniqueCutters).filter(([n]) => !inSet || inSet.has(n));
+  /*
+   * Whatever the filters, a picked enzyme stays in the table.
+   *
+   * The list defaults to unique cutters, so picking a two-cutter took its own
+   * row off screen — the checkbox that turned it on had nowhere to turn it
+   * off, and the only way back was Clear, which drops everything.
+   */
+  const displayed = useMemo(() => {
+    const base = (showAll ? entries : uniqueCutters).filter(([n]) => !inSet || inSet.has(n));
+    const shown = new Set(base.map(([n]) => n));
+    const missing = entries.filter(([n]) => picked.has(n) && !shown.has(n));
+    return [...base, ...missing].sort((a, b) => a[1].length - b[1].length || a[0].localeCompare(b[0]));
+  }, [showAll, entries, uniqueCutters, inSet, picked]);
 
   return (
     <div>
@@ -2179,16 +2736,59 @@ function RESitesPanel({
           const relevant = blocked.filter(b => shown.has(b.enzyme));
           const known = relevant.filter(b => b.known);
           const unsure = relevant.filter(b => !b.known);
-          if (relevant.length === 0) return null;
+          /*
+           * Not filtered to the visible rows, unlike the rest of this panel.
+           * DpnI cuts GATC every few hundred bases, so it is never a unique
+           * cutter and never on screen -- and "DpnI will not cut" is a fact
+           * about a method someone is about to run, not about a table row
+           * they happen to be looking at.
+           */
+          const dormantShown = dormant;
+          const clearedShown = wouldBlock.filter(b => shown.has(b.enzyme) && b.known);
+          const cleared = new Set(clearedShown.map(b => b.enzyme));
+          if (relevant.length === 0 && dormantShown.length === 0 && cleared.size === 0) return null;
           return (
             <div style={{
               padding: '0.75rem 1rem', marginBottom: '0.9rem', borderRadius: 7,
-              background: known.length ? 'rgba(217,119,6,0.06)' : 'var(--bg-primary)',
-              border: `1px solid ${known.length ? 'rgba(217,119,6,0.25)' : 'var(--glass-border)'}`,
+              background: known.length || dormantShown.length ? 'rgba(217,119,6,0.06)' : 'var(--bg-primary)',
+              border: `1px solid ${known.length || dormantShown.length ? 'rgba(217,119,6,0.25)' : 'var(--glass-border)'}`,
             }}>
               <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: known.length ? '#a3560a' : 'var(--text-muted)', marginBottom: '0.4rem' }}>
                 Methylation
+                {strainInfo && (
+                  <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: 'var(--text-muted)' }}>
+                    {' · '}from {strainSummary(strain)}
+                  </span>
+                )}
               </div>
+
+              {/*
+                * What the strain bought, said as a result rather than left for
+                * the reader to infer from an absence of warnings. An empty
+                * panel cannot tell you whether the prep is clean or whether
+                * nothing was checked.
+                */}
+              {cleared.size > 0 && (
+                <p style={{ fontSize: '0.79rem', color: 'var(--accent-green)', margin: '0 0 0.5rem', lineHeight: 1.5 }}>
+                  <strong>{cleared.size} enzyme{cleared.size === 1 ? '' : 's'} clear.</strong>{' '}
+                  {[...cleared].slice(0, 6).join(', ')}{cleared.size > 6 ? '…' : ''}{' '}
+                  would be blocked in an ordinary strain; this prep carries no{' '}
+                  {[!present.dam && 'Dam', !present.dcm && 'Dcm'].filter(Boolean).join(' or ')} methylation.
+                </p>
+              )}
+
+              {/*
+                * And the cost of it. Reaching for a dam- strain to rescue an
+                * XbaI digest is also how a DpnI template cleanup silently
+                * stops working, which is a worse afternoon than the first one.
+                */}
+              {dormantShown.length > 0 && (
+                <ul style={{ margin: '0 0 0.5rem', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {dormantShown.map((d, i) => (
+                    <li key={i} style={{ fontSize: '0.79rem', lineHeight: 1.5, color: '#b91c1c' }}>{d.message}</li>
+                  ))}
+                </ul>
+              )}
               {known.length > 0 && (
                 <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                   {known.slice(0, 6).map((b, i) => (
@@ -2209,6 +2809,20 @@ function RESitesPanel({
           );
         })()}
 
+      {picked.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', padding: '0.5rem 0.85rem', marginBottom: '0.85rem', borderRadius: 7, background: 'var(--accent-blue-15)', border: '1px solid var(--glass-border)', fontSize: '0.8rem' }}>
+          <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>
+            Showing {[...picked].join(', ')} on the map and in the sequence
+          </span>
+          <button
+            onClick={() => onPicked(new Set())}
+            style={{ marginLeft: 'auto', padding: '0.2rem 0.55rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'white', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontFamily: 'inherit' }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {displayed.length === 0 ? (
         <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No restriction sites found.</p>
       ) : (
@@ -2216,6 +2830,7 @@ function RESitesPanel({
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                <th style={{ padding: '0.45rem 0.5rem', width: 30 }} />
                 {['Enzyme', 'Pattern', '# Cuts', 'Position(s)', 'Overhang', 'End type'].map(h => (
                   <th key={h} style={{ padding: '0.45rem 0.75rem', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase' }}>{h}</th>
                 ))}
@@ -2225,8 +2840,27 @@ function RESitesPanel({
               {displayed.map(([enz, sites]) => {
                 const isUnique = sites.length === 1;
                 const enzObj = ENZYMES[enz];
+                const isPicked = picked.has(enz);
                 return (
-                  <tr key={enz} style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                  <tr
+                    key={enz}
+                    onClick={() => toggle(enz)}
+                    title={isPicked ? `Stop showing ${enz} on the map and sequence` : `Show ${enz} on the map and sequence`}
+                    style={{
+                      borderBottom: '1px solid var(--glass-border)', cursor: 'pointer',
+                      background: isPicked ? 'var(--accent-blue-15)' : undefined,
+                    }}
+                  >
+                    <td style={{ padding: '0.45rem 0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={isPicked}
+                        onChange={() => toggle(enz)}
+                        onClick={e => e.stopPropagation()}
+                        aria-label={`Show ${enz}`}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </td>
                     <td style={{ padding: '0.45rem 0.75rem' }}>
                       <span style={{ fontWeight: 600, color: isUnique ? 'var(--accent-green)' : 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: sites[0].color, display: 'inline-block' }} />

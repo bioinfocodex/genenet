@@ -123,12 +123,29 @@ export function methylatedPositions(
  * The recognition sequence is what matters, not the cut: an enzyme is blocked
  * because it cannot bind, and where it would have cut is beside the point.
  */
+/**
+ * Which marks the DNA actually carries.
+ *
+ * Absent means the strain has no such methylase, so there is nothing to block
+ * anything and the warning should not be given. The default is everything
+ * present, because that is the ordinary case and because a record that does
+ * not say which strain it came from should get the cautious answer rather
+ * than a quiet promise the prep is clean.
+ */
+export type MethylationPresent = Partial<Record<MethylationSystem, boolean>>;
+
 export function blockedSites(
   sequence: string,
   enzymeNames: string[],
-  opts: { circular?: boolean; systems?: MethylationSystem[] } = {},
+  opts: { circular?: boolean; systems?: MethylationSystem[]; present?: MethylationPresent } = {},
 ): BlockedSite[] {
-  const { circular = false, systems = ['dam', 'dcm'] } = opts;
+  const { circular = false, present = {} } = opts;
+  /*
+   * A system the strain does not have cannot block anything. This is the
+   * whole reason for prepping in JM110: the GATC sites are still there, they
+   * are simply not methylated, so XbaI cuts.
+   */
+  const systems = (opts.systems ?? ['dam', 'dcm']).filter(s => present[s] !== false);
   const seq = sequence.toUpperCase().replace(/[^ACGTN]/g, '');
   const out: BlockedSite[] = [];
 
@@ -176,4 +193,38 @@ export function blockedSites(
 /** Enzymes that need the site methylated, which is the opposite problem. */
 export function requiresMethylation(name: string): MethylationSystem | null {
   return REQUIRES[name] ?? null;
+}
+
+
+export interface DormantEnzyme {
+  enzyme: string;
+  system: MethylationSystem;
+  message: string;
+}
+
+/**
+ * Enzymes that will not cut *because* the methylation is missing.
+ *
+ * The inversion of the usual problem, and the one that catches people out
+ * after they have solved the usual problem. DpnI cuts only methylated GATC,
+ * which is what makes it the enzyme that clears template out of a
+ * site-directed mutagenesis reaction -- and a plasmid prepped from a dam-
+ * strain to rescue an XbaI digest has nothing for DpnI to cut.
+ */
+export function dormantEnzymes(
+  enzymeNames: string[],
+  present: MethylationPresent = {},
+): DormantEnzyme[] {
+  const out: DormantEnzyme[] = [];
+  for (const name of enzymeNames) {
+    const system = REQUIRES[name];
+    if (!system || present[system] !== false) continue;
+    out.push({
+      enzyme: name,
+      system,
+      message: `${name} cuts only ${SYSTEMS[system].name}-methylated ${SYSTEMS[system].site}, `
+        + `and this DNA carries none. It will not cut.`,
+    });
+  }
+  return out;
 }

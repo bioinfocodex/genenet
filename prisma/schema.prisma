@@ -441,6 +441,13 @@ model GeneSequence {
   size        Int
   tags        String?
   features    String?  @default("[]")
+  /// Where the construct is grown. An id from lib/hosts.ts, not free text:
+  /// "BL21" and "BL21(DE3)" are different strains and a notebook string
+  /// cannot be reasoned about.
+  host        String?
+  /// The strain it was transformed into. Also an id from lib/hosts.ts, and
+  /// the one that decides whether a prep carries Dam and Dcm marks.
+  strain      String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
