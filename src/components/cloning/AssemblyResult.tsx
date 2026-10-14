@@ -2,6 +2,8 @@
 import { useState, useTransition } from 'react';
 import { saveConstruct } from '@/app/actions/sequences';
 import type { Assembly, AssemblyProblem } from '@/lib/assembly';
+import { carryFeatures, type ParentAnnotation } from '@/lib/carry-features';
+import { normaliseFeatures } from '@/lib/features';
 
 /**
  * What an assembly produced, and whether to believe it.
@@ -55,7 +57,7 @@ export function ConstructPanel({
    * The library records the parts came from, when the panel knows them. Ids
    * make the saved lineage clickable; without them it records names only.
    */
-  parents?: { id?: string; name: string }[];
+  parents?: { id?: string; name: string; sequence?: string; features?: string | null }[];
 }) {
   const [name, setName] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
@@ -64,6 +66,17 @@ export function ConstructPanel({
   const [showSeq, setShowSeq] = useState(false);
 
   const partNames = assembly.order.map(o => o.name).join(', ');
+
+  // The parents' annotation, carried over by finding each feature's own bases
+  // in the product. Nothing here has to know where the fragments landed.
+  const carried = carryFeatures(
+    assembly.sequence,
+    assembly.topology === 'circular',
+    (parents ?? []).filter((p): p is typeof p & { sequence: string } => !!p.sequence)
+      .map((p): ParentAnnotation => ({
+        name: p.name, sequence: p.sequence, circular: true, features: normaliseFeatures(p.features),
+      })),
+  );
 
   const save = () => {
     const trimmed = name.trim();
@@ -79,6 +92,7 @@ export function ConstructPanel({
         parents ?? assembly.order.map(o => ({ name: o.name })),
       ));
       fd.append('topology', assembly.topology);
+      fd.append('features', JSON.stringify(carried.features));
       const r = await saveConstruct(fd);
       if ('error' in r) setError(r.error);
       else setSaved(r.id);
@@ -93,6 +107,23 @@ export function ConstructPanel({
           {assembly.sequence.length.toLocaleString()} bp &middot; {assembly.topology}
         </span>
       </div>
+
+      {(carried.features.length > 0 || carried.lost.length > 0) && (
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.6rem' }}>
+          {carried.features.length} feature{carried.features.length === 1 ? '' : 's'} carried from the parts
+          {carried.lost.filter(l => l.reason === 'not in the product').length > 0 && (
+            <span style={{ color: '#a3560a' }}>
+              {'; '}
+              {carried.lost.filter(l => l.reason === 'not in the product').map(l => l.name).join(', ')}
+              {' '}did not survive the cut
+            </span>
+          )}
+          {carried.duplicated.length > 0 && (
+            <span style={{ color: '#a3560a' }}>{'; '}{carried.duplicated.map(d => `${d.name} appears ${d.copies} times`).join(', ')}</span>
+          )}
+          .
+        </div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', margin: '0.9rem 0' }}>
         {assembly.order.map((p, i) => (
@@ -167,8 +198,10 @@ export function ConstructPanel({
       <div style={{ marginTop: '1.1rem', paddingTop: '1rem', borderTop: '1px solid var(--glass-border)' }}>
         {saved ? (
           <div style={{ fontSize: '0.85rem' }}>
-            Saved, without annotations: the assembly engine does not carry the parts&apos; features across yet,
-            so run Annotate on the new sequence. <a href={`/sequences/${saved}`} style={{ color: accent, fontWeight: 600 }}>Open the construct &rarr;</a>
+            {carried.features.length
+              ? `Saved with ${carried.features.length} feature${carried.features.length === 1 ? '' : 's'} carried over from the parts. `
+              : 'Saved. No parent annotation survived into the product; run Annotate on it. '}
+            <a href={`/sequences/${saved}`} style={{ color: accent, fontWeight: 600 }}>Open the construct &rarr;</a>
           </div>
         ) : (
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
