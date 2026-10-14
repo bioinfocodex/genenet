@@ -2,8 +2,9 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   prepared, bluntEnds, dephosphorylate, phosphorylate, ligationCheck, canSelfClose,
-  annealOligos, partialDigestCircular,
+  annealOligos, partialDigestCircular, strandCuts, digestToFragments,
 } from '../src/lib/fragments.ts';
+import { ENZYMES } from '../src/lib/restrictionEnzymes.ts';
 import { blunt, sticky, type Fragment } from '../src/lib/assembly.ts';
 import { revComp } from '../src/lib/alignment.ts';
 
@@ -163,5 +164,91 @@ describe('partial digest of a circle', () => {
 
   test('no sites, no products', () => {
     assert.deepEqual(partialDigestCircular(seq, []), []);
+  });
+});
+
+describe('digesting to fragments with real ends', () => {
+  const E = (name: string) => {
+    const e = ENZYMES[name];
+    return { name, pattern: e.pattern, cutBefore: e.cutBefore, cutBottom: e.cutBottom };
+  };
+  const filler = (n: number, seed: number) => {
+    let x = seed; let s = '';
+    for (let i = 0; i < n; i++) { x = (Math.imul(x, 1103515245) + 12345) & 0x7fffffff; s += 'ACGT'[(x >> 16) & 3]; }
+    return s;
+  };
+
+  test("EcoRI leaves a 5′ AATT overhang on both new ends", () => {
+    const seq = 'GGGGG' + 'GAATTC' + 'CCCCC';
+    const cuts = strandCuts(seq, false, [E('EcoRI')]);
+    assert.equal(cuts.length, 1);
+    assert.deepEqual([cuts[0].top, cuts[0].bottom], [6, 10]);
+    const pieces = digestToFragments(seq, false, cuts);
+    assert.equal(pieces.length, 2);
+    assert.equal(pieces[0].seq, 'GGGGGG');
+    assert.deepEqual([pieces[0].right.type, pieces[0].right.overhang], ["5'", 'AATT']);
+    assert.deepEqual([pieces[1].left.type, pieces[1].left.overhang], ["5'", 'AATT']);
+    assert.equal(pieces[1].seq, 'CCCCCC');
+  });
+
+  test('PstI leaves a 3′ overhang, and the bases of it belong to the top strand on the left piece', () => {
+    const seq = 'GGGGG' + 'CTGCAG' + 'CCCCC';
+    const [cut] = strandCuts(seq, false, [E('PstI')]);
+    assert.ok(cut.top > cut.bottom, 'bottom strand cut first');
+    const [left, right] = digestToFragments(seq, false, [cut]);
+    assert.deepEqual([left.right.type, left.right.overhang], ["3'", 'TGCA']);
+    assert.deepEqual([right.left.type, right.left.overhang], ["3'", 'TGCA']);
+  });
+
+  test('a blunt cutter leaves blunt ends', () => {
+    const seq = 'GGGGG' + 'GTTAAC' + 'CCCCC'; // HpaI, GTT^AAC
+    const pieces = digestToFragments(seq, false, strandCuts(seq, false, [E('HpaI')]));
+    assert.equal(pieces.length, 2);
+    assert.ok(pieces.every(p => p.left.type === 'blunt' && p.right.type === 'blunt'));
+  });
+
+  test('the pieces put back together are the molecule they came from', () => {
+    // The round trip is the proof: overhangs written on the wrong strand, or
+    // cores that keep bases the overhang already carries, both show up here.
+    const seq = filler(200, 11) + 'GAATTC' + filler(300, 12) + 'GGATCC' + filler(150, 13);
+    const cuts = strandCuts(seq, false, [E('EcoRI'), E('BamHI')]);
+    const pieces = digestToFragments(seq, false, cuts);
+    assert.equal(pieces.length, 3);
+    const rebuilt = pieces.map((p, i) => (i === 0 ? '' : p.left.overhang) + p.seq).join('');
+    assert.equal(rebuilt, seq.toUpperCase());
+  });
+
+  test('a circle gives one piece per cut, and they close back into it', () => {
+    const seq = filler(100, 21) + 'GAATTC' + filler(120, 22) + 'GAATTC' + filler(80, 23);
+    const cuts = strandCuts(seq, true, [E('EcoRI')]);
+    assert.equal(cuts.length, 2);
+    const pieces = digestToFragments(seq, true, cuts);
+    assert.equal(pieces.length, 2);
+    const total = pieces.reduce((n, p) => n + p.seq.length + p.left.overhang.length, 0);
+    assert.equal(total, seq.length, 'every base is in exactly one piece');
+  });
+
+  test('a site on the bottom strand cuts the mirror image of one on the top', () => {
+    // BsaI reads GGTCTC and cuts downstream; read on the other strand it cuts
+    // upstream by the same offsets, which is what Golden Gate depends on.
+    const seq = filler(60, 31) + 'GAGACC' + filler(60, 32);
+    const [cut] = strandCuts(seq, false, [E('BsaI')]);
+    const site = seq.indexOf('GAGACC');
+    assert.equal(cut.top, site - 5);
+    assert.equal(cut.bottom, site - 1);
+  });
+
+  test('an uncut molecule comes back whole', () => {
+    const seq = filler(100, 41);
+    const pieces = digestToFragments(seq, false, strandCuts(seq, false, [E('EcoRI')]));
+    assert.equal(pieces.length, 1);
+    assert.equal(pieces[0].seq, seq.toUpperCase());
+  });
+
+  test('digest products carry phosphates, so they ligate', () => {
+    const seq = 'GGGGG' + 'GAATTC' + filler(50, 51) + 'GAATTC' + 'CCCCC';
+    const pieces = digestToFragments(seq, false, strandCuts(seq, false, [E('EcoRI')]));
+    assert.ok(pieces[1].phosphate.left && pieces[1].phosphate.right);
+    assert.ok(ligationCheck(pieces[1], pieces[1]).joins, 'EcoRI ends anneal to each other');
   });
 });

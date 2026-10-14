@@ -261,3 +261,155 @@ export function partialDigestCircular(seq: string, sites: CutSite[]): PartialPro
   }
   return out;
 }
+
+// ─── Digesting to fragments with real ends ───────────────────────────────────
+
+/**
+ * Where an enzyme cuts each strand, in top-strand coordinates.
+ *
+ * `top` is the index the top strand breaks before; `bottom` the same for the
+ * bottom. Their order is the whole of the geometry: top before bottom leaves a
+ * 5' overhang, bottom before top a 3' one, together a blunt end.
+ */
+export interface StrandCut {
+  enzyme: string;
+  top: number;
+  bottom: number;
+}
+
+const COMPLEMENT: Record<string, string> = { A: 'T', T: 'A', G: 'C', C: 'G' };
+const matches = (seq: string, at: number, pattern: string, iupac: Record<string, string>) => {
+  for (let i = 0; i < pattern.length; i++) {
+    const b = seq[at + i];
+    if (!b || !(iupac[pattern[i]] ?? pattern[i]).includes(b)) return false;
+  }
+  return true;
+};
+
+const IUPAC: Record<string, string> = {
+  A: 'A', C: 'C', G: 'G', T: 'T', R: 'AG', Y: 'CT', S: 'CG', W: 'AT',
+  K: 'GT', M: 'AC', B: 'CGT', D: 'AGT', H: 'ACT', V: 'ACG', N: 'ACGT',
+};
+
+/**
+ * Every cut the named enzymes make, with both strand positions.
+ *
+ * A site read on the bottom strand cuts the mirror image of the site read on
+ * the top: the offsets swap and are measured from the other end. Getting that
+ * backwards is invisible in a list of fragment sizes and wrong in every
+ * overhang, which is what decides whether the ligation works.
+ */
+export function strandCuts(
+  seq: string,
+  circular: boolean,
+  enzymes: { name: string; pattern: string; cutBefore: number; cutBottom?: number }[],
+): StrandCut[] {
+  const s = seq.toUpperCase();
+  const n = s.length;
+  const seen = new Map<string, StrandCut>();
+
+  for (const e of enzymes) {
+    const p = e.pattern.toUpperCase();
+    const L = p.length;
+    const top = e.cutBefore;
+    const bottom = e.cutBottom ?? L - e.cutBefore;
+    const rcPattern = p.split('').reverse().map(c => {
+      const set = IUPAC[c] ?? c;
+      return Object.keys(IUPAC).find(k => IUPAC[k] === set.split('').map(x => COMPLEMENT[x] ?? x).sort().join('')) ?? c;
+    }).join('');
+    const hay = circular ? s + s.slice(0, L - 1) : s;
+    const last = circular ? n - 1 : n - L;
+
+    for (let i = 0; i <= last; i++) {
+      if (matches(hay, i, p, IUPAC)) {
+        const c = { enzyme: e.name, top: i + top, bottom: i + bottom };
+        seen.set(`${e.name}:${c.top}:${c.bottom}`, c);
+      }
+      // The same enzyme reading the other strand: the offsets are measured
+      // from the far end of the site, and the two strands' cuts swap.
+      if (rcPattern !== p && matches(hay, i, rcPattern, IUPAC)) {
+        const c = { enzyme: e.name, top: i + L - bottom, bottom: i + L - top };
+        seen.set(`${e.name}:${c.top}:${c.bottom}`, c);
+      }
+    }
+  }
+
+  const cuts = [...seen.values()].filter(c => circular || (Math.min(c.top, c.bottom) > 0 && Math.max(c.top, c.bottom) < n));
+  if (circular) for (const c of cuts) { const shift = ((c.top % n) + n) % n - c.top; c.top += shift; c.bottom += shift; }
+  return cuts.sort((a, b) => Math.min(a.top, a.bottom) - Math.min(b.top, b.bottom));
+}
+
+/** The pair of ends one cut creates: for the piece before it, and after it. */
+export function endsOfCut(seq: string, cut: StrandCut): { leftPieceRight: End; rightPieceLeft: End } {
+  const n = seq.length;
+  const lo = Math.min(cut.top, cut.bottom);
+  const hi = Math.max(cut.top, cut.bottom);
+  if (lo === hi) return { leftPieceRight: blunt(), rightPieceLeft: blunt() };
+  const span = hi <= n ? seq.slice(lo, hi) : seq.slice(lo) + seq.slice(0, hi - n);
+  // Top strand cut first: the bottom strand protrudes on the left piece and
+  // the top strand on the right piece, which is a 5' overhang on both.
+  const type = cut.top < cut.bottom ? "5'" : "3'";
+  return type === "5'"
+    ? { leftPieceRight: sticky("5'", revComp(span)), rightPieceLeft: sticky("5'", span) }
+    : { leftPieceRight: sticky("3'", span), rightPieceLeft: sticky("3'", revComp(span)) };
+}
+
+/**
+ * Cut a molecule into fragments carrying the ends the enzymes actually leave.
+ *
+ * A circular molecule gives one piece per cut; a linear one gives one more
+ * than it has cuts, and the two outermost keep whatever ends the molecule
+ * already had. Digest products are phosphorylated, because that is what a
+ * restriction enzyme leaves.
+ */
+export function digestToFragments(
+  seq: string,
+  circular: boolean,
+  cuts: StrandCut[],
+  endsOfMolecule: { left: End; right: End } = { left: blunt(), right: blunt() },
+): PreparedFragment[] {
+  const s = seq.toUpperCase();
+  const n = s.length;
+  const ordered = [...cuts].sort((a, b) => Math.min(a.top, a.bottom) - Math.min(b.top, b.bottom));
+  const out: PreparedFragment[] = [];
+  const piece = (from: number, to: number) => (to <= n ? s.slice(from, to) : s.slice(from) + s.slice(0, to - n));
+
+  if (ordered.length === 0) {
+    return [prepared({ id: 'whole', name: 'uncut', seq: s, left: endsOfMolecule.left, right: endsOfMolecule.right }, true)];
+  }
+
+  if (circular) {
+    for (let i = 0; i < ordered.length; i++) {
+      const a = ordered[i];
+      const b = ordered[(i + 1) % ordered.length];
+      const from = Math.max(a.top, a.bottom);
+      const toRaw = Math.min(b.top, b.bottom);
+      const to = toRaw > from ? toRaw : toRaw + n;
+      out.push(prepared({
+        id: `cut-${i}`,
+        name: `${a.enzyme}–${b.enzyme}`,
+        seq: piece(from, to),
+        left: endsOfCut(s, a).rightPieceLeft,
+        right: endsOfCut(s, b).leftPieceRight,
+      }, true));
+    }
+    return out;
+  }
+
+  const bounds: (StrandCut | null)[] = [null, ...ordered, null];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const a = bounds[i];
+    const b = bounds[i + 1];
+    const from = a ? Math.max(a.top, a.bottom) : 0;
+    const to = b ? Math.min(b.top, b.bottom) : n;
+    if (to <= from) continue;
+    out.push(prepared({
+      id: `cut-${i}`,
+      name: `${a?.enzyme ?? 'start'}–${b?.enzyme ?? 'end'}`,
+      seq: s.slice(from, to),
+      left: a ? endsOfCut(s, a).rightPieceLeft : endsOfMolecule.left,
+      right: b ? endsOfCut(s, b).leftPieceRight : endsOfMolecule.right,
+    }, !!a || !!b));
+  }
+  return out;
+}
