@@ -11,9 +11,9 @@ import {
   findORFs, reverseComplement,
   reverseTranslate,
   calcTm, calcGC,
-  simulatePCR, ligateFragments,
+  ligateFragments,
   LADDER_1KB, gelPosition, calculateFragments,
-  type ORF, type PCRResult, type LigationResult,
+  type ORF, type LigationResult,
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import TracePanel, { type SavedReadInfo, type VerificationInfo } from './sequences/TracePanel';
@@ -33,6 +33,7 @@ import { addPrimerToCollection } from '@/app/actions/oligos';
 import Link from 'next/link';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { allSitesFor } from '@/lib/map-sites';
+import { simulatePcr, type PcrResult } from '@/lib/pcr';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
 import CrisprPanel from './sequences/CrisprPanel';
@@ -481,7 +482,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   // PCR simulation state
   const [pcrFwd, setPcrFwd] = useState('');
   const [pcrRev, setPcrRev] = useState('');
-  const [pcrResult, setPcrResult] = useState<PCRResult | null>(null);
+  const [pcrResult, setPcrResult] = useState<PcrResult | null>(null);
   const [pcrSaved, setPcrSaved] = useState(false);
 
   // Ligation state
@@ -2028,7 +2029,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               saved={pcrSaved}
               onFwdChange={setPcrFwd}
               onRevChange={setPcrRev}
-              onRun={() => { setPcrResult(simulatePCR(sequence, pcrFwd, pcrRev)); setPcrSaved(false); }}
+              onRun={() => { setPcrResult(simulatePcr(sequence, pcrFwd, pcrRev, { circular: seqType === 'plasmid', maxMismatches: 1 })); setPcrSaved(false); }}
               onSave={async () => {
                 if (!pcrResult) return;
                 const fd = new FormData();
@@ -3728,7 +3729,7 @@ function ORFsPanel({ sequence }: { sequence: string }) {
 function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, rev, saved, onFwdChange, onRevChange, onRun, onSave }: {
   sequenceId: string; sequenceName: string; template: string;
   primers: SavedPrimer[];
-  result: PCRResult | null; fwd: string; rev: string; saved: boolean;
+  result: PcrResult | null; fwd: string; rev: string; saved: boolean;
   onFwdChange: (v: string) => void; onRevChange: (v: string) => void;
   onRun: () => void; onSave: () => void;
 }) {
@@ -3736,7 +3737,14 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
   void sequenceId; void sequenceName; void template;
   const fwdPrimers = primers.filter(p => p.direction === 'forward');
   const revPrimers = primers.filter(p => p.direction === 'reverse');
-  const bands = result?.success ? [{ size: result.size, label: `${result.size} bp (amplicon)`, color: 'var(--accent-blue)' }] : [];
+  // Every product the pair can give, each as its own band: a second band on
+  // the gel is the finding, and showing only the intended one hides it.
+  const products = result?.products ?? [];
+  const bands = products.map((p, i) => ({
+    size: p.size,
+    label: `${p.size.toLocaleString()} bp${p.mismatches ? ' (mismatched)' : ''}`,
+    color: p.mismatches ? '#a3560a' : 'var(--accent-blue)',
+  }));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -3750,13 +3758,17 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
           <button className="btn btn-primary" onClick={onRun} disabled={!fwd || !rev} style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <FlaskConical size={15} /> Run PCR
           </button>
-          {result && !saved && (
+          {products.length > 0 && !saved && (
             <button className="btn btn-secondary" onClick={() => startTransition(() => { onSave(); })} disabled={isPending} style={{ fontSize: '0.82rem' }}>
               {isPending ? 'Saving…' : <><Save size={14} /> Save simulation</>}
             </button>
           )}
           {saved && <span style={{ fontSize: '0.82rem', color: 'var(--accent-green)' }}>✓ Saved</span>}
         </div>
+        <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.6rem 0 0' }}>
+          Primers are found by their 3′ end, so a 5′ tail is carried into the product rather than stopping the primer
+          being found. One mismatch away from the 3′ end is tolerated, which is how an off-target band shows up.
+        </p>
       </div>
 
       {result && (
@@ -3766,26 +3778,34 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
             <GelLane bands={bands} />
           </div>
           <div className="glass-panel" style={{ padding: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: result.success ? 'var(--accent-green)' : 'var(--accent-red)', display: 'inline-block' }} />
-              <span style={{ fontWeight: 600, fontSize: '0.92rem', color: result.success ? 'var(--accent-green)' : 'var(--accent-red)' }}>{result.message}</span>
-            </div>
-            {result.success && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-                  <StatPill label="Amplicon size" value={`${result.size} bp`} />
-                  <StatPill label="Fwd binding" value={`pos ${result.fwdPos + 1}`} />
-                  <StatPill label="Rev binding" value={`pos ${result.revPos + 1}`} />
-                  <StatPill label="GC%" value={`${calcGC(result.product)}%`} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', textTransform: 'uppercase' }}>Product sequence</div>
-                  <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', background: 'white', border: '1px solid var(--glass-border)', padding: '0.6rem 0.9rem', borderRadius: '6px', overflowX: 'auto', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                    {result.product.length > 120 ? result.product.slice(0, 60) + '…' + result.product.slice(-60) : result.product}
-                  </div>
-                </div>
+            {result.problem && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--accent-red)', display: 'inline-block' }} />
+                <span style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--accent-red)' }}>{result.problem}</span>
               </div>
             )}
+            {result.warnings.map(w => (
+              <div key={w} style={{ fontSize: '0.8rem', color: '#a3560a', marginBottom: '0.35rem' }}>⚠ {w}</div>
+            ))}
+            {products.map((p, i) => (
+              <div key={`${p.start}-${p.end}-${i}`} style={{ paddingTop: i ? '0.75rem' : '0.5rem', marginTop: i ? '0.75rem' : 0, borderTop: i ? '1px solid var(--glass-border)' : 'none' }}>
+                <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                  <StatPill label={i === 0 ? 'Product' : 'Also'} value={`${p.size.toLocaleString()} bp`} />
+                  <StatPill label="Covers" value={`${p.start.toLocaleString()}–${p.end.toLocaleString()}${p.wrapsOrigin ? ' (through the origin)' : ''}`} />
+                  <StatPill label="Anneal Tm" value={`${p.forward.tm} / ${p.reverse.tm} °C`} />
+                  <StatPill label="GC%" value={`${calcGC(p.sequence)}%`} />
+                </div>
+                {p.mismatches > 0 && (
+                  <div style={{ fontSize: '0.76rem', color: '#a3560a', marginBottom: '0.4rem' }}>
+                    {p.mismatches} mismatch{p.mismatches === 1 ? '' : 'es'} inside the annealing region, so this
+                    amplifies less readily than a clean match. A 5′ tail is not a mismatch: it is meant to be there.
+                  </div>
+                )}
+                <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', background: 'white', border: '1px solid var(--glass-border)', padding: '0.6rem 0.9rem', borderRadius: '6px', overflowX: 'auto', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                  {p.sequence.length > 120 ? p.sequence.slice(0, 60) + '…' + p.sequence.slice(-60) : p.sequence}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

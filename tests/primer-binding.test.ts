@@ -249,3 +249,26 @@ test('the tooltip says how many mismatches and where', () => {
   const [placed] = placePrimers([{ id: 'x', name: 'mut', sequence: p.join('') }], T, { maxMismatches: 2 });
   assert.match(bindingTitle(placed), /1 mismatch .*at 11 from the 5′ end/);
 });
+
+test('a tail whose bases happen to pair is still a tail, not a mismatched anneal', () => {
+  // A quarter of any tail's bases match the template by chance. Two of them
+  // either side of one mismatch must not be read as annealing, or every
+  // tailed primer this application designs is reported as mismatched.
+  const anneal = T.slice(900, 922);
+  // The tail's last base does not pair with the template base just 5' of the
+  // site; the one before it happens to. Two bases further out, bought with a
+  // mismatch, is the coincidence this guards against.
+  const tail = 'GCGCGAATTC' + T[898] + (T[899] === 'A' ? 'C' : 'A');
+  const [b] = findBindings(tail + anneal, T, { maxMismatches: 1 });
+  assert.equal(b.annealLength, 22, 'the exact match, not two chance pairings further');
+  assert.equal(b.exact, false, 'it is still a tailed primer');
+  assert.equal(b.mismatches, undefined, 'and not a mismatched one');
+});
+
+test('a mismatch that buys a real extension is still taken', () => {
+  const flipAt = (s: string, i: number) => s.slice(0, i) + (s[i] === 'A' ? 'C' : 'A') + s.slice(i + 1);
+  const p = flipAt(T.slice(1200, 1230), 10);
+  const [b] = findBindings(p, T, { maxMismatches: 1 });
+  assert.equal(b.annealLength, 30, 'the whole primer, across one mismatch');
+  assert.deepEqual(b.mismatches, [10]);
+});
