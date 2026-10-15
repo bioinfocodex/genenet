@@ -232,10 +232,20 @@ function imperfectSites(primer: string, top: string, opts: BindingOptions): Prim
   return out;
 }
 
+/** A mismatch has to buy at least this many extra annealing bases to be believed. */
+const WORTH_A_MISMATCH = 3;
+
 /**
  * Fold imperfect sites into the exact ones. One that ends at the same 3'
- * position as an exact site is the same site seen further -- it replaces the
- * exact one if it anneals over more bases. Anything else is a new site.
+ * position as an exact site is the same site seen further -- but only if the
+ * mismatch bought enough extra annealing to be worth believing.
+ *
+ * Bases beyond the exact match are a 5' tail, and a quarter of any tail's
+ * bases pair with the template by chance. Taking any improvement at all
+ * therefore reads two accidental matches either side of one mismatch as an
+ * annealing region, and reports a perfectly good tailed primer as binding with
+ * a mismatch -- a warning about nothing, on exactly the primers this
+ * application designs.
  */
 function mergeMismatched(exact: PrimerBinding[], imperfect: PrimerBinding[]): PrimerBinding[] {
   const threePrime = (b: PrimerBinding) => `${b.strand}:${b.strand === 'forward' ? b.end : b.start}`;
@@ -243,7 +253,7 @@ function mergeMismatched(exact: PrimerBinding[], imperfect: PrimerBinding[]): Pr
   for (const b of imperfect) {
     const key = threePrime(b);
     const known = byEnd.get(key);
-    if (!known || b.annealLength > known.annealLength) byEnd.set(key, b);
+    if (!known || b.annealLength >= known.annealLength + WORTH_A_MISMATCH) byEnd.set(key, b);
   }
   return [...byEnd.values()].sort((a, b) => a.start - b.start);
 }

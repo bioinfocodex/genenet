@@ -14,6 +14,7 @@ import { isAb1, parseAb1 } from '@/lib/formats/ab1';
 import { identifyUnsupported } from '@/lib/formats/proprietary';
 import { fetchAccession } from '@/lib/accession';
 import { findHost, findStrain } from '@/lib/hosts';
+import { parseStyle, serialiseStyle } from '@/lib/map-display';
 
 export async function createSequence(data: FormData) {
   const name = (data.get('name') as string).trim();
@@ -64,6 +65,30 @@ export async function saveFeatures(formData: FormData) {
     data: { features: featuresJson },
   });
   revalidatePath('/sequences');
+}
+
+/**
+ * Save how this sequence's map is drawn.
+ *
+ * Its own action rather than part of saveFeatures, because it changes nothing
+ * about the molecule or the annotation on it -- only which of them this
+ * sequence's map puts on the page. It is also the reason the figure view and
+ * the workbench agree: both read this one record.
+ *
+ * The style is parsed and re-serialised rather than written through, so a
+ * malformed or hand-edited value cannot be stored, and a style equal to the
+ * defaults clears the column instead of filling it with a copy of them.
+ */
+export async function saveMapStyle(formData: FormData) {
+  await requireUser();
+  const id = formData.get('id') as string;
+  if (!id) return;
+  const style = parseStyle(formData.get('style') as string | null);
+  await prisma.geneSequence.update({
+    where: { id },
+    data: { mapStyle: serialiseStyle(style) },
+  });
+  revalidatePath(`/sequences/${id}`);
 }
 
 /**

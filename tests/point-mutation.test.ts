@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { codingChanges, isCoding } from '../src/lib/point-mutation.ts';
+import { codingChanges, isCoding, codingSequence } from '../src/lib/point-mutation.ts';
 import { revComp } from '../src/lib/alignment.ts';
 
 //                 M  A  K  W  stop
@@ -118,5 +118,27 @@ describe('what is treated as coding', () => {
     const changes = codingChanges(seq, [cds, other], 15, 'A');
     assert.deepEqual(changes.map(c => c.feature), ['geneX', 'overlap']);
     assert.notEqual(changes[0].codonPosition, changes[1].codonPosition);
+  });
+});
+
+describe('the coding sequence a feature specifies', () => {
+  test('a forward gene is the bases as written', () => {
+    assert.equal(codingSequence(seq, cds), ORF);
+  });
+
+  test('a bottom-strand gene is read the other way', () => {
+    const rseq = flank + revComp(ORF) + flank;
+    assert.equal(codingSequence(rseq, { ...cds, strand: -1 }), ORF);
+  });
+
+  test('a spliced gene is its exons joined, without the intron', () => {
+    const intron = 'GTAAGTTTTTTTTTTTTTTCAG';
+    const spliced = flank + 'ATGGCT' + intron + 'AAATGGTAA' + flank;
+    const exon2 = 11 + 6 + intron.length;
+    const gene = {
+      name: 'g', type: 'CDS', start: 11, end: exon2 + 8, strand: 1 as const,
+      segments: [{ start: 11, end: 16 }, { start: exon2, end: exon2 + 8 }],
+    };
+    assert.equal(codingSequence(spliced, gene), ORF);
   });
 });

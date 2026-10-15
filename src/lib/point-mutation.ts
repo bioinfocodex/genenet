@@ -136,3 +136,23 @@ export function codingChanges(
   }
   return out;
 }
+
+/**
+ * The coding sequence a CDS feature actually specifies.
+ *
+ * Not the bases between its start and end: a gene on the bottom strand is read
+ * the other way as its reverse complement, and a spliced one is its exons
+ * joined with the introns left out. Translating the span as written gives the
+ * wrong protein for either, which is the same mistake as reading a point
+ * mutation in the wrong frame.
+ */
+export function codingSequence(sequence: string, cds: CodingFeature): string {
+  const seq = sequence.toUpperCase();
+  const comp: Record<string, string> = { A: 'T', T: 'A', G: 'C', C: 'G' };
+  return readingOrder(cds)
+    .map(p => {
+      const b = seq[p - 1] ?? 'N';
+      return cds.strand === 1 ? b : comp[b] ?? 'N';
+    })
+    .join('');
+}
