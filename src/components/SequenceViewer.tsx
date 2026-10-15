@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
   FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check,
 } from 'lucide-react';
-import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
+import { ENZYMES } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
   findORFs, reverseComplement,
@@ -32,6 +32,7 @@ import MutagenesisPanel, { type NewPrimer } from './sequences/MutagenesisPanel';
 import { addPrimerToCollection } from '@/app/actions/oligos';
 import Link from 'next/link';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
+import { allSitesFor } from '@/lib/map-sites';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
 import CrisprPanel from './sequences/CrisprPanel';
@@ -129,7 +130,6 @@ const SIDEBAR_W = 272;
  */
 const PENDING = 'pending-';
 
-const RE_COLORS = ['#ef4444','#3b82f6','#22c55e','#a855f7','#f59e0b','#06b6d4','#f97316','#ec4899','#84cc16','#78716c','#0ea5e9','#d946ef'];
 
 interface Props {
   id: string;
@@ -666,34 +666,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
 
   const mw = useMemo(() => ((size * 650) / 1000).toFixed(0), [size]);
 
-  // Detect all RE cut sites
-  const allReSites = useMemo((): ReSite[] => {
-    const enzymeList = Object.values(ENZYMES);
-    const sites: ReSite[] = [];
-    enzymeList.forEach((enzyme, i) => {
-      findCutSites(sequence, enzyme).forEach(cutPos => {
-        const recognitionStart = cutPos - enzyme.cutBefore;
-        sites.push({
-          enzyme: enzyme.name,
-          cutPos,
-          /*
-           * Both cut offsets are measured from the start of the recognition
-           * site, so the bottom-strand cut is the site's start plus the
-           * enzyme's own bottom offset. REBASE gives one for every enzyme in
-           * the table, which is what lets the sequence view draw a digest as
-           * the staggered cut it actually is rather than as a single line.
-           */
-          cutBottom: recognitionStart + (enzyme.cutBottom ?? enzyme.cutBefore),
-          recognitionStart,
-          recognitionLen: enzyme.pattern.length,
-          overhang: enzyme.overhang || 'blunt',
-          overhangType: enzyme.overhangType,
-          color: RE_COLORS[i % RE_COLORS.length],
-        });
-      });
-    });
-    return sites.sort((a, b) => a.cutPos - b.cutPos);
-  }, [sequence]);
+  // Every site in the sequence, from the shared helper the print view uses.
+  const allReSites = useMemo(() => allSitesFor(sequence), [sequence]);
 
   const reSitesByEnzyme = useMemo(() => {
     const map = new Map<string, ReSite[]>();
@@ -1132,6 +1106,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
       { label: 'Import GenBank / FASTA…', action: () => importFileRef.current?.click() },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Export…', action: () => setShowExport(true) },
+      { label: 'Print / PDF…', action: () => router.push(`/sequences/${id}/print`) },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Open in AI Suite', action: () => { window.open(`http://localhost:8501/?id=${id}`, '_blank'); } },
     ],
