@@ -27,6 +27,7 @@ export default async function PrintPage({ params }: { params: Promise<{ id: stri
         sequence: seq.sequence,
         description: seq.description,
         features: normaliseFeatures(seq.features),
+        mapStyle: seq.mapStyle,
         host: findHost(seq.host)?.organism.name ?? null,
         strain: findStrain(seq.strain)?.strain.name ?? null,
       }}

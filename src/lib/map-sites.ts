@@ -40,10 +40,3 @@ export function allSitesFor(sequence: string): ReSite[] {
   });
   return sites.sort((a, b) => a.cutPos - b.cutPos);
 }
-
-/** Enzymes that cut exactly once: the ones a map is usually drawn with. */
-export function uniqueCutters(sites: ReSite[]): ReSite[] {
-  const counts = new Map<string, number>();
-  for (const s of sites) counts.set(s.enzyme, (counts.get(s.enzyme) ?? 0) + 1);
-  return sites.filter(s => counts.get(s.enzyme) === 1);
-}

@@ -134,6 +134,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         host={seq.host}
         strain={seq.strain}
         initialFeatures={normaliseFeatures(seq.features)}
+        initialMapStyle={seq.mapStyle}
         library={library}
         collection={collection}
         verifications={verifications.map(v => ({ id: v.id, at: v.at.toISOString(), signerName: v.signerName, note: v.note, current: v.current }))}

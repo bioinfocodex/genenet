@@ -450,6 +450,11 @@ model GeneSequence {
   /// The strain it was transformed into. Also an id from lib/hosts.ts, and
   /// the one that decides whether a prep carries Dam and Dcm marks.
   strain      String?
+  /// How this sequence's map is drawn: which feature types and layers are left
+  /// out, and which restriction sites are asked for. JSON, holding only what
+  /// departs from the shipped defaults, so a default stays a default -- see
+  /// lib/map-display.ts. Null until somebody changes something.
+  mapStyle    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

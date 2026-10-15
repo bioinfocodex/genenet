@@ -44,6 +44,10 @@ import MolbuilderStats from './sequences/MolbuilderStats';
 import MolbuilderFindReplace from './sequences/MolbuilderFindReplace';
 import LinearMap from './sequences/LinearMap';
 import CircularMap from './sequences/CircularMap';
+import MapStylePanel from './sequences/MapStylePanel';
+import {
+  type MapStyle, parseStyle, applyStyle, hiddenCount, typesPresent, enzymeOptions,
+} from '@/lib/map-display';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -131,6 +135,9 @@ const SIDEBAR_W = 272;
  */
 const PENDING = 'pending-';
 
+/** One empty list, so turning the sites layer off is not a new array each render. */
+const EMPTY_SITES: ReSite[] = [];
+
 
 interface Props {
   id: string;
@@ -158,6 +165,12 @@ interface Props {
   savedReads?: SavedReadInfo[];
   /** Sign-offs that this sequence was confirmed by sequencing. */
   verifications?: VerificationInfo[];
+  /**
+   * How this sequence's map is drawn, as stored. JSON or null; parsed here
+   * rather than on the server so that a style written by another version is
+   * read by the code that has to draw with it.
+   */
+  initialMapStyle?: string | null;
 }
 
 // ─── Auto-suggest feature type from name ─────────────────────────────────────
@@ -220,7 +233,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [] }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [], initialMapStyle = null }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -315,19 +328,40 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * views of one thing disagreeing about what the user had asked for. The
    * choice belongs to the sequence, not to a panel.
    */
-  const [showOrfs, setShowOrfs] = useState(false);
-  const [orfIncludeAnnotated, setOrfIncludeAnnotated] = useState(false);
+  /*
+   * All of it in one place, and stored on the sequence.
+   *
+   * These were six pieces of component state, so a map set up for a figure was
+   * set up again on every reload, and the print view — which has none of this
+   * state — drew a different map from the one on screen. The style is one
+   * value, read from the record and written back to it, so there is one answer
+   * to "how is this sequence drawn".
+   */
+  const [mapStyle, setMapStyle] = useState<MapStyle>(() => parseStyle(initialMapStyle));
+  const patchStyle = useCallback((p: Partial<MapStyle>) => setMapStyle(s => ({ ...s, ...p })), []);
+
   const [enzymeSet, setEnzymeSet] = useState('all');
-  const [mapMaxCuts, setMapMaxCuts] = useState(1);
-  const [mapMinSite, setMapMinSite] = useState(6);
+  /*
+   * The old names, reading from the style. Kept so the controls and panels
+   * below say what they said before; what changed is where the answer lives.
+   */
+  const showOrfs = mapStyle.orfs;
+  const setShowOrfs = (v: boolean) => patchStyle({ orfs: v });
+  const orfIncludeAnnotated = mapStyle.orfsAnnotated;
+  const setOrfIncludeAnnotated = (v: boolean) => patchStyle({ orfsAnnotated: v });
+  const mapMaxCuts = mapStyle.maxCuts;
+  const setMapMaxCuts = (v: number) => patchStyle({ maxCuts: v });
+  const mapMinSite = mapStyle.minSite;
+  const setMapMinSite = (v: number) => patchStyle({ minSite: v });
   /**
    * Enzymes asked for by name, shared by the map, the sequence and the panel.
    *
    * Empty means "use the filters", which is the default and answers "what
    * could I clone into". Non-empty means someone named an enzyme, which is a
-   * different question and outranks the filters — see `enzymeDisplay`.
+   * different question and outranks the filters — see `enzymeOptions`.
    */
-  const [pickedEnzymes, setPickedEnzymes] = useState<Set<string>>(new Set());
+  const pickedEnzymes = useMemo(() => new Set(mapStyle.enzymes), [mapStyle.enzymes]);
+  const setPickedEnzymes = (next: Set<string>) => patchStyle({ enzymes: [...next] });
 
   /*
    * The tool sidebar folds away.
@@ -349,23 +383,14 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   }, [enzymeSet]);
 
   /*
-   * Naming an enzyme overrides every filter, rather than intersecting them.
-   *
-   * The filters exist to answer a question nobody asked out loud: of five
-   * thousand cuts, which are worth drawing. Once someone types "AluI" they
-   * have asked out loud, and a four-cutter that cuts forty times failing every
-   * default is the whole reason they had to ask. Silently showing nothing
-   * would look like a broken picker rather than a filter doing its job.
+   * Naming an enzyme overrides every filter rather than intersecting them --
+   * the reasoning is with `enzymeOptions`, which the print view asks the same
+   * question of so that the two drawings agree.
    */
-  const enzymeDisplay = useMemo(() => (
-    pickedEnzymes.size > 0
-      ? { restrictTo: [...pickedEnzymes], minSiteLength: 0, maxCuts: Infinity, maxLabels: 400 }
-      : {
-          minSiteLength: mapMinSite,
-          maxCuts: mapMaxCuts,
-          ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
-        }
-  ), [pickedEnzymes, mapMinSite, mapMaxCuts, enzymeSetNames]);
+  const enzymeDisplay = useMemo(
+    () => enzymeOptions(mapStyle, enzymeSetNames),
+    [mapStyle, enzymeSetNames],
+  );
 
   const [showExport, setShowExport] = useState(false);
 
@@ -491,8 +516,14 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   const [ligResult, setLigResult] = useState<LigationResult | null>(null);
   const [ligSaved, setLigSaved] = useState(false);
 
-  // Feature visibility & selection
-  const [hiddenFeatures, setHiddenFeatures] = useState<Set<string>>(new Set());
+  /*
+   * Hiding one feature is the same act as hiding a type, and is stored the
+   * same way: the eye in the feature list used to be forgotten on reload,
+   * which made it useless for preparing a figure.
+   */
+  const hiddenFeatures = useMemo(() => new Set(mapStyle.hiddenIds), [mapStyle.hiddenIds]);
+  const setHiddenFeatures = (fn: (prev: Set<string>) => Set<string>) =>
+    setMapStyle(s => ({ ...s, hiddenIds: [...fn(new Set(s.hiddenIds))] }));
   const [selectedFeature, setSelectedFeature] = useState<SequenceFeature | null>(null);
 
   // Modals
@@ -765,11 +796,30 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     [primers, placedPrimers],
   );
 
-  // Visible features (respects hiddenFeatures toggle)
+  /**
+   * The features this map draws: everything the style does not leave out.
+   *
+   * One filter rather than three, so the count of what is hidden cannot
+   * disagree with what is drawn -- both go through `isDrawn`.
+   */
   const visibleFeatures = useMemo(
-    () => features.filter(f => !hiddenFeatures.has(f.id)),
-    [features, hiddenFeatures]
+    () => applyStyle(features, mapStyle, size),
+    [features, mapStyle, size],
   );
+  const notDrawn = useMemo(
+    () => hiddenCount(features, mapStyle, size),
+    [features, mapStyle, size],
+  );
+  const featureTypeRows = useMemo(() => typesPresent(features, mapStyle), [features, mapStyle]);
+  /*
+   * Sites off is empty sites, not a filter nothing passes.
+   *
+   * The enzyme filters narrow which of the cuts found are worth labelling;
+   * they have no value meaning "none", and inventing one -- a minimum site
+   * length of 99 -- would read in the stored style as a strange filter rather
+   * than as the choice it is.
+   */
+  const mapSites = mapStyle.sites ? allReSites : EMPTY_SITES;
 
   const addFeatureFromModal = () => {
     const start = parseInt(modalFeat.start);
@@ -1466,6 +1516,15 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                   compact
                 />
 
+                <MapStylePanel
+                  style={mapStyle}
+                  rows={featureTypeRows}
+                  notDrawn={notDrawn}
+                  total={features.length}
+                  onChange={setMapStyle}
+                  sequenceId={id}
+                />
+
                 {/*
                   Reading frames are opt-in. Six-frame translation finds them
                   everywhere, so drawing them unasked would undo the
@@ -1514,8 +1573,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               </div>
               <div ref={mapRef}>
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
+                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={mapSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
               }
               </div>
 
