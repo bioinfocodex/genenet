@@ -1,6 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { calcProteinProperties } from '@/lib/simulation';
+import ProfilePanel from './proteins/ProfilePanel';
 
 const AA_COLORS: Record<string, string> = {
   // Hydrophobic
@@ -21,7 +22,7 @@ const AA_NAMES: Record<string, string> = {
   T:'Thr', W:'Trp', Y:'Tyr', V:'Val',
 };
 
-type Tab = 'overview' | 'sequence' | 'composition';
+type Tab = 'overview' | 'profile' | 'sequence' | 'composition';
 
 interface Props {
   sequence: string;
@@ -31,7 +32,7 @@ export default function ProteinViewer({ sequence }: Props) {
   const [tab, setTab] = useState<Tab>('overview');
   const props = useMemo(() => calcProteinProperties(sequence), [sequence]);
 
-  const tabs: [Tab, string][] = [['overview', 'Overview'], ['sequence', 'Sequence'], ['composition', 'Composition']];
+  const tabs: [Tab, string][] = [['overview', 'Overview'], ['profile', 'Profile'], ['sequence', 'Sequence'], ['composition', 'Composition']];
 
   return (
     <div>
@@ -44,6 +45,7 @@ export default function ProteinViewer({ sequence }: Props) {
       </div>
 
       {tab === 'overview' && <OverviewTab props={props} />}
+      {tab === 'profile' && <ProfilePanel sequence={sequence} />}
       {tab === 'sequence' && <SequenceTab sequence={sequence} />}
       {tab === 'composition' && <CompositionTab props={props} />}
     </div>
