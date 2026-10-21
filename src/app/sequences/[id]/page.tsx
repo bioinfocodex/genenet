@@ -11,6 +11,9 @@ import RecordHistory from '@/components/RecordHistory';
 import FeatureCandidates from '@/components/FeatureCandidates';
 import { candidatesForSequence, fullLibrary } from '@/lib/feature-library';
 import { signaturesFor } from '@/lib/signature';
+import { codingLength, normaliseFeatures as parseFeatures } from '@/lib/features';
+import { isCoding } from '@/lib/point-mutation';
+import ProteinsPanel from '@/components/sequences/ProteinsPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +42,20 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   // current or superseded by a later edit.
   const verifications = (await signaturesFor('GeneSequence', seq.id)).filter(s => s.meaning === 'verified');
   const verified = verifications.find(v => v.current);
+
+  // What this sequence encodes, and what it could: both directions, because
+  // "is this construct's product already in the library" is asked from here.
+  const proteins = await prisma.protein.findMany({
+    where: { geneSequenceId: seq.id },
+    select: { id: true, name: true, sequence: true, mw: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  const codingFeatures = parseFeatures(seq.features)
+    .filter(f => isCoding(f.type))
+    .map(f => {
+      const bases = codingLength(f);
+      return { id: f.id, name: f.name, start: f.start, end: f.end, strand: f.strand, codingLength: bases, inFrame: bases % 3 === 0 };
+    });
 
   // Metadata only; the trace files themselves are fetched by the panel.
   const reads = await prisma.sequencingRead.findMany({
@@ -117,6 +134,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         host={seq.host}
         strain={seq.strain}
         initialFeatures={normaliseFeatures(seq.features)}
+        initialMapStyle={seq.mapStyle}
         library={library}
         collection={collection}
         verifications={verifications.map(v => ({ id: v.id, at: v.at.toISOString(), signerName: v.signerName, note: v.note, current: v.current }))}
@@ -136,6 +154,11 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           the sequence is what people open the page for, and provenance is
           what they come back for. */}
       <div style={{ marginTop: '1.5rem' }}>
+        <ProteinsPanel
+          sequenceId={seq.id}
+          proteins={proteins.map(p => ({ id: p.id, name: p.name, length: p.sequence.length, mw: p.mw }))}
+          features={codingFeatures}
+        />
         <FeatureCandidates sequenceId={seq.id} candidates={candidates} />
         <SequenceLineage ancestry={ancestry} descendants={descendants} />
         <RecordHistory entries={history} />

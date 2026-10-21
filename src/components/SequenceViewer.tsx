@@ -5,15 +5,15 @@ import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
   FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check,
 } from 'lucide-react';
-import { ENZYMES, findCutSites } from '@/lib/restrictionEnzymes';
+import { ENZYMES } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
   findORFs, reverseComplement,
   reverseTranslate,
   calcTm, calcGC,
-  simulatePCR, ligateFragments,
+  ligateFragments,
   LADDER_1KB, gelPosition, calculateFragments,
-  type ORF, type PCRResult, type LigationResult,
+  type ORF, type LigationResult,
 } from '@/lib/simulation';
 import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import TracePanel, { type SavedReadInfo, type VerificationInfo } from './sequences/TracePanel';
@@ -32,6 +32,8 @@ import MutagenesisPanel, { type NewPrimer } from './sequences/MutagenesisPanel';
 import { addPrimerToCollection } from '@/app/actions/oligos';
 import Link from 'next/link';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
+import { allSitesFor } from '@/lib/map-sites';
+import { simulatePcr, type PcrResult } from '@/lib/pcr';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
 import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
 import CrisprPanel from './sequences/CrisprPanel';
@@ -42,6 +44,11 @@ import MolbuilderStats from './sequences/MolbuilderStats';
 import MolbuilderFindReplace from './sequences/MolbuilderFindReplace';
 import LinearMap from './sequences/LinearMap';
 import CircularMap from './sequences/CircularMap';
+import MapStylePanel from './sequences/MapStylePanel';
+import BlastPanel from './sequences/BlastPanel';
+import {
+  type MapStyle, parseStyle, applyStyle, hiddenCount, typesPresent, enzymeOptions,
+} from '@/lib/map-display';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +79,7 @@ export interface SavedPrimer {
   notes?: string;
 }
 
-type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'primers' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold';
+type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'primers' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold' | 'blast';
 
 /**
  * The ways of looking at this sequence, in the order they are offered.
@@ -110,6 +117,7 @@ const TOOL_NAMES: Partial<Record<LeftTab, string>> = {
   crispr: 'CRISPR Guides',
   aigen: 'AI Annotation',
   fold: '3D Fold',
+  blast: 'BLAST at NCBI',
 };
 
 const PRESET_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
@@ -129,7 +137,9 @@ const SIDEBAR_W = 272;
  */
 const PENDING = 'pending-';
 
-const RE_COLORS = ['#ef4444','#3b82f6','#22c55e','#a855f7','#f59e0b','#06b6d4','#f97316','#ec4899','#84cc16','#78716c','#0ea5e9','#d946ef'];
+/** One empty list, so turning the sites layer off is not a new array each render. */
+const EMPTY_SITES: ReSite[] = [];
+
 
 interface Props {
   id: string;
@@ -157,6 +167,12 @@ interface Props {
   savedReads?: SavedReadInfo[];
   /** Sign-offs that this sequence was confirmed by sequencing. */
   verifications?: VerificationInfo[];
+  /**
+   * How this sequence's map is drawn, as stored. JSON or null; parsed here
+   * rather than on the server so that a style written by another version is
+   * read by the code that has to draw with it.
+   */
+  initialMapStyle?: string | null;
 }
 
 // ─── Auto-suggest feature type from name ─────────────────────────────────────
@@ -219,7 +235,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [] }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [], initialMapStyle = null }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -314,19 +330,40 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * views of one thing disagreeing about what the user had asked for. The
    * choice belongs to the sequence, not to a panel.
    */
-  const [showOrfs, setShowOrfs] = useState(false);
-  const [orfIncludeAnnotated, setOrfIncludeAnnotated] = useState(false);
+  /*
+   * All of it in one place, and stored on the sequence.
+   *
+   * These were six pieces of component state, so a map set up for a figure was
+   * set up again on every reload, and the print view — which has none of this
+   * state — drew a different map from the one on screen. The style is one
+   * value, read from the record and written back to it, so there is one answer
+   * to "how is this sequence drawn".
+   */
+  const [mapStyle, setMapStyle] = useState<MapStyle>(() => parseStyle(initialMapStyle));
+  const patchStyle = useCallback((p: Partial<MapStyle>) => setMapStyle(s => ({ ...s, ...p })), []);
+
   const [enzymeSet, setEnzymeSet] = useState('all');
-  const [mapMaxCuts, setMapMaxCuts] = useState(1);
-  const [mapMinSite, setMapMinSite] = useState(6);
+  /*
+   * The old names, reading from the style. Kept so the controls and panels
+   * below say what they said before; what changed is where the answer lives.
+   */
+  const showOrfs = mapStyle.orfs;
+  const setShowOrfs = (v: boolean) => patchStyle({ orfs: v });
+  const orfIncludeAnnotated = mapStyle.orfsAnnotated;
+  const setOrfIncludeAnnotated = (v: boolean) => patchStyle({ orfsAnnotated: v });
+  const mapMaxCuts = mapStyle.maxCuts;
+  const setMapMaxCuts = (v: number) => patchStyle({ maxCuts: v });
+  const mapMinSite = mapStyle.minSite;
+  const setMapMinSite = (v: number) => patchStyle({ minSite: v });
   /**
    * Enzymes asked for by name, shared by the map, the sequence and the panel.
    *
    * Empty means "use the filters", which is the default and answers "what
    * could I clone into". Non-empty means someone named an enzyme, which is a
-   * different question and outranks the filters — see `enzymeDisplay`.
+   * different question and outranks the filters — see `enzymeOptions`.
    */
-  const [pickedEnzymes, setPickedEnzymes] = useState<Set<string>>(new Set());
+  const pickedEnzymes = useMemo(() => new Set(mapStyle.enzymes), [mapStyle.enzymes]);
+  const setPickedEnzymes = (next: Set<string>) => patchStyle({ enzymes: [...next] });
 
   /*
    * The tool sidebar folds away.
@@ -348,23 +385,14 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   }, [enzymeSet]);
 
   /*
-   * Naming an enzyme overrides every filter, rather than intersecting them.
-   *
-   * The filters exist to answer a question nobody asked out loud: of five
-   * thousand cuts, which are worth drawing. Once someone types "AluI" they
-   * have asked out loud, and a four-cutter that cuts forty times failing every
-   * default is the whole reason they had to ask. Silently showing nothing
-   * would look like a broken picker rather than a filter doing its job.
+   * Naming an enzyme overrides every filter rather than intersecting them --
+   * the reasoning is with `enzymeOptions`, which the print view asks the same
+   * question of so that the two drawings agree.
    */
-  const enzymeDisplay = useMemo(() => (
-    pickedEnzymes.size > 0
-      ? { restrictTo: [...pickedEnzymes], minSiteLength: 0, maxCuts: Infinity, maxLabels: 400 }
-      : {
-          minSiteLength: mapMinSite,
-          maxCuts: mapMaxCuts,
-          ...(enzymeSetNames ? { restrictTo: enzymeSetNames } : {}),
-        }
-  ), [pickedEnzymes, mapMinSite, mapMaxCuts, enzymeSetNames]);
+  const enzymeDisplay = useMemo(
+    () => enzymeOptions(mapStyle, enzymeSetNames),
+    [mapStyle, enzymeSetNames],
+  );
 
   const [showExport, setShowExport] = useState(false);
 
@@ -481,7 +509,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   // PCR simulation state
   const [pcrFwd, setPcrFwd] = useState('');
   const [pcrRev, setPcrRev] = useState('');
-  const [pcrResult, setPcrResult] = useState<PCRResult | null>(null);
+  const [pcrResult, setPcrResult] = useState<PcrResult | null>(null);
   const [pcrSaved, setPcrSaved] = useState(false);
 
   // Ligation state
@@ -490,8 +518,14 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   const [ligResult, setLigResult] = useState<LigationResult | null>(null);
   const [ligSaved, setLigSaved] = useState(false);
 
-  // Feature visibility & selection
-  const [hiddenFeatures, setHiddenFeatures] = useState<Set<string>>(new Set());
+  /*
+   * Hiding one feature is the same act as hiding a type, and is stored the
+   * same way: the eye in the feature list used to be forgotten on reload,
+   * which made it useless for preparing a figure.
+   */
+  const hiddenFeatures = useMemo(() => new Set(mapStyle.hiddenIds), [mapStyle.hiddenIds]);
+  const setHiddenFeatures = (fn: (prev: Set<string>) => Set<string>) =>
+    setMapStyle(s => ({ ...s, hiddenIds: [...fn(new Set(s.hiddenIds))] }));
   const [selectedFeature, setSelectedFeature] = useState<SequenceFeature | null>(null);
 
   // Modals
@@ -666,34 +700,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
 
   const mw = useMemo(() => ((size * 650) / 1000).toFixed(0), [size]);
 
-  // Detect all RE cut sites
-  const allReSites = useMemo((): ReSite[] => {
-    const enzymeList = Object.values(ENZYMES);
-    const sites: ReSite[] = [];
-    enzymeList.forEach((enzyme, i) => {
-      findCutSites(sequence, enzyme).forEach(cutPos => {
-        const recognitionStart = cutPos - enzyme.cutBefore;
-        sites.push({
-          enzyme: enzyme.name,
-          cutPos,
-          /*
-           * Both cut offsets are measured from the start of the recognition
-           * site, so the bottom-strand cut is the site's start plus the
-           * enzyme's own bottom offset. REBASE gives one for every enzyme in
-           * the table, which is what lets the sequence view draw a digest as
-           * the staggered cut it actually is rather than as a single line.
-           */
-          cutBottom: recognitionStart + (enzyme.cutBottom ?? enzyme.cutBefore),
-          recognitionStart,
-          recognitionLen: enzyme.pattern.length,
-          overhang: enzyme.overhang || 'blunt',
-          overhangType: enzyme.overhangType,
-          color: RE_COLORS[i % RE_COLORS.length],
-        });
-      });
-    });
-    return sites.sort((a, b) => a.cutPos - b.cutPos);
-  }, [sequence]);
+  // Every site in the sequence, from the shared helper the print view uses.
+  const allReSites = useMemo(() => allSitesFor(sequence), [sequence]);
 
   const reSitesByEnzyme = useMemo(() => {
     const map = new Map<string, ReSite[]>();
@@ -790,11 +798,30 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     [primers, placedPrimers],
   );
 
-  // Visible features (respects hiddenFeatures toggle)
+  /**
+   * The features this map draws: everything the style does not leave out.
+   *
+   * One filter rather than three, so the count of what is hidden cannot
+   * disagree with what is drawn -- both go through `isDrawn`.
+   */
   const visibleFeatures = useMemo(
-    () => features.filter(f => !hiddenFeatures.has(f.id)),
-    [features, hiddenFeatures]
+    () => applyStyle(features, mapStyle, size),
+    [features, mapStyle, size],
   );
+  const notDrawn = useMemo(
+    () => hiddenCount(features, mapStyle, size),
+    [features, mapStyle, size],
+  );
+  const featureTypeRows = useMemo(() => typesPresent(features, mapStyle), [features, mapStyle]);
+  /*
+   * Sites off is empty sites, not a filter nothing passes.
+   *
+   * The enzyme filters narrow which of the cuts found are worth labelling;
+   * they have no value meaning "none", and inventing one -- a minimum site
+   * length of 99 -- would read in the stored style as a strange filter rather
+   * than as the choice it is.
+   */
+  const mapSites = mapStyle.sites ? allReSites : EMPTY_SITES;
 
   const addFeatureFromModal = () => {
     const start = parseInt(modalFeat.start);
@@ -1132,6 +1159,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
       { label: 'Import GenBank / FASTA…', action: () => importFileRef.current?.click() },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Export…', action: () => setShowExport(true) },
+      { label: 'Print / PDF…', action: () => router.push(`/sequences/${id}/print`) },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Open in AI Suite', action: () => { window.open(`http://localhost:8501/?id=${id}`, '_blank'); } },
     ],
@@ -1171,6 +1199,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     ],
     // Computing something about the sequence.
     Tools: [
+      { label: 'BLAST at NCBI', action: () => setLeftTab('blast') },
       { label: 'CRISPR Guides', action: () => setLeftTab('crispr') },
       { label: 'AI Annotation', action: () => setLeftTab('aigen') },
       { label: '3D Fold', action: () => setLeftTab('fold') },
@@ -1490,6 +1519,15 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                   compact
                 />
 
+                <MapStylePanel
+                  style={mapStyle}
+                  rows={featureTypeRows}
+                  notDrawn={notDrawn}
+                  total={features.length}
+                  onChange={setMapStyle}
+                  sequenceId={id}
+                />
+
                 {/*
                   Reading frames are opt-in. Six-frame translation finds them
                   everywhere, so drawing them unasked would undo the
@@ -1538,8 +1576,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               </div>
               <div ref={mapRef}>
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={allReSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={allReSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapPrimers} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
+                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={mapSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
               }
               </div>
 
@@ -2053,7 +2091,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               saved={pcrSaved}
               onFwdChange={setPcrFwd}
               onRevChange={setPcrRev}
-              onRun={() => { setPcrResult(simulatePCR(sequence, pcrFwd, pcrRev)); setPcrSaved(false); }}
+              onRun={() => { setPcrResult(simulatePcr(sequence, pcrFwd, pcrRev, { circular: seqType === 'plasmid', maxMismatches: 1 })); setPcrSaved(false); }}
               onSave={async () => {
                 if (!pcrResult) return;
                 const fd = new FormData();
@@ -2095,6 +2133,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           )}
           {leftTab === 'aigen'  && <AIGenePanel sequence={sequence} />}
           {leftTab === 'sanger' && <SangerPanel sequenceId={id} reference={sequence} circular={seqType === 'plasmid'} savedReads={savedReads} verifications={verifications} />}
+          {leftTab === 'blast'  && <BlastPanel sequence={sequence} selection={selection} title={seqName} />}
           {leftTab === 'crispr' && <CrisprPanel sequence={sequence} selection={selection} onSelect={setSelection} />}
           {leftTab === 'dimer'  && <DimerPanel primers={primers} />}
           {leftTab === 'design' && (
@@ -3753,7 +3792,7 @@ function ORFsPanel({ sequence }: { sequence: string }) {
 function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, rev, saved, onFwdChange, onRevChange, onRun, onSave }: {
   sequenceId: string; sequenceName: string; template: string;
   primers: SavedPrimer[];
-  result: PCRResult | null; fwd: string; rev: string; saved: boolean;
+  result: PcrResult | null; fwd: string; rev: string; saved: boolean;
   onFwdChange: (v: string) => void; onRevChange: (v: string) => void;
   onRun: () => void; onSave: () => void;
 }) {
@@ -3761,7 +3800,14 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
   void sequenceId; void sequenceName; void template;
   const fwdPrimers = primers.filter(p => p.direction === 'forward');
   const revPrimers = primers.filter(p => p.direction === 'reverse');
-  const bands = result?.success ? [{ size: result.size, label: `${result.size} bp (amplicon)`, color: 'var(--accent-blue)' }] : [];
+  // Every product the pair can give, each as its own band: a second band on
+  // the gel is the finding, and showing only the intended one hides it.
+  const products = result?.products ?? [];
+  const bands = products.map((p, i) => ({
+    size: p.size,
+    label: `${p.size.toLocaleString()} bp${p.mismatches ? ' (mismatched)' : ''}`,
+    color: p.mismatches ? '#a3560a' : 'var(--accent-blue)',
+  }));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -3775,13 +3821,17 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
           <button className="btn btn-primary" onClick={onRun} disabled={!fwd || !rev} style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <FlaskConical size={15} /> Run PCR
           </button>
-          {result && !saved && (
+          {products.length > 0 && !saved && (
             <button className="btn btn-secondary" onClick={() => startTransition(() => { onSave(); })} disabled={isPending} style={{ fontSize: '0.82rem' }}>
               {isPending ? 'Saving…' : <><Save size={14} /> Save simulation</>}
             </button>
           )}
           {saved && <span style={{ fontSize: '0.82rem', color: 'var(--accent-green)' }}>✓ Saved</span>}
         </div>
+        <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.6rem 0 0' }}>
+          Primers are found by their 3′ end, so a 5′ tail is carried into the product rather than stopping the primer
+          being found. One mismatch away from the 3′ end is tolerated, which is how an off-target band shows up.
+        </p>
       </div>
 
       {result && (
@@ -3791,26 +3841,34 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
             <GelLane bands={bands} />
           </div>
           <div className="glass-panel" style={{ padding: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: result.success ? 'var(--accent-green)' : 'var(--accent-red)', display: 'inline-block' }} />
-              <span style={{ fontWeight: 600, fontSize: '0.92rem', color: result.success ? 'var(--accent-green)' : 'var(--accent-red)' }}>{result.message}</span>
-            </div>
-            {result.success && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-                  <StatPill label="Amplicon size" value={`${result.size} bp`} />
-                  <StatPill label="Fwd binding" value={`pos ${result.fwdPos + 1}`} />
-                  <StatPill label="Rev binding" value={`pos ${result.revPos + 1}`} />
-                  <StatPill label="GC%" value={`${calcGC(result.product)}%`} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', textTransform: 'uppercase' }}>Product sequence</div>
-                  <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', background: 'white', border: '1px solid var(--glass-border)', padding: '0.6rem 0.9rem', borderRadius: '6px', overflowX: 'auto', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                    {result.product.length > 120 ? result.product.slice(0, 60) + '…' + result.product.slice(-60) : result.product}
-                  </div>
-                </div>
+            {result.problem && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--accent-red)', display: 'inline-block' }} />
+                <span style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--accent-red)' }}>{result.problem}</span>
               </div>
             )}
+            {result.warnings.map(w => (
+              <div key={w} style={{ fontSize: '0.8rem', color: '#a3560a', marginBottom: '0.35rem' }}>⚠ {w}</div>
+            ))}
+            {products.map((p, i) => (
+              <div key={`${p.start}-${p.end}-${i}`} style={{ paddingTop: i ? '0.75rem' : '0.5rem', marginTop: i ? '0.75rem' : 0, borderTop: i ? '1px solid var(--glass-border)' : 'none' }}>
+                <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                  <StatPill label={i === 0 ? 'Product' : 'Also'} value={`${p.size.toLocaleString()} bp`} />
+                  <StatPill label="Covers" value={`${p.start.toLocaleString()}–${p.end.toLocaleString()}${p.wrapsOrigin ? ' (through the origin)' : ''}`} />
+                  <StatPill label="Anneal Tm" value={`${p.forward.tm} / ${p.reverse.tm} °C`} />
+                  <StatPill label="GC%" value={`${calcGC(p.sequence)}%`} />
+                </div>
+                {p.mismatches > 0 && (
+                  <div style={{ fontSize: '0.76rem', color: '#a3560a', marginBottom: '0.4rem' }}>
+                    {p.mismatches} mismatch{p.mismatches === 1 ? '' : 'es'} inside the annealing region, so this
+                    amplifies less readily than a clean match. A 5′ tail is not a mismatch: it is meant to be there.
+                  </div>
+                )}
+                <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', background: 'white', border: '1px solid var(--glass-border)', padding: '0.6rem 0.9rem', borderRadius: '6px', overflowX: 'auto', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                  {p.sequence.length > 120 ? p.sequence.slice(0, 60) + '…' + p.sequence.slice(-60) : p.sequence}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
