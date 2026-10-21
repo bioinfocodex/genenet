@@ -27,6 +27,7 @@ import { insertBases, deleteRange, replaceRange, cleanTyped, pushHistory, type E
 import { findHost, findStrain, strainSummary, carriesMethylation } from '@/lib/hosts';
 import { placePrimers, bindingTitle, type PlacedPrimer } from '@/lib/primer-binding';
 import { collectionOnTemplate, type CollectionOligo } from '@/lib/oligos';
+import { codingChanges, type Effect } from '@/lib/point-mutation';
 import { addPrimerToCollection } from '@/app/actions/oligos';
 import Link from 'next/link';
 import { downloadSvg, downloadPng } from '@/lib/svg-export';
@@ -2033,7 +2034,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               }}
             />
           )}
-          {leftTab === 'mutagenesis' && <MutagenesisPanel sequence={sequence} selection={selection} />}
+          {leftTab === 'mutagenesis' && <MutagenesisPanel sequence={sequence} selection={selection} features={features} />}
           {leftTab === 'gel'  && <VirtualGelPanel sequence={sequence} reSitesByEnzyme={reSitesByEnzyme} seqType={seqType} />}
           {leftTab === 'fold' && <FoldPanel sequence={sequence} selection={selection} />}
         </div>
@@ -4671,27 +4672,26 @@ function LiveDesignPanel({
 
 // ─── Site-Directed Mutagenesis Panel ──────────────────────────────────────────
 
-const CODON_TABLE_MUT: Record<string, string> = {
-  TTT:'F',TTC:'F',TTA:'L',TTG:'L',CTT:'L',CTC:'L',CTA:'L',CTG:'L',
-  ATT:'I',ATC:'I',ATA:'I',ATG:'M',GTT:'V',GTC:'V',GTA:'V',GTG:'V',
-  TCT:'S',TCC:'S',TCA:'S',TCG:'S',CCT:'P',CCC:'P',CCA:'P',CCG:'P',
-  ACT:'T',ACC:'T',ACA:'T',ACG:'T',GCT:'A',GCC:'A',GCA:'A',GCG:'A',
-  TAT:'Y',TAC:'Y',TAA:'*',TAG:'*',CAT:'H',CAC:'H',CAA:'Q',CAG:'Q',
-  AAT:'N',AAC:'N',AAA:'K',AAG:'K',GAT:'D',GAC:'D',GAA:'E',GAG:'E',
-  TGT:'C',TGC:'C',TGA:'*',TGG:'W',CGT:'R',CGC:'R',CGA:'R',CGG:'R',
-  AGT:'S',AGC:'S',AGA:'R',AGG:'R',GGT:'G',GGC:'G',GGA:'G',GGG:'G',
+// The protein consequence comes from lib/point-mutation, which reads the
+// change in the frame of the annotated CDS that contains it. This panel used
+// to translate a window starting wherever the window started -- the wrong
+// frame two times in three, and the wrong strand for any gene on the bottom.
+
+const EFFECT_STYLE: Record<Effect | 'non-coding' | 'none', { label: string; colour: string }> = {
+  silent: { label: 'Silent', colour: '#16a34a' },
+  missense: { label: 'Missense', colour: '#dc2626' },
+  nonsense: { label: 'Nonsense', colour: '#7c3aed' },
+  'stop-loss': { label: 'Stop lost', colour: '#7c3aed' },
+  'start-loss': { label: 'Start lost', colour: '#7c3aed' },
+  'non-coding': { label: 'Not in a CDS', colour: '#64748b' },
+  none: { label: 'No change', colour: '#64748b' },
 };
 
-function translateRegion(seq: string): string {
-  const s = seq.toUpperCase().replace(/[^ACGT]/g, '');
-  let out = '';
-  for (let i = 0; i + 2 < s.length; i += 3) {
-    out += CODON_TABLE_MUT[s.substring(i, i + 3)] ?? '?';
-  }
-  return out;
-}
-
-function MutagenesisPanel({ sequence, selection }: { sequence: string; selection: { start: number; end: number } | null }) {
+function MutagenesisPanel({ sequence, selection, features }: {
+  sequence: string;
+  selection: { start: number; end: number } | null;
+  features: SequenceFeature[];
+}) {
   const defaultPos = selection ? selection.start : 1;
   const [mutPos, setMutPos] = useState(defaultPos);
   const [newBase, setNewBase] = useState<'A' | 'T' | 'C' | 'G'>('A');
@@ -4712,10 +4712,11 @@ function MutagenesisPanel({ sequence, selection }: { sequence: string; selection
   const mutTm  = mutRegion.length  >= 8 ? calcTm(mutRegion)  : 0;
   const tmDelta = mutTm - origTm;
 
-  const origAA  = translateRegion(origRegion);
-  const mutAA   = translateRegion(mutRegion);
-  const impact  = origAA === mutAA ? 'Silent' : mutAA.includes('*') && !origAA.includes('*') ? 'Nonsense' : 'Missense';
-  const impactColor = impact === 'Silent' ? '#16a34a' : impact === 'Nonsense' ? '#7c3aed' : '#dc2626';
+  const unchanged = newBase === origBase;
+  const changes = unchanged ? [] : codingChanges(sequence, features, pos, newBase);
+  const headline = unchanged ? 'none' : changes[0]?.effect ?? 'non-coding';
+  const impact = EFFECT_STYLE[headline].label;
+  const impactColor = EFFECT_STYLE[headline].colour;
 
   const mutFullSeq = sequence.substring(0, pos - 1) + newBase + sequence.substring(pos);
 
@@ -4724,7 +4725,7 @@ function MutagenesisPanel({ sequence, selection }: { sequence: string; selection
       <div style={{ marginBottom: '1rem' }}>
         <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Site-Directed Mutagenesis</h3>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
-          Substitute a single base and instantly see the thermodynamic and protein-coding impact.
+          Substitute a single base and see what it does to the Tm of the region and to any annotated protein it falls in, read in that protein’s own frame.
         </p>
       </div>
 
@@ -4775,6 +4776,9 @@ function MutagenesisPanel({ sequence, selection }: { sequence: string; selection
         <div style={{ padding: '0.5rem 0.6rem', background: impactColor + '10', border: `1px solid ${impactColor}33`, borderRadius: '7px' }}>
           <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Protein Impact</div>
           <div style={{ fontSize: '1rem', fontWeight: 800, color: impactColor }}>{impact}</div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            {changes[0] ? `${changes[0].feature} ${changes[0].notation}${changes.length > 1 ? ` +${changes.length - 1} more` : ''}` : unchanged ? 'pick another base' : 'no reading frame here'}
+          </div>
         </div>
       </div>
 
@@ -4793,12 +4797,21 @@ function MutagenesisPanel({ sequence, selection }: { sequence: string; selection
           ))}
         </div>
         <div style={{ borderTop: '1px solid #1e293b', paddingTop: '0.4rem', marginTop: '0.2rem' }}>
-          <span style={{ color: '#64748b' }}>AA orig: </span><span style={{ color: '#a5b4fc' }}>{origAA}</span>
-        </div>
-        <div>
-          <span style={{ color: '#64748b' }}>AA mut:  </span>
-          {mutAA.split('').map((aa, i) => (
-            <span key={i} style={{ color: aa === origAA[i] ? '#a5b4fc' : '#f87171', fontWeight: aa !== origAA[i] ? 700 : 400 }}>{aa}</span>
+          {changes.length === 0 ? (
+            <span style={{ color: '#64748b' }}>
+              {unchanged
+                ? 'Choose a base different from the original.'
+                : 'This base is not inside an annotated CDS, so there is no reading frame to judge it by. Annotate the gene to see its effect on the protein.'}
+            </span>
+          ) : changes.map(c => (
+            <div key={c.feature}>
+              <span style={{ color: '#64748b' }}>{c.feature}{c.strand === -1 ? ' (−)' : ''} codon {c.codonNumber}: </span>
+              <span style={{ color: '#a5b4fc' }}>{c.originalCodon} ({c.originalAA})</span>
+              <span style={{ color: '#64748b' }}> → </span>
+              <span style={{ color: c.effect === 'silent' ? '#a5b4fc' : '#f87171', fontWeight: 700 }}>{c.mutantCodon} ({c.mutantAA})</span>
+              <span style={{ color: '#fbbf24' }}>  {c.notation}</span>
+              {c.caution && <div style={{ color: '#fbbf24', fontSize: '0.7rem' }}>⚠ {c.caution}</div>}
+            </div>
           ))}
         </div>
       </div>
