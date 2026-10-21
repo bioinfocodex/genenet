@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   cleanOligo, validateOligo, oligoStats, findDuplicate, parseOligoList,
-  bindingsInLibrary, collectionOnTemplate,
+  bindingsInLibrary, collectionOnTemplate, planPrimerImport,
 } from '../src/lib/oligos.ts';
 import { revComp } from '../src/lib/alignment.ts';
 import { nextCode } from '../src/lib/fields.ts';
@@ -121,5 +121,41 @@ describe('where an oligo binds', () => {
     );
     assert.deepEqual(sites.map(s => s.code), ['OL-001', 'OL-002']);
     assert.equal(sites[1].strand, 'reverse');
+  });
+});
+
+describe('filing the primers saved on sequences', () => {
+  const row = (name: string, sequence: string, sequenceName: string, notes: string | null = null) =>
+    ({ name, sequence, notes, sequenceName });
+
+  test('one oligo per distinct sequence, saying where it was used', () => {
+    const plan = planPrimerImport(
+      [row('M13F', M13F, 'pA'), row('m13 fwd', M13F.toLowerCase(), 'pB', 'universal'), row('T7', 'TAATACGACTCACTATAGGG', 'pA')],
+      [],
+    );
+    assert.equal(plan.add.length, 2);
+    const m13 = plan.add.find(a => a.sequence === M13F)!;
+    assert.equal(m13.name, 'M13F', 'named after the first primer that had it');
+    assert.match(m13.notes, /universal/);
+    assert.match(m13.notes, /Saved on: pA, pB/);
+  });
+
+  test('what the collection already holds is reported by code, not copied', () => {
+    const plan = planPrimerImport([row('M13F', M13F, 'pA')], [{ code: 'OL-004', sequence: M13F }]);
+    assert.deepEqual(plan.add, []);
+    assert.deepEqual(plan.existing, [{ name: 'M13F', code: 'OL-004' }]);
+  });
+
+  test('a primer too short to be an oligo is reported, not filed', () => {
+    const plan = planPrimerImport([row('stub', 'ACGT', 'pA')], []);
+    assert.equal(plan.add.length, 0);
+    assert.match(plan.invalid[0].reason, /at least 8/);
+    assert.match(plan.invalid[0].name, /pA/);
+  });
+
+  test('running it again after filing adds nothing', () => {
+    const first = planPrimerImport([row('M13F', M13F, 'pA')], []);
+    const filed = first.add.map((a, i) => ({ code: `OL-00${i + 1}`, sequence: a.sequence }));
+    assert.deepEqual(planPrimerImport([row('M13F', M13F, 'pA')], filed).add, []);
   });
 });

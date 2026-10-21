@@ -209,3 +209,63 @@ export function collectionOnTemplate(
   }
   return out.sort((a, b) => a.start - b.start || a.end - b.end);
 }
+
+// ─── Filing the primers already saved on sequences ───────────────────────────
+
+export interface SavedPrimerRow {
+  name: string;
+  sequence: string;
+  notes: string | null;
+  sequenceName: string;
+}
+
+export interface PrimerImportPlan {
+  /** One per distinct sequence, named after the first primer that had it. */
+  add: { name: string; sequence: string; notes: string }[];
+  /** Already in the collection under a code. */
+  existing: { name: string; code: string }[];
+  /** Not an oligo by the collection's rules (too short, too long). */
+  invalid: { name: string; reason: string }[];
+}
+
+/**
+ * What filing every per-sequence primer into the collection would do.
+ *
+ * Planned first and shown before anything is written, because it is a bulk
+ * change to shared records: the same primer saved on six plasmids becomes one
+ * oligo that says where it was used, not six; anything already in the
+ * collection is left alone; and a "primer" too short to be one is reported,
+ * not filed. Running it twice adds nothing the second time.
+ */
+export function planPrimerImport(
+  primers: SavedPrimerRow[],
+  collection: { code: string; sequence: string }[],
+): PrimerImportPlan {
+  const plan: PrimerImportPlan = { add: [], existing: [], invalid: [] };
+  const known = new Map(collection.map(o => [cleanOligo(o.sequence), o.code]));
+  const grouped = new Map<string, { name: string; usedOn: Set<string>; notes: Set<string> }>();
+
+  for (const p of primers) {
+    const seq = cleanOligo(p.sequence);
+    const problem = validateOligo(seq);
+    if (problem) {
+      plan.invalid.push({ name: `${p.name} (${p.sequenceName})`, reason: problem });
+      continue;
+    }
+    const code = known.get(seq);
+    if (code) {
+      if (!plan.existing.some(e => e.code === code && e.name === p.name)) plan.existing.push({ name: p.name, code });
+      continue;
+    }
+    const g = grouped.get(seq) ?? { name: p.name, usedOn: new Set<string>(), notes: new Set<string>() };
+    g.usedOn.add(p.sequenceName);
+    if (p.notes?.trim()) g.notes.add(p.notes.trim());
+    grouped.set(seq, g);
+  }
+
+  for (const [sequence, g] of grouped) {
+    const notes = [...g.notes, `Saved on: ${[...g.usedOn].join(', ')}`].join('\n');
+    plan.add.push({ name: g.name, sequence, notes });
+  }
+  return plan;
+}

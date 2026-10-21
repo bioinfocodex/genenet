@@ -4,6 +4,7 @@ import { requireUser } from '@/lib/auth-guard';
 import { AudioLines } from 'lucide-react';
 import { oligoStats } from '@/lib/oligos';
 import AddOligos from './add-oligos';
+import ImportPrimers from './import-primers';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,6 +52,8 @@ export default async function OligosPage({ searchParams }: { searchParams: Promi
         </div>
         <AddOligos />
       </div>
+
+      <ImportPrimers />
 
       <form style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
         <input

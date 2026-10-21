@@ -3,7 +3,10 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth-guard';
 import { nextCode } from '@/lib/fields';
-import { OLIGO_PREFIX, cleanOligo, validateOligo, findDuplicate, parseOligoList } from '@/lib/oligos';
+import {
+  OLIGO_PREFIX, cleanOligo, validateOligo, findDuplicate, parseOligoList, planPrimerImport,
+  type PrimerImportPlan,
+} from '@/lib/oligos';
 
 export type ActionResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -137,4 +140,47 @@ export async function addPrimerToCollection(primerId: string): Promise<ActionRes
   revalidatePath('/oligos');
   revalidatePath(`/sequences/${primer.geneSequenceId}`);
   return { ok: true, code, existed: false };
+}
+
+async function primerImportPlan(): Promise<PrimerImportPlan> {
+  const [primers, collection] = await Promise.all([
+    prisma.primer.findMany({
+      select: { name: true, sequence: true, notes: true, geneSequence: { select: { name: true } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.oligo.findMany({ select: { code: true, sequence: true } }),
+  ]);
+  return planPrimerImport(
+    primers.map(p => ({ name: p.name, sequence: p.sequence, notes: p.notes, sequenceName: p.geneSequence.name })),
+    collection,
+  );
+}
+
+/** What filing every saved primer would do, without doing it. */
+export async function previewPrimerImport(): Promise<PrimerImportPlan> {
+  await requireUser();
+  return primerImportPlan();
+}
+
+/**
+ * File the per-sequence primers into the collection. The plan is worked out
+ * again here rather than trusted from the preview, so a primer added between
+ * preview and confirm is handled the same way and nothing is filed twice.
+ */
+export async function importPrimersFromSequences(): Promise<ActionResult<{ added: { code: string; name: string }[] }>> {
+  const user = await requireUser();
+  const plan = await primerImportPlan();
+  const codes = (await prisma.oligo.findMany({ select: { code: true } })).map(o => o.code);
+  const added: { code: string; name: string }[] = [];
+
+  for (const row of plan.add) {
+    const code = nextCode(OLIGO_PREFIX, codes);
+    await prisma.oligo.create({
+      data: { code, name: row.name, sequence: row.sequence, notes: row.notes, createdById: user.id },
+    });
+    codes.push(code);
+    added.push({ code, name: row.name });
+  }
+  revalidatePath('/oligos');
+  return { ok: true, added };
 }
