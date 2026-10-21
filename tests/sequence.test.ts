@@ -4,7 +4,8 @@ import {
   reverseComplement, calcGC, calcTm, translateDNA, findORFs,
   parseFasta, calcProteinProperties,
 } from '../src/lib/simulation.ts';
-import { wallaceTm, translateSeq } from '../src/lib/molbuilder-logic.ts';
+import { translateSeq } from '../src/lib/molbuilder-logic.ts';
+import { nnTm } from '../src/lib/tm.ts';
 
 /**
  * The molecular biology functions.
@@ -86,38 +87,32 @@ describe('calcGC', () => {
 });
 
 describe('calcTm', () => {
-  test('short oligos follow the Wallace rule: 2(A+T) + 4(G+C)', () => {
-    // 12-mer, 6 AT and 6 GC -> 2*6 + 4*6 = 36
-    assert.equal(calcTm('ATATATGCGCGC'), 36);
-    // 8-mer, all AT -> 2*8 = 16
-    assert.equal(calcTm('ATATATAT'), 16);
-    // 8-mer, all GC -> 4*8 = 32
-    assert.equal(calcTm('GCGCGCGC'), 32);
+  test('is the nearest-neighbour Tm the rest of the application uses', () => {
+    // One oligo, one temperature, whichever panel shows it.
+    for (const s of ['GTAAAACGACGGCCAGTGAA', 'ATGGCTAGCAAAGGAGAAGAACTTTTCACTGG', 'GCGCGCGCAT']) {
+      assert.equal(calcTm(s), Math.round(nnTm(s) * 10) / 10);
+    }
+  });
+
+  test('sees base order, which a GC-count formula cannot', () => {
+    // Same length, same 0% GC: the old formula gave both the same number.
+    assert.ok(calcTm('AATTAATTAATTAATTAATT') > calcTm('ATATATATATATATATATAT') + 3);
   });
 
   test('GC-rich oligos melt higher than AT-rich ones of the same length', () => {
     assert.ok(calcTm('GCGCGCGCGC') > calcTm('ATATATATAT'));
   });
 
-  test('switches formula above 13 bases', () => {
-    // The Wallace rule is only valid for short oligos; above 13 the function
-    // uses the salt-adjusted approximation, which gives a much lower number
-    // for a long AT-rich sequence than 2*(A+T) would.
-    const long = 'ATATATATATATATATATAT'; // 20-mer, no GC
-    assert.notEqual(calcTm(long), 40);
-    assert.ok(calcTm(long) < 40);
-  });
-
   test('a typical 20-mer primer lands in a usable range', () => {
     const primer = 'GTAAAACGACGGCCAGTGAA'; // M13 forward, 20-mer
     const tm = calcTm(primer);
-    assert.ok(tm > 40 && tm < 75, `expected a usable annealing temperature, got ${tm}`);
+    assert.ok(tm > 50 && tm < 70, `expected a usable annealing temperature, got ${tm}`);
   });
 
-  test('wallaceTm agrees with calcTm on short oligos', () => {
-    for (const s of ['ATGC', 'GGGGCCCC', 'ATATATATATA']) {
-      assert.equal(wallaceTm(s), calcTm(s), `disagreement on ${s}`);
-    }
+  test('ignores whatever is not a base, and is never NaN', () => {
+    assert.equal(calcTm('gtaaaa cgacgg-ccagt gaa'), calcTm('GTAAAACGACGGCCAGTGAA'));
+    assert.equal(calcTm(''), 0);
+    assert.equal(calcTm('A'), 0);
   });
 });
 
