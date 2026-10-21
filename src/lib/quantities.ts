@@ -237,6 +237,38 @@ export function formatConcentration(c: Concentration): string {
   return `${round(c.value)} ${n.label}/${v.label}`;
 }
 
+/**
+ * Read "200 ng/µL", "1.5 mg/mL", "100 µM" or "1 M".
+ *
+ * Molar forms are accepted written the way a bottle is labelled, because that
+ * is how they arrive in a spreadsheet: nobody types "100 µmol/L" on a tube.
+ */
+export function parseConcentration(text: string): Concentration | null {
+  const s = normaliseMicro(String(text)).trim();
+  if (!s) return null;
+
+  const molar = /^([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?)\s*(m|mm|um|nm|pm|fm)$/i.exec(s);
+  if (molar) {
+    const value = Number(molar[1]);
+    if (!Number.isFinite(value)) return null;
+    const per = { m: 'mol', mm: 'mmol', um: 'umol', nm: 'nmol', pm: 'pmol', fm: 'fmol' }[molar[2].toLowerCase()]!;
+    return { value, per, volume: 'L' };
+  }
+
+  const over = /^([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?)\s*([A-Za-z]+)\s*\/\s*([A-Za-z]+)$/.exec(s);
+  if (!over) return null;
+  const value = Number(over[1]);
+  if (!Number.isFinite(value)) return null;
+  const per = ALIASES[over[2].toLowerCase()];
+  const volume = ALIASES[over[3].toLowerCase()];
+  if (!per || !volume) return null;
+  const n = unit(per), v = unit(volume);
+  if (!n || !v) return null;
+  if (n.dimension !== 'mass' && n.dimension !== 'substance') return null;
+  if (v.dimension !== 'volume') return null;
+  return { value, per, volume };
+}
+
 /** The mass (or moles) in a volume of something at a concentration. */
 export function amountIn(volume: Quantity, c: Concentration): Quantity | null {
   const litres = base(volume);

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireUser } from '@/lib/auth-guard';
 import { parseQuantity, canTake, type Stock } from '@/lib/quantities';
+import { planSampleImport } from '@/lib/sample-import';
 
 /** The sample's quantity fields, as the arithmetic in lib/quantities wants them. */
 function stockOf(s: {
@@ -235,4 +236,109 @@ export async function deleteSampleUse(fd: FormData) {
   await prisma.sampleUse.delete({ where: { id: useId } });
   revalidatePath(`/samples/${use.sampleId}`);
   return { ok: true as const };
+}
+
+// ─── Bulk import ─────────────────────────────────────────────────────────────
+
+/**
+ * What importing this file would do.
+ *
+ * Read and shown before anything is written. The plan is derived from the
+ * file's text, and so is the import itself a moment later -- the browser never
+ * sends back a plan to be trusted, because a plan that arrives from outside is
+ * a list of writes somebody else chose.
+ */
+export async function previewSampleImport(fd: FormData) {
+  await requireUser();
+  const text = (fd.get('text') as string | null) ?? '';
+  if (!text.trim()) return { error: 'Nothing to read.' };
+  if (text.length > 2_000_000) return { error: 'That file is too big to import in one go.' };
+
+  const [existing, freezers] = await Promise.all([
+    prisma.sample.findMany({ select: { sampleId: true } }),
+    prisma.freezer.findMany({ select: { id: true, name: true } }),
+  ]);
+
+  const plan = planSampleImport(text, new Set(existing.map(s => s.sampleId)));
+  const known = new Set(freezers.map(f => f.name.toLowerCase()));
+
+  /*
+   * A freezer nobody has set up is a note, not a rejection. The tube is real
+   * and the row is good; what is missing is somewhere to put it, and refusing
+   * eighty rows over a freezer that takes ten seconds to create would be the
+   * wrong trade.
+   */
+  const unknownFreezers = new Set<string>();
+  for (const row of plan.rows) {
+    const f = row.value?.freezer;
+    if (f && !known.has(f.toLowerCase())) {
+      unknownFreezers.add(f);
+      row.notes.push(`No freezer called "${f}"; the tube will be filed without one.`);
+    }
+  }
+
+  return { plan, unknownFreezers: [...unknownFreezers] };
+}
+
+/**
+ * Do it.
+ *
+ * The file is planned again here rather than taking the browser's word for
+ * what the plan was: between the preview and the button somebody else may have
+ * created the same code, and in any case a list of writes that arrived over
+ * the wire is not one this should run.
+ */
+export async function commitSampleImport(fd: FormData) {
+  const user = await requireUser();
+  const text = (fd.get('text') as string | null) ?? '';
+  if (!text.trim()) return { error: 'Nothing to import.' };
+
+  const [existing, freezers] = await Promise.all([
+    prisma.sample.findMany({ select: { id: true, sampleId: true } }),
+    prisma.freezer.findMany({ select: { id: true, name: true } }),
+  ]);
+  const byCode = new Map(existing.map(s => [s.sampleId, s.id]));
+  const freezerByName = new Map(freezers.map(f => [f.name.toLowerCase(), f.id]));
+
+  const plan = planSampleImport(text, new Set(byCode.keys()));
+
+  let created = 0, updated = 0;
+  for (const row of plan.rows) {
+    if (row.verdict === 'reject' || !row.value) continue;
+    const v = row.value;
+    const data = {
+      name: v.name,
+      type: v.type,
+      notes: v.notes ?? null,
+      freezerId: v.freezer ? freezerByName.get(v.freezer.toLowerCase()) ?? null : null,
+      rack: v.rack ?? null,
+      box: v.box ?? null,
+      position: v.position ?? null,
+      amount: v.amount ?? null,
+      amountUnit: v.amountUnit ?? null,
+      concValue: v.concValue ?? null,
+      concPer: v.concPer ?? null,
+      concVolume: v.concVolume ?? null,
+      lot: v.lot ?? null,
+      expiresAt: v.expiresAt ? new Date(v.expiresAt) : null,
+    };
+
+    const id = v.sampleId ? byCode.get(v.sampleId) : undefined;
+    if (id) {
+      await prisma.sample.update({ where: { id }, data });
+      updated++;
+    } else {
+      await prisma.sample.create({
+        data: {
+          ...data,
+          sampleId: v.sampleId ?? await nextSampleId(TYPE_PREFIX[v.type] ?? 'SAM'),
+          createdById: user.id,
+        },
+      });
+      created++;
+    }
+  }
+
+  revalidatePath('/samples');
+  return { ok: true as const, created, updated, rejected: plan.counts.reject };
 }
