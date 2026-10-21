@@ -264,6 +264,13 @@ export async function saveConstruct(formData: FormData): Promise<SaveConstructRe
   const parts = (formData.get('parts') as string | null)?.trim() ?? '';
   const parentsJson = (formData.get('parents') as string | null) ?? '';
   const topology = (formData.get('topology') as string | null) ?? 'circular';
+  // Annotations carried over from the parent, when the caller has them -- a
+  // mutant is its parent with one change, and should keep its map.
+  let features = '[]';
+  try {
+    const parsed = JSON.parse((formData.get('features') as string | null) ?? '[]');
+    if (Array.isArray(parsed)) features = JSON.stringify(parsed);
+  } catch { /* an unreadable list is no annotations, not a failed save */ }
 
   if (!name || !sequence) return { error: 'A construct needs a name and a sequence.' };
 
@@ -274,7 +281,7 @@ export async function saveConstruct(formData: FormData): Promise<SaveConstructRe
       type: topology === 'circular' ? 'plasmid' : 'gene',
       sequence,
       size: sequence.length,
-      features: '[]',
+      features,
     },
   });
 
