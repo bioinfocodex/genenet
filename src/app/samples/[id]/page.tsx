@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ChevronRight, FlaskConical } from 'lucide-react';
 import SampleDetailClient from './client';
 import QuantityPanel from '@/components/samples/QuantityPanel';
+import SampleBarcode from '@/components/samples/SampleBarcode';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,7 @@ export default async function SampleDetailPage({ params }: { params: Promise<{ i
         <span style={{ fontFamily: 'monospace', color: TYPE_COLOR[sample.type] ?? 'var(--text-primary)' }}>{sample.sampleId}</span>
       </div>
       <SampleDetailClient sample={sample} freezers={freezers} sequences={sequences} />
+      <SampleBarcode code={sample.sampleId} caption={sample.name} />
       <QuantityPanel
         sample={{
           id: sample.id,
