@@ -36,6 +36,7 @@ export default function Sidebar({ userRole = 'MEMBER', userName = '' }: Props) {
       { name: 'Oligos',         path: '/oligos',          icon: AudioLines },
       { name: 'Reference',      path: '/reference',       icon: BookMarked },
       { name: 'Cloning Wizard', path: '/sequences/clone', icon: Scissors },
+      { name: 'Workbench',      path: '/sequences/workbench', icon: FlaskConical },
       { name: 'Search by Seq',  path: '/sequences/find',  icon: ScanSearch },
       { name: 'Assemble Reads', path: '/sequences/assemble', icon: Layers3 },
       { name: 'Gene Design',    path: '/sequences/optimise', icon: Wand2 },

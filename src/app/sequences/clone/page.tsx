@@ -6,6 +6,7 @@ import { Scissors } from 'lucide-react';
 export const dynamic = 'force-dynamic';
 
 export default async function ClonePage() {
+  // features come too: the wizard carries the parts' annotation into the product.
   const sequences = await prisma.geneSequence.findMany({ orderBy: { createdAt: 'desc' } });
 
   return (

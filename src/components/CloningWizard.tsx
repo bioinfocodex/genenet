@@ -25,6 +25,8 @@ type SeqRecord = {
   sequence: string;
   size: number;
   description: string | null;
+  /** Stored feature JSON, carried into whatever the parts assemble into. */
+  features?: string | null;
 };
 
 type CloningMethod = 'restriction' | 'golden-gate' | 'gateway' | 'infusion' | 'ta' | 'gibson';
@@ -627,7 +629,7 @@ function GoldenGatePanel({ sequences }: { sequences: SeqRecord[] }) {
           junctions={junctions}
           method={`Golden Gate (${enzyme})`}
           accent={accent}
-          parents={chosen.map(c => ({ id: c.id, name: c.name }))}
+          parents={chosen.map(c => ({ id: c.id, name: c.name, sequence: c.sequence, features: c.features }))}
         />
       )}
 
@@ -879,7 +881,7 @@ function HomologyPanel({ sequences, method, accent, icon, blurb }: {
           junctions={junctions}
           method={result.spec.name}
           accent={accent}
-          parents={chosen.map(c => ({ id: c.id, name: c.name }))}
+          parents={chosen.map(c => ({ id: c.id, name: c.name, sequence: c.sequence, features: c.features }))}
         />
       )}
 
@@ -981,7 +983,7 @@ function TAPanel({ sequences }: { sequences: SeqRecord[] }) {
           }))}
           method={`${result.spec.name} — insert ${o.sense}`}
           accent={o.sense === 'forward' ? accent : '#94a3b8'}
-          parents={[insert, vector].filter(Boolean).map(x => ({ id: x!.id, name: x!.name }))}
+          parents={[insert, vector].filter(Boolean).map(x => ({ id: x!.id, name: x!.name, sequence: x!.sequence, features: x!.features }))}
         />
       ))}
 
