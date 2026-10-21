@@ -60,6 +60,7 @@ model User {
   gelsCreated        GelSimulation[]    @relation("GelCreator")
   samplesCreated     Sample[]           @relation("SampleCreator")
   sampleUses         SampleUse[]        @relation("SampleUser")
+  samplesHeld        Sample[]           @relation("SampleHolder")
   oligosCreated      Oligo[]            @relation("OligoCreator")
   readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
@@ -770,6 +771,17 @@ model Sample {
   /// The supplier's lot, and when it stops being trustworthy.
   lot          String?
   expiresAt    DateTime?
+
+  /// Who is holding it, when they took it and when it is due back. Null
+  /// across all three means it is where the freezer fields say it is.
+  ///
+  /// A lending record, not a chain of custody: it answers "where is it really"
+  /// at the moment somebody walks to the freezer and finds a gap, which is the
+  /// commonest way an inventory stops being believed.
+  heldBy      User?     @relation("SampleHolder", fields: [heldById], references: [id])
+  heldById    String?
+  heldSince   DateTime?
+  dueBack     DateTime?
 
   uses    SampleUse[]
   wells   PlateWell[]   @relation("SampleWells")

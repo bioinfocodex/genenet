@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { requireUser } from '@/lib/auth-guard';
 import { parseQuantity, canTake, type Stock } from '@/lib/quantities';
 import { planSampleImport } from '@/lib/sample-import';
+import { canCheckOut, problemWithDueDate } from '@/lib/custody';
 
 /** The sample's quantity fields, as the arithmetic in lib/quantities wants them. */
 function stockOf(s: {
@@ -341,4 +342,68 @@ export async function commitSampleImport(fd: FormData) {
 
   revalidatePath('/samples');
   return { ok: true as const, created, updated, rejected: plan.counts.reject };
+}
+
+// ─── Taking a tube out, and putting it back ──────────────────────────────────
+
+/**
+ * Take a sample out of the freezer.
+ *
+ * The check runs against the row as it stands rather than against what the
+ * page was showing: two people clicking at once is exactly the case this
+ * exists for, and the one who loses should be told who has it.
+ */
+export async function checkOutSample(fd: FormData) {
+  const user = await requireUser();
+  const id = fd.get('id') as string;
+  if (!id) return { error: 'No sample.' };
+
+  const due = ((fd.get('dueBack') as string | null) ?? '').trim();
+  const problem = due ? problemWithDueDate(due) : null;
+  if (problem) return { error: problem };
+
+  const sample = await prisma.sample.findUnique({
+    where: { id },
+    select: { heldById: true, heldSince: true, dueBack: true, heldBy: { select: { name: true } } },
+  });
+  if (!sample) return { error: 'That sample is gone.' };
+
+  const verdict = canCheckOut({
+    heldBy: sample.heldBy?.name ?? null,
+    heldSince: sample.heldSince?.toISOString() ?? null,
+    dueBack: sample.dueBack?.toISOString() ?? null,
+  }, user.name);
+  if (!verdict.ok) return { error: verdict.why };
+
+  await prisma.sample.update({
+    where: { id },
+    data: {
+      heldById: user.id,
+      heldSince: new Date(),
+      // A date with no time means the end of that day; see lib/custody.ts.
+      dueBack: due ? new Date(due) : null,
+    },
+  });
+  revalidatePath(`/samples/${id}`);
+  revalidatePath('/freezers');
+  return { ok: true as const };
+}
+
+/** Put it back. Anybody may, because tubes come back in somebody else's rack. */
+export async function checkInSample(fd: FormData) {
+  await requireUser();
+  const id = fd.get('id') as string;
+  if (!id) return { error: 'No sample.' };
+
+  const sample = await prisma.sample.findUnique({ where: { id }, select: { heldById: true } });
+  if (!sample) return { error: 'That sample is gone.' };
+  if (!sample.heldById) return { error: 'This one is not out.' };
+
+  await prisma.sample.update({
+    where: { id },
+    data: { heldById: null, heldSince: null, dueBack: null },
+  });
+  revalidatePath(`/samples/${id}`);
+  revalidatePath('/freezers');
+  return { ok: true as const };
 }
