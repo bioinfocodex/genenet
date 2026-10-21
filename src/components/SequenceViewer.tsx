@@ -45,6 +45,7 @@ import MolbuilderFindReplace from './sequences/MolbuilderFindReplace';
 import LinearMap from './sequences/LinearMap';
 import CircularMap from './sequences/CircularMap';
 import MapStylePanel from './sequences/MapStylePanel';
+import BlastPanel from './sequences/BlastPanel';
 import {
   type MapStyle, parseStyle, applyStyle, hiddenCount, typesPresent, enzymeOptions,
 } from '@/lib/map-display';
@@ -78,7 +79,7 @@ export interface SavedPrimer {
   notes?: string;
 }
 
-type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'primers' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold';
+type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'primers' | 'orfs' | 'translate' | 'pcr' | 'ligation' | 'aigen' | 'sanger' | 'crispr' | 'dimer' | 'design' | 'mutagenesis' | 'gel' | 'fold' | 'blast';
 
 /**
  * The ways of looking at this sequence, in the order they are offered.
@@ -116,6 +117,7 @@ const TOOL_NAMES: Partial<Record<LeftTab, string>> = {
   crispr: 'CRISPR Guides',
   aigen: 'AI Annotation',
   fold: '3D Fold',
+  blast: 'BLAST at NCBI',
 };
 
 const PRESET_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
@@ -1197,6 +1199,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     ],
     // Computing something about the sequence.
     Tools: [
+      { label: 'BLAST at NCBI', action: () => setLeftTab('blast') },
       { label: 'CRISPR Guides', action: () => setLeftTab('crispr') },
       { label: 'AI Annotation', action: () => setLeftTab('aigen') },
       { label: '3D Fold', action: () => setLeftTab('fold') },
@@ -2130,6 +2133,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           )}
           {leftTab === 'aigen'  && <AIGenePanel sequence={sequence} />}
           {leftTab === 'sanger' && <SangerPanel sequenceId={id} reference={sequence} circular={seqType === 'plasmid'} savedReads={savedReads} verifications={verifications} />}
+          {leftTab === 'blast'  && <BlastPanel sequence={sequence} selection={selection} title={seqName} />}
           {leftTab === 'crispr' && <CrisprPanel sequence={sequence} selection={selection} onSelect={setSelection} />}
           {leftTab === 'dimer'  && <DimerPanel primers={primers} />}
           {leftTab === 'design' && (
