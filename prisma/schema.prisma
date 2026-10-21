@@ -61,6 +61,8 @@ model User {
   samplesCreated     Sample[]           @relation("SampleCreator")
   sampleUses         SampleUse[]        @relation("SampleUser")
   samplesHeld        Sample[]           @relation("SampleHolder")
+  comments           Comment[]          @relation("CommentWriter")
+  mentioned          CommentMention[]   @relation("Mentioned")
   oligosCreated      Oligo[]            @relation("OligoCreator")
   readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
@@ -264,6 +266,55 @@ model GelImage {
 
   task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
   taskId String?
+}
+
+/// A comment on any record, and who it names.
+///
+/// Tasks had comments; nothing else did, so the conversation about a construct
+/// happened somewhere else, where it is not attached to the construct and is
+/// gone in ninety days. The next person to open the record found the sequence
+/// and none of the argument about it.
+model Comment {
+  id       String   @id @default(cuid())
+  /// One of lib/mentions.ts COMMENTABLE. A closed list, because the kind is
+  /// what decides where a notification links back to.
+  kind     String
+  targetId String
+  /// The record's name when the comment was written, so a comment on
+  /// something since deleted still reads as being about something.
+  label    String
+
+  body     String
+
+  author   User   @relation("CommentWriter", fields: [authorId], references: [id])
+  authorId String
+
+  /// Who the comment names. Resolved when it is written rather than when it is
+  /// read: a comment saying @Jane means the Jane who was there at the time.
+  mentions CommentMention[]
+
+  createdAt DateTime @default(now())
+  editedAt  DateTime?
+
+  @@index([kind, targetId, createdAt])
+  @@index([authorId])
+}
+
+/// One person named in one comment.
+model CommentMention {
+  id        String  @id @default(cuid())
+  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  commentId String
+
+  person   User   @relation("Mentioned", fields: [personId], references: [id], onDelete: Cascade)
+  personId String
+
+  /// Cleared when the person has seen it. Null means unread, which is what
+  /// the badge counts.
+  readAt   DateTime?
+
+  @@unique([commentId, personId])
+  @@index([personId, readAt])
 }
 
 model TaskComment {
