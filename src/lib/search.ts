@@ -83,7 +83,9 @@ export async function searchWorkspace(rawQuery: string): Promise<SearchResults> 
       take: PER_KIND, orderBy: { createdAt: 'desc' },
     }),
     prisma.geneSequence.findMany({
-      where: { OR: [{ name: contains }, { description: contains }, { tags: contains }] },
+      // The code first, so a scanned PL-014 finds the construct rather than
+      // every construct whose notes happen to mention it.
+      where: { OR: [{ code: contains }, { name: contains }, { description: contains }, { tags: contains }] },
       take: PER_KIND, orderBy: { createdAt: 'desc' },
     }),
     prisma.procedure.findMany({
@@ -143,8 +145,9 @@ export async function searchWorkspace(rawQuery: string): Promise<SearchResults> 
     {
       kind: 'sequence', label: LABELS.sequence,
       hits: sequences.map(s => ({
-        kind: 'sequence' as const, id: s.id, title: s.name,
+        kind: 'sequence' as const, id: s.id, title: s.name, ref: s.code ?? undefined,
         subtitle: firstLine(s.description) ?? s.type, href: `/sequences/${s.id}`,
+        exact: s.code ? isExact(s.code) : false,
       })),
     },
     {

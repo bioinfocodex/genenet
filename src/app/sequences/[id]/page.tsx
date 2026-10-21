@@ -93,6 +93,20 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
             <h1 style={{ fontSize: '1.7rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
               <Dna size={22} color="var(--accent-blue)" />
               {seq.name}
+              {/*
+                Beside the name rather than instead of it. The name is what
+                people say; the code is what survives somebody renaming it,
+                and what a label points at.
+              */}
+              {seq.code && (
+                <span style={{
+                  fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 600,
+                  color: 'var(--text-muted)', border: '1px solid var(--glass-border)',
+                  borderRadius: 6, padding: '0.05rem 0.4rem',
+                }}>
+                  {seq.code}
+                </span>
+              )}
             </h1>
             {verified ? (
               <div title={verified.note ?? undefined} style={{ fontSize: '0.8rem', color: 'var(--accent-green)', marginTop: '0.3rem', fontWeight: 600 }}>

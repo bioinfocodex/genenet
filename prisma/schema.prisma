@@ -438,6 +438,13 @@ model Activity {
 
 model GeneSequence {
   id          String   @id @default(cuid())
+  /// A short identifier of the kind written on a tube: PL-001, GN-014.
+  ///
+  /// Names are not identifiers. Two people make "pEGFP-N1 v2", somebody
+  /// renames one, and the freezer label points at a record nobody can find.
+  /// Issued once and unchanged when the name changes. Nullable because
+  /// records made before codes existed have none until they are backfilled.
+  code        String?  @unique
   name        String
   description String?
   type        String   @default("gene")

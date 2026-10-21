@@ -2,11 +2,13 @@ import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
 import { Columns, Database, Plus, Scissors } from 'lucide-react';
 import SequenceLibrary from '@/components/SequenceLibrary';
+import BackfillCodes from '@/components/sequences/BackfillCodes';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SequencesPage() {
   const sequences = await prisma.geneSequence.findMany({ orderBy: { createdAt: 'desc' } });
+  const uncoded = sequences.filter(s => !s.code).length;
 
   return (
     <div>
@@ -32,6 +34,8 @@ export default async function SequencesPage() {
           </Link>
         </div>
       </div>
+
+      <BackfillCodes uncoded={uncoded} />
 
       {sequences.length === 0 ? (
         <div className="glass-panel" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
