@@ -10,6 +10,15 @@
  * Unified parameters from SantaLucia (1998) PNAS 95:1460, with the salt
  * correction from SantaLucia & Hicks (2004). Values are ΔH in kcal/mol and ΔS
  * in cal/(mol·K) for each stacked pair read 5'->3' on the top strand.
+ *
+ * Magnesium is counted. A PCR buffer carries 1.5-2 mM Mg2+, and divalent
+ * cations stabilise a duplex far more than their concentration suggests: at
+ * 50 mM Na+ alone a typical 20-mer reads about six degrees below what it does
+ * in the tube. Computing with sodium only made every primer look cooler than
+ * it is, so designs ran long and suggested annealing temperatures ran cold.
+ * Free Mg2+ (what dNTPs, which chelate it about one to one, leave over) is
+ * folded into a sodium equivalent by von Ahsen et al. (2001) Clin Chem
+ * 47:1956 -- the conversion Primer3 uses.
  */
 
 export interface NN { dH: number; dS: number }
@@ -38,6 +47,32 @@ export interface TmOptions {
   strandConc?: number;
   /** Monovalent cation concentration, mol/L. */
   sodium?: number;
+  /** Total Mg2+, mol/L. */
+  magnesium?: number;
+  /** Total dNTP, mol/L -- four nucleotides at 0.15 mM each is 0.6 mM. */
+  dntp?: number;
+}
+
+/**
+ * The buffer every Tm here assumes unless told otherwise: Primer3's default
+ * PCR conditions, so a number from this application can be compared with one
+ * from Primer3 or a vendor calculator set to the same buffer.
+ */
+export const PCR_BUFFER: Required<Omit<TmOptions, 'strandConc'>> = {
+  sodium: 0.05,
+  magnesium: 0.0015,
+  dntp: 0.0006,
+};
+
+/**
+ * Monovalent-equivalent salt, mol/L. Only Mg2+ not bound by dNTPs counts; with
+ * more dNTP than Mg2+ there is none free and the term drops out.
+ */
+export function sodiumEquivalent(opts: TmOptions = {}): number {
+  const { sodium = PCR_BUFFER.sodium, magnesium = PCR_BUFFER.magnesium, dntp = PCR_BUFFER.dntp } = opts;
+  const freeMg = magnesium - dntp;
+  // The formula is in millimolar.
+  return (sodium * 1000 + (freeMg > 0 ? 120 * Math.sqrt(freeMg * 1000) : 0)) / 1000;
 }
 
 export interface Thermo {
@@ -53,7 +88,8 @@ export interface Thermo {
 
 /** Full thermodynamics, for callers that want more than a temperature. */
 export function duplexThermo(seq: string, opts: TmOptions = {}): Thermo {
-  const { strandConc = 0.25e-6, sodium = 0.05 } = opts;
+  const { strandConc = 0.25e-6 } = opts;
+  const salt = sodiumEquivalent(opts);
   const s = seq.toUpperCase().replace(/[^ACGTU]/g, '').replace(/U/g, 'T');
   const gc = s ? (s.match(/[GC]/g) ?? []).length / s.length : 0;
 
@@ -75,7 +111,7 @@ export function duplexThermo(seq: string, opts: TmOptions = {}): Thermo {
   }
 
   // Salt correction applies per phosphate, hence length - 1.
-  const dSsalt = dS + 0.368 * (s.length - 1) * Math.log(sodium);
+  const dSsalt = dS + 0.368 * (s.length - 1) * Math.log(salt);
 
   // Non-self-complementary duplex: the concentration term is CT/4.
   const selfComp = s === revCompLocal(s);
