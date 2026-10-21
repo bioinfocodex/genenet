@@ -1264,6 +1264,14 @@ model NotebookLink {
   /// The target's name when the link was made, so a deleted target still reads.
   label    String
 
+  /// A digest of the target's state at the moment the entry was signed.
+  ///
+  /// Null on a draft, and on a link made before this existed. It is what lets
+  /// a reader be told the difference between "the words were changed" and
+  /// "the construct this page shows was edited after it was signed" -- see
+  /// lib/notebook-embeds.ts.
+  snapshot String?
+
   @@index([entryId])
   @@index([kind, targetId])
 }

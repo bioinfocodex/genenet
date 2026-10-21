@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { requireUser } from '@/lib/auth-guard';
 import { NotebookPen } from 'lucide-react';
 import { verifyEntry, canEdit, canWitness, type EntryStatus } from '@/lib/notebook';
+import { statesFor } from '@/lib/embed-state';
 import EntryClient from './client';
 
 export const dynamic = 'force-dynamic';
@@ -35,9 +36,20 @@ export default async function EntryPage({ params }: { params: Promise<{ id: stri
   ]);
 
   const status = entry.status as EntryStatus;
+  /*
+   * The records this entry shows, as they are now, so verification can tell
+   * "somebody changed the words" from "the construct this page draws was
+   * edited after it was signed". Read only for a signed entry: a draft claims
+   * nothing, and there is no reason to query for it.
+   */
+  const current = status === 'DRAFT' ? [] : await statesFor(entry.links);
   const verification = verifyEntry({
     title: entry.title, body: entry.body, entryDate: entry.entryDate,
     contentHash: entry.contentHash, status,
+    embeds: entry.links.map(l => ({
+      kind: l.kind, targetId: l.targetId, label: l.label, snapshot: l.snapshot,
+    })),
+    current,
   });
   const editable = canEdit({ status, authorId: entry.authorId }, user.id, user.role);
   const witnessable = canWitness(

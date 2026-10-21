@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth-guard';
 import { contentHash, canEdit, canWitness, extractLinks, type EntryStatus } from '@/lib/notebook';
 import type { ActionResult } from './entities';
+import { statesFor } from '@/lib/embed-state';
+import { embedDigest } from '@/lib/notebook-embeds';
 
 /**
  * Notebook entries.
@@ -90,9 +92,30 @@ export async function signEntry(data: FormData): Promise<ActionResult> {
     if (entry.authorId !== user.id) return { error: 'Only the author can sign their own entry.' };
     if (!entry.body.trim()) return { error: 'An empty entry is not worth signing.' };
 
-    const hash = contentHash({ title: entry.title, body: entry.body, entryDate: entry.entryDate });
+    /*
+     * The state of everything the entry shows is read and stored on its links
+     * before the digest is taken, so the signature covers the page rather than
+     * only the words on it. Taken here, in the same transaction as the
+     * signature, because a snapshot read a moment earlier would be a claim
+     * about a record that may have changed in between.
+     */
+    const links = await prisma.notebookLink.findMany({
+      where: { entryId: id },
+      select: { id: true, kind: true, targetId: true },
+    });
+    const states = await statesFor(links);
+    const digestOf = new Map(states.map(st => [`${st.kind}:${st.targetId}`, embedDigest(st)]));
+
+    const hash = contentHash(
+      { title: entry.title, body: entry.body, entryDate: entry.entryDate },
+      states,
+    );
 
     await prisma.$transaction([
+      ...links.map(l => prisma.notebookLink.update({
+        where: { id: l.id },
+        data: { snapshot: digestOf.get(`${l.kind}:${l.targetId}`) ?? null },
+      })),
       prisma.notebookEntry.update({
         where: { id },
         data: { status: 'SIGNED', signedAt: new Date(), signedById: user.id, contentHash: hash },
