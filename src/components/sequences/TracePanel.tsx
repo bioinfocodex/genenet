@@ -3,8 +3,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { isAb1, parseAb1 } from '@/lib/formats/ab1';
 import {
   verifyTrace, peakWindow,
-  type TraceVerification, type TraceDiscrepancy, type OrientedTrace,
+  type TraceVerification, type TraceDiscrepancy, type OrientedTrace, type TraceRead,
 } from '@/lib/trace-alignment';
+import { deleteRead } from '@/app/actions/reads';
+import { coverageOf, unresolved, type Agreement, type Coverage } from '@/lib/read-coverage';
+import { signRecord } from '@/app/actions/signatures';
+import { useRouter } from 'next/navigation';
 
 /**
  * Sanger traces against this sequence: load the .ab1 files a facility sends
@@ -17,55 +21,148 @@ const KIND_LABEL: Record<TraceDiscrepancy['kind'], string> = {
   match: 'match', mismatch: 'mismatch', insertion: 'insertion', deletion: 'deletion', mixed: 'mixed peak',
 };
 
+/** A sign-off that the sequence matches its reads. */
+export interface VerificationInfo {
+  id: string;
+  at: string;
+  signerName: string;
+  note: string | null;
+  /** False once the sequence has been edited since. */
+  current: boolean;
+}
+
+/** A read stored with the sequence, as the page lists it. */
+export interface SavedReadInfo {
+  id: string;
+  fileName: string;
+  sampleName: string | null;
+  runDate: string | null;
+  uploadedBy: string;
+}
+
 interface LoadedRead {
+  /** Set once the read is stored with the sequence. */
+  id?: string;
   file: string;
   sampleName: string;
   runDate: string;
-  result: TraceVerification | null;
+  uploadedBy?: string;
+  trace: TraceRead | null;
   error?: string;
 }
 
-export default function TracePanel({ reference, circular }: { reference: string; circular: boolean }) {
+function parseTrace(file: string, bytes: Uint8Array): LoadedRead {
+  if (!isAb1(bytes)) return { file, sampleName: '', runDate: '', trace: null, error: 'Not an ABI trace file' };
+  const t = parseAb1(bytes, { includeTraces: true });
+  if (!t) return { file, sampleName: '', runDate: '', trace: null, error: 'The trace file could not be read' };
+  return {
+    file, sampleName: t.sampleName, runDate: t.runDate,
+    trace: {
+      name: t.sampleName || file, sequence: t.sequence, quality: t.quality,
+      baseOrder: t.baseOrder, traces: t.traces, peakLocations: t.peakLocations,
+    },
+  };
+}
+
+export default function TracePanel({ sequenceId, reference, circular, savedReads = [], verifications = [] }: {
+  sequenceId: string;
+  reference: string;
+  circular: boolean;
+  savedReads?: SavedReadInfo[];
+  verifications?: VerificationInfo[];
+}) {
   const [reads, setReads] = useState<LoadedRead[]>([]);
   const [selected, setSelected] = useState(0);
   const [focus, setFocus] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [showLow, setShowLow] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Reads stored with the sequence are fetched and parsed once, on opening.
+  const savedKey = savedReads.map(r => r.id).join(',');
+  useEffect(() => {
+    if (!savedReads.length) return;
+    let cancelled = false;
+    setBusy(true);
+    Promise.all(savedReads.map(async info => {
+      try {
+        const res = await fetch(`/api/reads/${info.id}`);
+        if (!res.ok) throw new Error(`could not be fetched (${res.status})`);
+        const parsed = parseTrace(info.fileName, new Uint8Array(await res.arrayBuffer()));
+        return { ...parsed, id: info.id, uploadedBy: info.uploadedBy };
+      } catch (e) {
+        return { id: info.id, file: info.fileName, sampleName: info.sampleName ?? '', runDate: info.runDate ?? '', trace: null, error: (e as Error).message };
+      }
+    })).then(loaded => {
+      if (cancelled) return;
+      setReads(prev => [...loaded, ...prev.filter(p => !p.id || !loaded.some(l => l.id === p.id))]);
+      setBusy(false);
+    });
+    return () => { cancelled = true; };
+    // Keyed on the ids, not the array, which is a new object every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedKey]);
+
+  // Verdicts are worked out against the sequence as it is now, so editing the
+  // sequence re-judges every read rather than leaving an old verdict standing.
+  const results = useMemo(() => reads.map(r => {
+    if (!r.trace) return null;
+    try { return verifyTrace(reference, circular, r.trace); } catch { return null; }
+  }), [reads, reference, circular]);
 
   const load = async (files: FileList | null) => {
     if (!files?.length) return;
     setBusy(true);
-    const loaded: LoadedRead[] = [];
-    for (const f of Array.from(files)) {
-      const bytes = new Uint8Array(await f.arrayBuffer());
-      if (!isAb1(bytes)) {
-        loaded.push({ file: f.name, sampleName: '', runDate: '', result: null, error: 'Not an ABI trace file' });
-        continue;
-      }
-      const t = parseAb1(bytes, { includeTraces: true });
-      if (!t) {
-        loaded.push({ file: f.name, sampleName: '', runDate: '', result: null, error: 'The trace file could not be read' });
-        continue;
-      }
-      // Let the browser paint between reads; each alignment is a few hundred ms.
-      await new Promise(r => setTimeout(r, 0));
+    setNotice(null);
+    const list = Array.from(files);
+    const parsed = await Promise.all(list.map(async f => parseTrace(f.name, new Uint8Array(await f.arrayBuffer()))));
+
+    // Store the readable ones with the sequence; the rest are shown with why.
+    const form = new FormData();
+    list.forEach((f, i) => { if (parsed[i].trace) form.append('files', f); });
+    if (form.getAll('files').length) {
       try {
-        const result = verifyTrace(reference, circular, {
-          name: t.sampleName || f.name, sequence: t.sequence, quality: t.quality,
-          baseOrder: t.baseOrder, traces: t.traces, peakLocations: t.peakLocations,
+        const res = await fetch(`/api/sequences/${sequenceId}/reads`, { method: 'POST', body: form });
+        const body = await res.json() as { saved?: { id: string; fileName: string }[]; rejected?: { fileName: string; error: string }[]; error?: string };
+        if (!res.ok) throw new Error(body.error ?? `upload failed (${res.status})`);
+        const unclaimed = [...(body.saved ?? [])];
+        parsed.forEach(p => {
+          const k = unclaimed.findIndex(s => s.fileName === p.file);
+          if (k >= 0 && p.trace) { p.id = unclaimed[k].id; unclaimed.splice(k, 1); }
         });
-        loaded.push({ file: f.name, sampleName: t.sampleName, runDate: t.runDate, result });
+        for (const r of body.rejected ?? []) {
+          const p = parsed.find(x => x.file === r.fileName && !x.id);
+          if (p) p.error = r.error;
+        }
       } catch (e) {
-        loaded.push({ file: f.name, sampleName: t.sampleName, runDate: t.runDate, result: null, error: (e as Error).message });
+        setNotice(`Shown here but not saved: ${(e as Error).message}`);
       }
     }
-    setReads(prev => [...prev, ...loaded]);
+    setReads(prev => [...prev, ...parsed]);
     setSelected(reads.length);
     setFocus(null);
     setBusy(false);
   };
 
-  const current = reads[selected]?.result ?? null;
+  const remove = async (i: number) => {
+    const r = reads[i];
+    if (r.id) {
+      const res = await deleteRead(r.id);
+      if ('error' in res) { setNotice(res.error); return; }
+    }
+    setReads(prev => prev.filter((_, j) => j !== i));
+    setSelected(sel => (sel >= i && sel > 0 ? sel - 1 : sel));
+    setFocus(null);
+  };
+
+  const current = results[selected] ?? null;
+
+  // All usable reads together: what is covered, and what each difference
+  // looks like across every read that sees it.
+  const coverage = useMemo(() => coverageOf(
+    reference.replace(/[^A-Za-z]/g, '').length,
+    results.flatMap((v, i) => (v ? [{ name: v.name || reads[i].file, verification: v }] : [])),
+  ), [results, reads, reference]);
   const shown = useMemo(
     () => current?.discrepancies.filter(d => showLow || d.confidence === 'high') ?? [],
     [current, showLow],
@@ -83,25 +180,43 @@ export default function TracePanel({ reference, circular }: { reference: string;
     <div>
       <div style={{ marginBottom: '0.75rem' }}>
         <label className="btn btn-primary" style={{ fontSize: '0.82rem', cursor: 'pointer', display: 'inline-block' }}>
-          {busy ? 'Aligning…' : 'Load .ab1 trace files'}
+          {busy ? 'Working…' : 'Add .ab1 trace files'}
           <input type="file" accept=".ab1,.abi,.ab!" multiple hidden disabled={busy} onChange={e => { load(e.target.files); e.target.value = ''; }} />
         </label>
         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '0.75rem' }}>
-          Ends below Q20 are trimmed. A difference counts when its call is Q30 or better.
+          Saved with this sequence. Ends below Q20 are trimmed; a difference counts when its call is Q30 or better.
         </span>
       </div>
+
+      {coverage && coverage.spans.length > 0 && (
+        <ReadsOverview
+          coverage={coverage}
+          reads={reads.map((r, i) => ({ name: results[i]?.name ?? r.file, verification: results[i] }))}
+          onPickRead={(i, column) => { setSelected(i); setFocus(column); }}
+        />
+      )}
+
+      {(coverage.spans.length > 0 || verifications.length > 0) && (
+        <SignOff
+          sequenceId={sequenceId}
+          coverage={coverage}
+          verifications={verifications}
+          unsaved={reads.filter(r => !r.id && r.trace).map(r => r.file)}
+        />
+      )}
 
       {reads.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem' }}>
           {reads.map((r, i) => {
-            const v = r.result;
+            const v = results[i];
             const high = v?.discrepancies.filter(d => d.confidence === 'high').length ?? 0;
-            const chip = r.error ? ['error', '#dc2626'] : v!.verdict === 'confirmed' ? ['confirmed', '#16a34a'] : v!.verdict === 'differs' ? [`${high} difference${high === 1 ? '' : 's'}`, '#ea580c'] : ['unusable', '#64748b'];
+            const chip = r.error || !v ? ['error', '#dc2626'] : v.verdict === 'confirmed' ? ['confirmed', '#16a34a'] : v.verdict === 'differs' ? [`${high} difference${high === 1 ? '' : 's'}`, '#ea580c'] : ['unusable', '#64748b'];
             return (
+              <div key={r.id ?? `local-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
               <button
-                key={i}
                 onClick={() => { setSelected(i); setFocus(null); }}
                 style={{
+                  flex: 1, minWidth: 0,
                   display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.45rem 0.7rem', textAlign: 'left',
                   border: `1px solid ${i === selected ? 'var(--accent-blue)' : 'var(--glass-border)'}`,
                   background: i === selected ? 'var(--accent-blue-15)' : 'white', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
@@ -114,10 +229,21 @@ export default function TracePanel({ reference, circular }: { reference: string;
                   </span>
                 )}
                 <span style={{ fontSize: '0.7rem', fontWeight: 700, color: chip[1], background: `${chip[1]}18`, padding: '0.1rem 0.45rem', borderRadius: 4 }}>{chip[0]}</span>
+                {!r.id && !r.error && <span title="Shown here but not stored with the sequence" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>unsaved</span>}
               </button>
+              <button
+                onClick={() => remove(i)}
+                title={r.id ? 'Remove this read from the sequence' : 'Close this read'}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0 0.25rem' }}
+              >✕</button>
+              </div>
             );
           })}
         </div>
+      )}
+
+      {notice && (
+        <div style={{ padding: '0.5rem 0.8rem', marginBottom: '0.6rem', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 7, fontSize: '0.8rem', color: '#92400e' }}>{notice}</div>
       )}
 
       {reads[selected]?.error && (
@@ -191,6 +317,234 @@ const cell: React.CSSProperties = { padding: '0.3rem 0.4rem', borderBottom: '1px
 
 // ─── Chromatogram ─────────────────────────────────────────────────────────────
 
+// ─── Signing off ──────────────────────────────────────────────────────────────
+
+/**
+ * Record that the sequence on file is what sequencing shows.
+ *
+ * The note is written from the evidence rather than typed: which reads, how
+ * much they cover, and every difference not explained as a read error, which
+ * the signer has to accept in so many words. A sign-off that does not say what
+ * it accepted is a tick, not a record.
+ */
+function SignOff({ sequenceId, coverage, verifications, unsaved }: {
+  sequenceId: string;
+  coverage: Coverage;
+  verifications: VerificationInfo[];
+  unsaved: string[];
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [accept, setAccept] = useState(false);
+  const [password, setPassword] = useState('');
+  const [extra, setExtra] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const outstanding = unresolved(coverage);
+  const n = coverage.length;
+
+  const evidence = [
+    `Reads: ${coverage.spans.map(s => `${s.read} ${s.reversed ? '(rev)' : '(fwd)'} ${s.start}-${s.end}`).join('; ')}.`,
+    `Covered ${coverage.covered} of ${n} bp (${((coverage.covered / n) * 100).toFixed(1)}%), ${coverage.bothStrands} bp from both strands.`,
+    outstanding.length
+      ? `Accepted differences: ${outstanding.map(d => `${d.change} (${d.agreement})`).join(', ')}.`
+      : 'No unexplained differences.',
+  ].join(' ');
+
+  const sign = async () => {
+    setError(null);
+    setPending(true);
+    const fd = new FormData();
+    fd.set('model', 'GeneSequence');
+    fd.set('recordId', sequenceId);
+    fd.set('meaning', 'verified');
+    fd.set('password', password);
+    fd.set('note', extra.trim() ? `${evidence} ${extra.trim()}` : evidence);
+    const r = await signRecord(fd);
+    setPending(false);
+    if ('error' in r) { setError(r.error); return; }
+    setPassword(''); setExtra(''); setAccept(false); setOpen(false);
+    router.refresh();
+  };
+
+  return (
+    <div style={{ marginBottom: '1rem', padding: '0.7rem 0.9rem', border: '1px solid var(--glass-border)', borderRadius: 8, background: 'white', fontSize: '0.8rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <strong>Sequence verification</strong>
+        {!open && coverage.spans.length > 0 && (
+          <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem' }} onClick={() => setOpen(true)}>
+            Sign off as sequence-verified
+          </button>
+        )}
+      </div>
+      {verifications.length === 0 && <div style={{ color: 'var(--text-muted)', marginTop: '0.3rem' }}>Not signed off yet.</div>}
+      {verifications.map(v => (
+        <div key={v.id} style={{ marginTop: '0.35rem', color: v.current ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+          {v.current ? '✓' : '○'} {v.signerName}, {new Date(v.at).toLocaleString()}{v.current ? '' : ' — superseded: the sequence was edited afterwards'}
+          {v.note && <div style={{ color: 'var(--text-secondary)', marginLeft: '1rem' }}>{v.note}</div>}
+        </div>
+      ))}
+
+      {open && (
+        <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+          <div style={{ padding: '0.5rem 0.65rem', background: 'var(--bg-secondary)', borderRadius: 6, color: 'var(--text-secondary)' }}>{evidence}</div>
+          {unsaved.length > 0 && (
+            <div style={{ color: '#b91c1c' }}>Not stored with the sequence, so not part of the record: {unsaved.join(', ')}.</div>
+          )}
+          {outstanding.length > 0 && (
+            <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
+              <input type="checkbox" checked={accept} onChange={e => setAccept(e.target.checked)} />
+              <span>I accept {outstanding.length === 1 ? 'this difference' : `these ${outstanding.length} differences`} as part of the construct, or as understood.</span>
+            </label>
+          )}
+          <input value={extra} onChange={e => setExtra(e.target.value)} placeholder="Note (optional), e.g. which clone or prep" className="input-control" style={{ padding: '0.35rem 0.55rem', fontSize: '0.8rem' }} />
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Your password, to sign" className="input-control" style={{ padding: '0.35rem 0.55rem', fontSize: '0.8rem' }} />
+          {error && <div style={{ color: '#b91c1c' }}>{error}</div>}
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <button className="btn btn-secondary" style={{ fontSize: '0.78rem' }} onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn btn-primary" style={{ fontSize: '0.78rem' }} onClick={sign}
+              disabled={pending || !password || (outstanding.length > 0 && !accept)}>
+              {pending ? 'Signing…' : 'Sign'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Several reads together ───────────────────────────────────────────────────
+
+const AGREEMENT: Record<Agreement, { label: string; colour: string; meaning: string }> = {
+  confirmed: { label: 'confirmed', colour: '#dc2626', meaning: 'two or more reads agree: this is in the plasmid' },
+  contested: { label: 'contested', colour: '#7c3aed', meaning: 'reads clearly disagree, or a mixed peak: a mixed template?' },
+  single: { label: 'one read', colour: '#ea580c', meaning: 'only one read covers it: sequence again to settle' },
+  contradicted: { label: 'read error', colour: '#64748b', meaning: 'another read clearly reads the reference base' },
+};
+
+const VERDICT_COLOUR: Record<string, string> = { confirmed: '#16a34a', differs: '#ea580c', unusable: '#94a3b8' };
+
+function ReadsOverview({ coverage, reads, onPickRead }: {
+  coverage: Coverage;
+  reads: { name: string; verification: TraceVerification | null }[];
+  onPickRead: (readIndex: number, column: number) => void;
+}) {
+  const [comparePos, setComparePos] = useState<number | null>(null);
+  const n = coverage.length;
+  const pct = (x: number) => `${((x / n) * 100).toFixed(x === n ? 0 : 1)}%`;
+  const open = unresolved(coverage);
+  const lanes = coverage.spans;
+  const W = 1000;
+  const laneH = 9;
+  const top = 12;
+  const H = top + lanes.length * (laneH + 3) + 4;
+  const x = (p: number) => ((p - 1) / n) * W;
+
+  const pieces = (start: number, end: number) =>
+    end >= start ? [[start, end]] : [[start, n], [1, end]];
+
+  // Readings of every read that has a base at the chosen position.
+  const atPos = comparePos == null ? [] : reads.flatMap((r, i) => {
+    const v = r.verification;
+    if (!v) return [];
+    const column = v.columns.findIndex(c => c.refPos === comparePos && c.kind !== 'insertion');
+    return column >= 0 ? [{ i, name: r.name, v, column }] : [];
+  });
+
+  return (
+    <div style={{ marginBottom: '1rem', padding: '0.75rem 0.9rem', border: '1px solid var(--glass-border)', borderRadius: 8, background: 'white' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem', marginBottom: '0.4rem' }}>
+        <strong>All reads together</strong>
+        <span style={{ color: 'var(--text-secondary)' }}>
+          {coverage.covered.toLocaleString()} of {n.toLocaleString()} bp covered ({pct(coverage.covered)}) ·
+          {' '}{coverage.bothStrands.toLocaleString()} bp from both strands ·
+          {' '}{coverage.singleRead.toLocaleString()} bp on one read only
+        </span>
+      </div>
+
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: H, cursor: 'crosshair', display: 'block' }}
+        onClick={e => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setComparePos(Math.min(n, Math.max(1, Math.round(((e.clientX - rect.left) / rect.width) * n) + 1)));
+        }}
+      >
+        <title>Click a position to compare every read there</title>
+        {/* Depth: red where nothing covers, amber on one read, green on two or more. */}
+        {coverage.depth.map((d, i) => (i % Math.max(1, Math.floor(n / W)) === 0 ? (
+          <rect key={i} x={x(i + 1)} y={0} width={Math.max(1, W / n * Math.max(1, Math.floor(n / W)))} height={6}
+            fill={d === 0 ? '#fecaca' : d === 1 ? '#fde68a' : '#86efac'} />
+        ) : null))}
+        {lanes.map((sp, k) => pieces(sp.start, sp.end).map(([a, b], j) => (
+          <rect key={`${k}-${j}`} x={x(a)} y={top + k * (laneH + 3)} width={Math.max(2, x(b + 1) - x(a))} height={laneH}
+            rx={2} fill={VERDICT_COLOUR[sp.verdict]} opacity={0.75}>
+            <title>{`${sp.read}: ${sp.start.toLocaleString()}–${sp.end.toLocaleString()} ${sp.reversed ? '(reverse)' : '(forward)'}`}</title>
+          </rect>
+        )))}
+        {coverage.disagreements.map(d => (
+          <line key={`${d.position}-${d.reference}`} x1={x(d.position)} x2={x(d.position)} y1={0} y2={H}
+            stroke={AGREEMENT[d.agreement].colour} strokeWidth={2} opacity={0.8} />
+        ))}
+        {comparePos != null && <line x1={x(comparePos)} x2={x(comparePos)} y1={0} y2={H} stroke="#2563eb" strokeWidth={2} />}
+      </svg>
+
+      {coverage.gaps.length > 0 && (
+        <div style={{ fontSize: '0.76rem', color: '#b91c1c', marginTop: '0.35rem' }}>
+          Not covered: {coverage.gaps.slice(0, 6).map(g => `${g.start.toLocaleString()}–${g.end.toLocaleString()}`).join(', ')}
+          {coverage.gaps.length > 6 ? ` and ${coverage.gaps.length - 6} more` : ''}
+        </div>
+      )}
+
+      {coverage.disagreements.length > 0 ? (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', marginTop: '0.5rem' }}>
+          <tbody>
+            {coverage.disagreements.map(d => (
+              <tr key={`${d.position}-${d.reference}`} onClick={() => setComparePos(d.position)}
+                style={{ cursor: 'pointer', borderTop: '1px solid var(--glass-border)', background: comparePos === d.position ? 'var(--accent-blue-15)' : undefined }}>
+                <td style={{ padding: '0.3rem 0.4rem', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{d.change}</td>
+                <td style={{ padding: '0.3rem 0.4rem', whiteSpace: 'nowrap' }}>
+                  <span title={AGREEMENT[d.agreement].meaning} style={{ fontWeight: 700, color: AGREEMENT[d.agreement].colour }}>{AGREEMENT[d.agreement].label}</span>
+                </td>
+                <td style={{ padding: '0.3rem 0.4rem', color: 'var(--text-secondary)' }}>
+                  {d.calls.map(c => `${c.read} ${c.reversed ? '◀' : '▶'} ${c.base || '—'}${c.quality != null ? ` Q${c.quality}` : ''}${c.mixed ? ' (mixed)' : ''}`).join(' · ')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div style={{ fontSize: '0.78rem', color: '#16a34a', marginTop: '0.4rem' }}>No read differs from the reference anywhere it covers.</div>
+      )}
+
+      <div style={{ fontSize: '0.76rem', marginTop: '0.4rem', color: open.length ? '#b91c1c' : 'var(--text-muted)' }}>
+        {open.length
+          ? `${open.length} difference${open.length === 1 ? '' : 's'} not explained as a read error.`
+          : coverage.disagreements.length ? 'Every difference is explained as a read error.' : ''}
+      </div>
+
+      {comparePos != null && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <div style={{ fontSize: '0.78rem', fontWeight: 700, marginBottom: '0.3rem' }}>
+            Every read at {comparePos.toLocaleString()}
+            <button onClick={() => setComparePos(null)} style={{ marginLeft: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+          </div>
+          {atPos.length === 0 && <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No read covers this position.</div>}
+          {atPos.map(r => (
+            <div key={r.i} style={{ marginBottom: '0.5rem' }}>
+              <button onClick={() => onPickRead(r.i, r.column)} style={{ fontSize: '0.74rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-blue)', padding: 0 }}>
+                {r.name} {r.v.reversed ? '◀' : '▶'} — open this read here
+              </button>
+              <TraceViewer key={`${r.i}-${comparePos}`} verification={r.v} focus={r.column} onFocus={() => {}} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const COL = 12;
 const ROW = { ruler: 14, ref: 16, read: 16, quality: 18, trace: 120 };
 const HEIGHT = ROW.ruler + ROW.ref + ROW.read + ROW.quality + ROW.trace + 6;
@@ -230,10 +584,20 @@ function TraceViewer({ verification, focus, onFocus }: {
     return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
+  // The first position is jumped to, later ones scrolled to. A smooth scroll
+  // started while the viewer is still being laid out is dropped, so a viewer
+  // opened at a position showed the start of its read instead.
+  const placed = useRef(false);
+  useLayoutEffect(() => {
     if (focus == null || !scroller.current) return;
     const el = scroller.current;
-    el.scrollTo({ left: Math.max(0, focus * COL - el.clientWidth / 2), behavior: 'smooth' });
+    const left = Math.max(0, focus * COL - el.clientWidth / 2);
+    if (placed.current) el.scrollTo({ left, behavior: 'smooth' });
+    else {
+      el.scrollLeft = left;
+      setScrollLeft(el.scrollLeft);
+      placed.current = true;
+    }
   }, [focus]);
 
   const draw = useCallback(() => {

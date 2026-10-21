@@ -11,7 +11,7 @@ import {
   failureDelay, describeWait, clientKey, logAttempt,
 } from '@/lib/rate-limit';
 
-const SIGNABLE = new Set<SignableModel>(['Procedure', 'Experiment', 'Report']);
+const SIGNABLE = new Set<SignableModel>(['Procedure', 'Experiment', 'Report', 'GeneSequence']);
 
 export async function signRecord(formData: FormData): Promise<{ ok: true } | { error: string }> {
   const user = await requireUser();
@@ -25,6 +25,11 @@ export async function signRecord(formData: FormData): Promise<{ ok: true } | { e
   if (!SIGNABLE.has(model as SignableModel)) return { error: 'That kind of record cannot be signed.' };
   if (!recordId) return { error: 'No record to sign.' };
   if (!isMeaning(meaning)) return { error: 'Choose what your signature means.' };
+  // "Verified" is a claim about bases and sequencing; it means nothing on a
+  // procedure, and a sequence is signed for nothing else here.
+  if ((meaning === 'verified') !== (model === 'GeneSequence')) {
+    return { error: 'That kind of signature does not apply to this record.' };
+  }
   if (!password) return { error: 'Enter your password to sign.' };
 
   // The password prompt is the second authentication component Part 11 asks
@@ -68,6 +73,7 @@ export async function signRecord(formData: FormData): Promise<{ ok: true } | { e
 
   const path = model === 'Procedure' ? `/procedures/${recordId}`
     : model === 'Report' ? `/reports/${recordId}`
+    : model === 'GeneSequence' ? `/sequences/${recordId}`
     : '/experiments';
   revalidatePath(path);
   return { ok: true };

@@ -43,8 +43,10 @@ describe('password verification', () => {
 });
 
 describe('signature meanings', () => {
-  test('the four Part 11 meanings are distinct claims', () => {
-    assert.deepEqual(Object.keys(MEANINGS), ['authored', 'reviewed', 'approved', 'witnessed']);
+  test('the four Part 11 meanings are distinct claims, plus sequence verification', () => {
+    // "verified" is only accepted on sequences (enforced in signRecord); the
+    // procedure and report panels offer the four general meanings.
+    assert.deepEqual(Object.keys(MEANINGS), ['authored', 'reviewed', 'approved', 'witnessed', 'verified']);
   });
 
   test('each meaning reads as a statement the signer is making', () => {

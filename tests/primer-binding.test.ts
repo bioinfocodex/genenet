@@ -172,3 +172,80 @@ test('placements come back in position order for drawing', () => {
   ], T);
   assert.deepEqual(placed.map(p => p.name), ['early', 'middle', 'late']);
 });
+
+// ─── Mismatches ──────────────────────────────────────────────────────────────
+
+const flip = (b: string) => ({ A: 'C', C: 'A', G: 'T', T: 'G' } as Record<string, string>)[b];
+
+test('without the option, a primer with an internal mismatch anneals only past it', () => {
+  const p = T.slice(1000, 1030).split('');
+  p[10] = flip(p[10]);
+  const [b] = findBindings(p.join(''), T);
+  assert.equal(b.annealLength, 19, 'the 3′ side of the mismatch only');
+  assert.equal(b.mismatches, undefined);
+});
+
+test('with mismatches allowed, a mutagenic primer is seen at its full extent', () => {
+  const p = T.slice(1000, 1030).split('');
+  p[10] = flip(p[10]);
+  const sites = findBindings(p.join(''), T, { maxMismatches: 2 });
+  assert.equal(sites.length, 1, 'the same site, extended -- not a second one');
+  assert.equal(sites[0].start, 1000);
+  assert.equal(sites[0].end, 1029);
+  assert.equal(sites[0].annealLength, 30);
+  assert.deepEqual(sites[0].mismatches, [10]);
+  assert.equal(sites[0].exact, false);
+});
+
+test('a reverse primer with a mismatch reports it in primer coordinates', () => {
+  const site = T.slice(1400, 1425);
+  const p = revComp(site).split('');
+  p[6] = flip(p[6]);
+  const [b] = findBindings(p.join(''), T, { maxMismatches: 1 });
+  assert.equal(b.strand, 'reverse');
+  assert.equal(b.start, 1400);
+  assert.equal(b.end, 1424);
+  assert.deepEqual(b.mismatches, [6]);
+});
+
+test('a mismatch in the protected 3′ end means no site', () => {
+  const p = T.slice(600, 630).split('');
+  p[28] = flip(p[28]); // second-to-last base
+  const sites = findBindings(p.join(''), T, { maxMismatches: 2, minAnneal: 25 });
+  assert.equal(sites.length, 0);
+});
+
+test('more mismatches than allowed stops the extension there', () => {
+  const p = T.slice(200, 240).split('');
+  for (const i of [5, 12, 20]) p[i] = flip(p[i]);
+  const [b] = findBindings(p.join(''), T, { maxMismatches: 1 });
+  // Extends past 20 (one allowed), stops before 12.
+  assert.equal(b.annealLength, 40 - 13);
+  assert.deepEqual(b.mismatches, [20]);
+});
+
+test('a 5′ tail is still tail, not a run of mismatches', () => {
+  const anneal = T.slice(300, 325);
+  const [b] = findBindings('GCGCGAATTCGCGC' + anneal, T, { maxMismatches: 2 });
+  assert.equal(b.start, 300);
+  assert.equal(b.annealLength, 25);
+  assert.equal(b.tailLength, 14);
+});
+
+test('a mismatched site across the origin of a circle', () => {
+  const site = T.slice(1990) + T.slice(0, 15); // 25 bases through the join
+  const p = site.split('');
+  p[4] = flip(p[4]);
+  const [b] = findBindings(p.join(''), T, { circular: true, maxMismatches: 1 });
+  assert.equal(b.start, 1990);
+  assert.equal(b.end, 14);
+  assert.ok(b.wrapsOrigin);
+  assert.deepEqual(b.mismatches, [4]);
+});
+
+test('the tooltip says how many mismatches and where', () => {
+  const p = T.slice(1000, 1030).split('');
+  p[10] = flip(p[10]);
+  const [placed] = placePrimers([{ id: 'x', name: 'mut', sequence: p.join('') }], T, { maxMismatches: 2 });
+  assert.match(bindingTitle(placed), /1 mismatch .*at 11 from the 5′ end/);
+});
