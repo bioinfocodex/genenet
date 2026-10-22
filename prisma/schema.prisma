@@ -66,6 +66,7 @@ model User {
   requestsMade       LabRequest[]       @relation("RequestedBy")
   requestsTaken      LabRequest[]       @relation("RequestAssignee")
   cardsMoved         StageCard[]        @relation("CardMover")
+  dashboards         Dashboard[]        @relation("DashboardCreator")
   oligosCreated      Oligo[]            @relation("OligoCreator")
   readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
@@ -208,6 +209,7 @@ model Project {
   requests  LabRequest[]    @relation("RequestProject")
   stages    ProjectStage[]  @relation("ProjectStages")
   cards     StageCard[]     @relation("ProjectCards")
+  dashboards Dashboard[]    @relation("DashboardProject")
   members   ProjectMember[]
   /// When true, only users with a ProjectMember row may reach this project.
   restricted Boolean @default(false)
@@ -272,6 +274,38 @@ model GelImage {
 
   task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
   taskId String?
+}
+
+/// A chart somebody set up and wants back tomorrow.
+///
+/// The definition only: which assay, which fields on which axes, how to group.
+/// The numbers are read fresh every time, so a dashboard shows what is
+/// recorded now rather than what was recorded when somebody saved it.
+model Dashboard {
+  id      String @id @default(cuid())
+  name    String
+
+  project   Project? @relation("DashboardProject", fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String?
+
+  /// series | dose | heatmap | scatter -- see lib/charts.ts.
+  kind     String
+  schema   ResultSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+  schemaId String
+
+  /// Field keys. `x` is empty for a heatmap, which is laid out by well.
+  xKey     String?
+  yKey     String
+  /// What splits the points into series: a field key, or empty for one series.
+  groupKey String?
+
+  createdBy   User?    @relation("DashboardCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([schemaId])
 }
 
 /// One step in a project's workflow: design, clone, verify, express.
@@ -1213,6 +1247,7 @@ model ResultSchema {
 
   fields  FieldDef[]
   results AssayResult[]
+  dashboards Dashboard[]
 }
 
 /** One measurement, attached to whatever it was measured on. */
