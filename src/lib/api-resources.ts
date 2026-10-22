@@ -86,6 +86,55 @@ export const RESOURCES: Record<string, ResourceSpec> = {
     required: ['name', 'temperature'],
     searchable: ['name', 'location'],
   },
+  oligos: {
+    model: 'oligo', path: 'oligos',
+    fields: ['id', 'code', 'name', 'sequence', 'modifications', 'location',
+             'notes', 'archived', 'createdAt', 'updatedAt'],
+    writable: ['name', 'sequence', 'modifications', 'location', 'notes', 'archived'],
+    required: ['name', 'sequence'],
+    orderBy: { code: 'asc' },
+    searchable: ['code', 'name', 'sequence', 'notes'],
+    creatorField: 'createdById',
+    humanIdField: { field: 'code', prefix: 'OLI' },
+  },
+  plates: {
+    model: 'plate', path: 'plates',
+    fields: ['id', 'name', 'barcode', 'format', 'description', 'archived', 'projectId', 'createdAt', 'updatedAt'],
+    writable: ['name', 'barcode', 'format', 'description', 'archived', 'projectId'],
+    required: ['name'],
+    orderBy: { createdAt: 'desc' },
+    searchable: ['name', 'barcode', 'description'],
+    creatorField: 'createdById',
+  },
+  requests: {
+    model: 'labRequest', path: 'requests',
+    fields: ['id', 'kind', 'title', 'body', 'state', 'outcome', 'requesterId',
+             'assigneeId', 'projectId', 'neededBy', 'createdAt', 'updatedAt', 'closedAt'],
+    /*
+     * `state` is not writable here on purpose. Moving a request is a decision
+     * about who may do what -- see lib/requests.ts -- and letting a token set
+     * it to anything would route round the one rule that makes the queue mean
+     * something.
+     */
+    writable: ['kind', 'title', 'body', 'assigneeId', 'projectId', 'neededBy'],
+    required: ['kind', 'title'],
+    orderBy: { createdAt: 'desc' },
+    searchable: ['title', 'body'],
+    creatorField: 'requesterId',
+  },
+  reads: {
+    model: 'sequencingRead', path: 'reads',
+    /*
+     * The trace itself is not a field. An .ab1 is hundreds of kilobytes of
+     * binary, and a listing that carried one per row would be unusable; the
+     * file is fetched from the read's own page.
+     */
+    fields: ['id', 'fileName', 'sampleName', 'runDate', 'bases', 'geneSequenceId', 'createdAt'],
+    writable: ['sampleName', 'runDate'],
+    required: [],
+    orderBy: { createdAt: 'desc' },
+    searchable: ['fileName', 'sampleName'],
+  },
 };
 
 function delegate(model: string) {
