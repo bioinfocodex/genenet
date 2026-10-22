@@ -65,6 +65,7 @@ model User {
   mentioned          CommentMention[]   @relation("Mentioned")
   requestsMade       LabRequest[]       @relation("RequestedBy")
   requestsTaken      LabRequest[]       @relation("RequestAssignee")
+  cardsMoved         StageCard[]        @relation("CardMover")
   oligosCreated      Oligo[]            @relation("OligoCreator")
   readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
@@ -205,6 +206,8 @@ model Project {
   plates    Plate[]         @relation("PlateProject")
   notebook  NotebookEntry[] @relation("NotebookProject")
   requests  LabRequest[]    @relation("RequestProject")
+  stages    ProjectStage[]  @relation("ProjectStages")
+  cards     StageCard[]     @relation("ProjectCards")
   members   ProjectMember[]
   /// When true, only users with a ProjectMember row may reach this project.
   restricted Boolean @default(false)
@@ -269,6 +272,54 @@ model GelImage {
 
   task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
   taskId String?
+}
+
+/// One step in a project's workflow: design, clone, verify, express.
+///
+/// Defined by the lab rather than shipped. One lab's workflow is not another's,
+/// and a fixed set would be wrong for everybody in a different way.
+model ProjectStage {
+  id        String  @id @default(cuid())
+  project   Project @relation("ProjectStages", fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  name     String
+  /// 0-based, left to right on the board.
+  position Int
+
+  cards StageCard[]
+
+  @@unique([projectId, name])
+  @@index([projectId, position])
+}
+
+/// Where one record has got to in one project's workflow.
+///
+/// Its own table rather than a column on each kind of record, because a
+/// construct can be in two projects at once and be at a different step in
+/// each -- which a column could not say.
+model StageCard {
+  id        String  @id @default(cuid())
+  project   Project @relation("ProjectCards", fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  /// Same vocabulary as a notebook link.
+  kind     String
+  targetId String
+  /// The record's name when it was placed, so a deleted one still reads.
+  label    String
+
+  /// Null while the record is in the project but not yet on the board.
+  stage   ProjectStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  stageId String?
+
+  /// When it entered this stage, which is what says a card is stuck.
+  since   DateTime @default(now())
+  movedBy   User?  @relation("CardMover", fields: [movedById], references: [id])
+  movedById String?
+
+  @@unique([projectId, kind, targetId])
+  @@index([stageId])
 }
 
 /// Somebody asking somebody else to do something.
