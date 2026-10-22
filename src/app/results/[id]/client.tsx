@@ -2,8 +2,9 @@
 import { useState, useMemo, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Plus, Grid3x3, Trash2, Sigma } from 'lucide-react';
+import { Plus, Grid3x3, Trash2, Sigma, FileUp } from 'lucide-react';
 import { recordResult, recordPlateResults, deleteResult } from '@/app/actions/results';
+import InstrumentImport from '@/components/results/InstrumentImport';
 import { format as formatValue, type FieldDefinition } from '@/lib/fields';
 import { summariseResults, groupBy, fmt, type NumericSummary } from '@/lib/result-stats';
 
@@ -77,7 +78,9 @@ export default function ResultsClient({
   plates: { id: string; name: string; format: number }[];
 }) {
   const router = useRouter();
-  const [mode, setMode] = useState<'none' | 'single' | 'plate'>('none');
+  const [mode, setMode] = useState<'none' | 'single' | 'plate' | 'instrument'>('none');
+  /** Which plate an instrument file's wells are matched against. */
+  const [plateId, setPlateId] = useState(plates[0]?.id ?? '');
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [measuredAt, setMeasuredAt] = useState(new Date().toISOString().slice(0, 10));
   const [targetKind, setTargetKind] = useState('');
@@ -238,7 +241,37 @@ export default function ResultsClient({
             style={{ fontSize: '0.83rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <Grid3x3 size={14} /> Paste a plate
           </button>
+          {/*
+            Reading the instrument's own file, rather than a grid somebody
+            pasted out of it. The paste is where a column gets shifted and a
+            plate gets transposed, and nobody checks afterwards.
+          */}
+          <button onClick={() => { setMode(mode === 'instrument' ? 'none' : 'instrument'); setError(null); }}
+            className={mode === 'instrument' ? 'btn btn-primary' : 'btn btn-secondary'}
+            style={{ fontSize: '0.83rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <FileUp size={14} /> Instrument file
+          </button>
         </div>
+
+        {mode === 'instrument' && (
+          <div style={{ marginTop: '0.9rem' }}>
+            {plates.length === 0
+              ? <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>No plates to file readings against.</p>
+              : (
+                <>
+                  <label style={LABEL}>Which plate</label>
+                  <select value={plateId} onChange={e => setPlateId(e.target.value)}
+                          className="input-control" style={{ fontSize: '0.83rem', padding: '0.35rem 0.5rem', marginBottom: '0.6rem' }}>
+                    {plates.map(p => <option key={p.id} value={p.id}>{p.name} ({p.format}-well)</option>)}
+                  </select>
+                  <InstrumentImport
+                    plateId={plateId || plates[0].id}
+                    schemas={[{ id: schema.id, name: schema.name, fields: defs.map(d => ({ key: d.key, label: d.label, type: d.type })) }]}
+                  />
+                </>
+              )}
+          </div>
+        )}
 
         {mode === 'single' && (
           <>

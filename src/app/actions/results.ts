@@ -2,6 +2,7 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { requireUser, requireAdmin } from '@/lib/auth-guard';
+import { parseInstrumentFile, summarise, type Instrument } from '@/lib/instruments';
 import {
   keyFromLabel, uniqueKey, validateDefinition, coerceRecord,
   type FieldDefinition, type FieldType, FIELD_TYPES,
@@ -346,5 +347,117 @@ export async function deleteResult(data: FormData): Promise<ActionResult> {
     return { ok: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Could not remove the result.' };
+  }
+}
+
+// ─── Importing an instrument's own file ──────────────────────────────────────
+
+/**
+ * What an instrument file holds, and what importing it would do.
+ *
+ * Read and shown before anything is written, for the same reason the sample
+ * import is: a table of numbers that went in wrong is indistinguishable from
+ * one that went in right, and the file it came from has been closed by the
+ * time anybody notices.
+ */
+export async function previewInstrumentFile(data: FormData) {
+  await requireUser();
+  const text = String(data.get('text') ?? '');
+  const forced = String(data.get('instrument') ?? '') as Instrument | '';
+  if (!text.trim()) return { error: 'Nothing to read.' };
+  if (text.length > 5_000_000) return { error: 'That file is too big to read in one go.' };
+
+  const parsed = parseInstrumentFile(text, forced || undefined);
+  return {
+    ok: true as const,
+    instrument: parsed.instrument,
+    preamble: parsed.preamble.slice(0, 12),
+    problems: parsed.problems,
+    measures: summarise(parsed.readings),
+    total: parsed.readings.length,
+  };
+}
+
+/**
+ * File the readings of one measurement against a plate's wells.
+ *
+ * One measurement at a time, chosen by the person. A file holding absorbance
+ * at two wavelengths and a Cq is three different assays, and guessing which
+ * one somebody meant would be a table of numbers under the wrong heading.
+ */
+export async function importInstrumentReadings(data: FormData): Promise<ActionResult<{ count: number; skipped: number }>> {
+  try {
+    const user = await requireUser();
+    const schemaId = String(data.get('schemaId') ?? '');
+    const plateId = String(data.get('plateId') ?? '');
+    const fieldKey = String(data.get('fieldKey') ?? '');
+    const measure = String(data.get('measure') ?? '');
+    const text = String(data.get('text') ?? '');
+    const forced = String(data.get('instrument') ?? '') as Instrument | '';
+
+    const [schema, plate] = await Promise.all([
+      prisma.resultSchema.findUnique({ where: { id: schemaId }, include: { fields: true } }),
+      prisma.plate.findUnique({ where: { id: plateId }, include: { wells: true } }),
+    ]);
+    if (!schema) return { error: 'That assay no longer exists.' };
+    if (!plate) return { error: 'That plate no longer exists.' };
+
+    const defs = toDefinitions(schema.fields);
+    const target = defs.find(d => d.key === fieldKey);
+    if (!target) return { error: 'Choose which reading the numbers are.' };
+    if (target.type !== 'number' && target.type !== 'integer') {
+      return { error: `${target.label} is not a number field.` };
+    }
+    const unfillable = defs.filter(d => d.required && d.key !== fieldKey);
+    if (unfillable.length) {
+      return { error: `${unfillable.map(d => d.label).join(', ')} ${unfillable.length === 1 ? 'is' : 'are'} required and cannot come from an instrument file.` };
+    }
+
+    const parsed = parseInstrumentFile(text, forced || undefined);
+    const forThis = parsed.readings.filter(r => r.measure === measure);
+    if (forThis.length === 0) return { error: `The file has no readings called "${measure}".` };
+
+    /*
+     * Wells are matched by their name, A1 to P24, rather than by position in
+     * the file. A plate reader writes every well it was configured for and a
+     * plate here holds only the wells somebody filled, so the two lists are
+     * different lengths more often than not -- and lining them up by index
+     * would file row B's numbers against row A.
+     */
+    const byName = new Map(plate.wells.map(w => [
+      `${String.fromCharCode(65 + w.row)}${w.col + 1}`, w,
+    ]));
+
+    const rows: { wellId: string; value: number }[] = [];
+    let skipped = 0;
+    for (const r of forThis) {
+      if (!r.well || r.value === null) { skipped++; continue; }
+      const well = byName.get(r.well);
+      if (!well) { skipped++; continue; }
+      rows.push({ wellId: well.id, value: r.value });
+    }
+    if (rows.length === 0) {
+      return { error: 'None of the wells in the file match wells on this plate.' };
+    }
+
+    const measuredAt = String(data.get('measuredAt') ?? '')
+      ? new Date(String(data.get('measuredAt')))
+      : new Date();
+    if (Number.isNaN(measuredAt.getTime())) return { error: 'That is not a date.' };
+
+    await prisma.$transaction(
+      rows.map(row => prisma.assayResult.create({
+        data: {
+          schemaId, wellId: row.wellId, measuredAt, recordedById: user.id,
+          values: { create: [{ fieldId: schema.fields.find(f => f.key === fieldKey)!.id, number: row.value }] },
+        },
+      })),
+    );
+
+    revalidatePath(`/plates/${plateId}`);
+    revalidatePath('/results');
+    return { ok: true, count: rows.length, skipped };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Could not import the readings.' };
   }
 }
