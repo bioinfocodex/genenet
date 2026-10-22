@@ -67,6 +67,7 @@ model User {
   requestsTaken      LabRequest[]       @relation("RequestAssignee")
   cardsMoved         StageCard[]        @relation("CardMover")
   dashboards         Dashboard[]        @relation("DashboardCreator")
+  webhooks           Webhook[]          @relation("WebhookCreator")
   oligosCreated      Oligo[]            @relation("OligoCreator")
   readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
@@ -274,6 +275,60 @@ model GelImage {
 
   task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
   taskId String?
+}
+
+/// Somewhere to tell when something happens here.
+///
+/// Configured by an admin, because an endpoint is both an outbound connection
+/// from this server and a copy of the lab's data going somewhere else.
+model Webhook {
+  id      String  @id @default(cuid())
+  name    String
+  url     String
+  /// Comma-separated event names from lib/webhooks.ts.
+  events  String
+  active  Boolean @default(true)
+
+  /// Shared with the receiver so it can check the signature. Never shown
+  /// again after it is created, the way every other secret here is handled.
+  secret  String
+
+  createdBy   User?    @relation("WebhookCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  deliveries WebhookDelivery[]
+}
+
+/// One attempt to tell it, and how that went.
+///
+/// Kept rather than discarded on success: "did the LIMS get told about that
+/// sample" is a question somebody asks days later, and an integration with no
+/// record of what it sent cannot be debugged from either end.
+model WebhookDelivery {
+  id        String  @id @default(cuid())
+  webhook   Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  webhookId String
+
+  event   String
+  /// The exact bytes that were signed and sent.
+  payload String
+
+  /// pending | delivered | failed
+  state    String @default("pending")
+  attempts Int    @default(0)
+  /// HTTP status of the last attempt, where there was one.
+  status   Int?
+  /// What went wrong, in the words the sender would use.
+  note     String?
+
+  /// When the next attempt is due, for a delivery still being retried.
+  nextAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([webhookId, createdAt])
+  @@index([state, nextAt])
 }
 
 /// A chart somebody set up and wants back tomorrow.
