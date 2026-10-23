@@ -45,6 +45,14 @@ model User {
   name         String
   email        String   @unique
   passwordHash String?
+  /// The identity provider's own stable identifier for this person.
+  ///
+  /// Matched before the email address, because the subject is the thing a
+  /// provider promises does not change: somebody who changes their address
+  /// keeps their account, and a departed person's reissued address does not
+  /// hand the new joiner the old one. See lib/oidc.ts.
+  ssoSubject   String?  @unique
+  ssoLinkedAt  DateTime?
   role         String   @default("MEMBER")
   status       String   @default("ACTIVE")  // ACTIVE | BLOCKED | REMOVED
   avatar       String?
