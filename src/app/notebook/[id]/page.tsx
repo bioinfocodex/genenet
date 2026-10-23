@@ -108,6 +108,7 @@ export default async function EntryPage({ params }: { params: Promise<{ id: stri
         editable={editable}
         witnessable={witnessable}
         isAuthor={entry.authorId === user.id}
+        me={user.id}
         verification={verification}
         links={entry.links}
         signatures={signatures.map(s => ({

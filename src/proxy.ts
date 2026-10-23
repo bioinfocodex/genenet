@@ -1,27 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { decrypt } from '@/lib/session';
-
-/** Pages reachable before signing in. */
-const PUBLIC_PATHS = ['/login', '/register', '/setup', '/connect', '/download'];
-
-/**
- * Endpoints reachable before signing in. Exactly one: the desktop app posts a
- * connection code here to find out whether it is pointed at the right
- * workspace, which necessarily happens before any session exists.
- *
- * Everything else under /api used to be exempt as a group, which left the whole
- * API open -- including the report export, which returns a full experimental
- * record. Add to this list only with the same justification.
- */
-const PUBLIC_API_PATHS = ['/api/validate-code'];
-
-/**
- * The token-authenticated API. Not public -- every route under here checks a
- * bearer token itself -- but it must not be sent to a login page, because the
- * caller is a script and a 302 to HTML is not something it can act on.
- */
-const TOKEN_API_PREFIX = '/api/v1';
+import { reachableWithoutSession } from '@/lib/public-paths';
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -32,13 +12,7 @@ export async function proxy(request: NextRequest) {
   requestHeaders.set('x-pathname', pathname);
   const proceed = () => NextResponse.next({ request: { headers: requestHeaders } });
 
-  if (
-    PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
-    PUBLIC_API_PATHS.some(p => pathname === p || pathname.startsWith(p + '/')) ||
-    pathname === TOKEN_API_PREFIX || pathname.startsWith(TOKEN_API_PREFIX + '/') ||
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/favicon')
-  ) {
+  if (reachableWithoutSession(pathname)) {
     return proceed();
   }
 

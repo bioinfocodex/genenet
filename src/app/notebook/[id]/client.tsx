@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Lock, CheckCheck, AlertTriangle, ShieldCheck, PenLine, Trash2 } from 'lucide-react';
 import { saveEntry, signEntry, witnessEntry, superseedEntry, deleteDraft } from '@/app/actions/notebook';
+import LiveBody from '@/components/notebook/LiveBody';
 import { linkHref, extractLinks, LINK_KINDS, type EntryStatus } from '@/lib/notebook';
 
 /**
@@ -48,13 +49,15 @@ function Body({ text }: { text: string }) {
 
 export default function EntryClient({
   entry, projects, editable, witnessable, isAuthor, verification, links, signatures,
-  signedByName, witnessedByName,
+  signedByName, witnessedByName, me,
 }: {
   entry: { id: string; title: string; body: string; entryDate: string; projectId: string | null; status: EntryStatus };
   projects: { id: string; name: string }[];
   editable: { allowed: boolean; reason: string };
   witnessable: { allowed: boolean; reason: string };
   isAuthor: boolean;
+  /** The viewer, so the live editor can tell their own changes from others'. */
+  me: string;
   verification: Verification;
   links: { id: string; kind: string; targetId: string; label: string }[];
   signatures: { id: string; meaning: string; signerName: string; at: string; note: string | null }[];
@@ -129,14 +132,18 @@ export default function EntryClient({
               className="input-control"
               style={{ width: '100%', fontSize: '1rem', fontWeight: 600, padding: '0.45rem 0.6rem', marginBottom: '0.7rem' }}
             />
-            <textarea
-              value={body} onChange={e => setBody(e.target.value)}
-              placeholder={'What happened. Link records with [[sequence:id|name]], [[sample:id|name]], [[plate:id|name]].'}
-              style={{
-                width: '100%', height: 320, fontFamily: 'inherit', fontSize: '0.88rem', lineHeight: 1.65,
-                padding: '0.75rem', border: '1px solid var(--glass-border)', borderRadius: 8,
-                background: 'var(--bg-primary)', color: 'var(--text-primary)', resize: 'vertical',
-              }}
+            {/*
+              Live while the entry is a draft. Two scientists writing up the
+              same experiment at once is a Friday afternoon, not an edge case,
+              and before this the second to save overwrote the first without
+              either being told.
+            */}
+            <LiveBody
+              entryId={entry.id}
+              initial={body}
+              me={me}
+              editable
+              onChange={setBody}
             />
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.7rem' }}>
               <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)}
