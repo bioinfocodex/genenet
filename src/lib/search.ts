@@ -1,4 +1,5 @@
 import 'server-only';
+import { insensitiveContains } from './db-provider';
 import { prisma } from '@/lib/prisma';
 
 /**
@@ -71,7 +72,13 @@ export async function searchWorkspace(rawQuery: string): Promise<SearchResults> 
   const q = rawQuery.trim();
   if (q.length < 2) return { query: q, total: 0, groups: [] };
 
-  const contains = { contains: q };
+  /*
+   * Case-insensitive on both engines. SQLite's LIKE ignores case for ASCII
+   * and PostgreSQL's does not, so without this the same search finds pUC19 on
+   * one and nothing on the other -- and a search that finds nothing does not
+   * look broken, it looks like the record is not there.
+   */
+  const contains = insensitiveContains(q);
 
   const [
     samples, sequences, procedures, projects, tasks,

@@ -51,3 +51,73 @@ jobs:
         env:
           DATABASE_URL: file:./ci.db
           SESSION_SECRET: ci-placeholder-not-a-real-secret
+
+      # The qualification report is the one check that runs against the
+      # installation rather than against the code. Here it proves the script
+      # itself works end to end; on a real deployment it is the evidence a
+      # regulated lab files.
+      - name: Installation qualification
+        run: npm run qualify
+        env:
+          DATABASE_URL: file:./ci.db
+          SESSION_SECRET: ci-placeholder-not-a-real-secret-but-long-enough
+
+  # PostgreSQL is a supported deployment, which means it has to be run rather
+  # than documented. Everything here is the SQLite job's path with one thing
+  # changed, which is the point: if the two ever need to differ by more than
+  # the provider, this job is where that becomes visible.
+  postgres:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: genenet
+          POSTGRES_USER: genenet
+          POSTGRES_DB: genenet
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://genenet:genenet@localhost:5432/genenet
+      SESSION_SECRET: ci-placeholder-not-a-real-secret-but-long-enough
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+          cache: npm
+
+      - run: npm ci
+
+      # The PostgreSQL schema is derived from the SQLite one rather than kept
+      # by hand, because two schemas maintained separately do not stay in
+      # step -- the second gets edited when somebody remembers.
+      - name: The PostgreSQL schema is in step with the SQLite one
+        run: npm run schema:postgres:check
+
+      - name: Create the schema on PostgreSQL
+        run: npx prisma db push --schema prisma/schema.postgres.prisma
+
+      - name: Generate the client for PostgreSQL
+        run: npx prisma generate --schema prisma/schema.postgres.prisma
+
+      # The suite is mostly pure logic and would pass against either engine.
+      # It runs here anyway, because the thing being checked is that nothing
+      # in the library code reaches for a SQLite-only behaviour at import time.
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Installation qualification
+        run: npm run qualify
