@@ -6,6 +6,7 @@ import { ChevronRight, CheckSquare, Clock, AlertCircle, BookOpen } from 'lucide-
 import { updateProjectStatus } from '@/app/actions/projects';
 import TaskCreateForm from '@/components/TaskCreateForm';
 import ProjectAccess from '@/components/ProjectAccess';
+import StageBoard from '@/components/projects/StageBoard';
 import { requireUser } from '@/lib/auth-guard';
 import { checkAccess, effectiveMembers } from '@/lib/permissions';
 
@@ -30,6 +31,11 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         orderBy: { createdAt: 'desc' },
       },
       members: { include: { user: { select: { name: true, email: true } } } },
+      stages: { orderBy: { position: 'asc' }, select: { id: true, name: true, position: true } },
+      cards: {
+        select: { id: true, kind: true, targetId: true, label: true, stageId: true, since: true },
+        orderBy: { since: 'asc' },
+      },
     },
   });
 
@@ -153,6 +159,15 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           </div>
         ))}
       </div>
+
+      <StageBoard
+        projectId={project.id}
+        stages={project.stages}
+        cards={project.cards.map(c => ({
+          id: c.id, kind: c.kind, targetId: c.targetId, label: c.label,
+          stageId: c.stageId, since: c.since.toISOString(),
+        }))}
+      />
     </div>
   );
 }

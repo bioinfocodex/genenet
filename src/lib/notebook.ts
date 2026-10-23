@@ -1,4 +1,8 @@
 import { createHash } from 'crypto';
+import {
+  embedsHash, checkEmbeds, describeEmbedCheck,
+  type EmbedState, type StoredEmbed,
+} from './notebook-embeds';
 
 /**
  * Notebook entries, and what signing one means.
@@ -39,29 +43,108 @@ const SEP = '\u0000';
  * the same hash. Concatenating them directly is the classic way to make two
  * different records hash alike.
  */
-export function contentHash(entry: SignableEntry): string {
+export function contentHash(entry: SignableEntry, embeds: EmbedState[] = []): string {
+  /*
+   * The state of whatever the entry embeds is folded in, so a signature covers
+   * the page as it was rather than only the words on it. See
+   * lib/notebook-embeds.ts for why that is not optional.
+   *
+   * Appended only when there is something embedded, which keeps the payload
+   * byte-identical to what it was before embeds were covered -- and so keeps
+   * every signature made before this existed still verifying.
+   */
+  const embedded = embedsHash(embeds);
   const payload = [
     entry.title,
     entry.entryDate.toISOString(),
     entry.body,
+    ...(embedded ? [embedded] : []),
   ].join(SEP);
   return createHash('sha256').update(payload, 'utf8').digest('hex');
 }
 
-/** Whether an entry still reads as it did when it was signed. */
+/**
+ * Whether an entry still reads as it did when it was signed.
+ *
+ * Three outcomes rather than two, because "the text is untouched but the
+ * construct it shows has been edited" is a different situation from "somebody
+ * changed the words", and a reader deciding whether to trust an experiment
+ * needs to be told which.
+ */
 export function verifyEntry(
-  entry: SignableEntry & { contentHash: string | null; status: EntryStatus },
-): { intact: boolean; reason: string } {
+  entry: SignableEntry & {
+    contentHash: string | null;
+    status: EntryStatus;
+    /** Links with the digests taken at signing, where there are any. */
+    embeds?: StoredEmbed[];
+    /** The embedded records as they are now. */
+    current?: EmbedState[];
+  },
+): { intact: boolean; reason: string; embedsChanged?: boolean } {
   if (entry.status === 'DRAFT') {
     return { intact: true, reason: 'Draft — not signed, so nothing is claimed about it.' };
   }
   if (!entry.contentHash) {
     return { intact: false, reason: 'Marked signed but carries no digest. Treat it as unverified.' };
   }
-  const now = contentHash(entry);
-  return now === entry.contentHash
-    ? { intact: true, reason: 'Content matches the digest recorded at signing.' }
-    : { intact: false, reason: 'Content no longer matches the digest recorded at signing.' };
+
+  const stored = entry.embeds ?? [];
+  const current = entry.current ?? [];
+
+  /*
+   * Checked against the stored snapshots rather than against today's state,
+   * so that a changed record is named rather than merely making the whole
+   * digest fail with nothing to point at.
+   */
+  // The digest as it was signed: today's text with the snapshots taken then,
+  // which is exactly what the signature was over.
+  if (contentHashFromDigests(entry, stored) !== entry.contentHash) {
+    return { intact: false, reason: 'Content no longer matches the digest recorded at signing.' };
+  }
+
+  const check = checkEmbeds(stored, current);
+  if (!check.ok || check.unrecorded.length) {
+    return {
+      intact: false,
+      embedsChanged: true,
+      reason: describeEmbedCheck(check) ?? 'Something this entry shows has changed since it was signed.',
+    };
+  }
+
+  return {
+    intact: true,
+    reason: stored.length
+      ? 'Content and everything it shows match the digest recorded at signing.'
+      : 'Content matches the digest recorded at signing.',
+  };
+}
+
+/**
+ * The digest an entry would have, using the snapshots stored on its links.
+ *
+ * Separate from `contentHash` because verification has the digests already
+ * and must not recompute them from today's records -- doing that would make
+ * the check always pass, which is exactly the bug this whole file exists to
+ * close.
+ */
+function contentHashFromDigests(
+  entry: SignableEntry,
+  stored: StoredEmbed[],
+): string {
+  const withSnapshots = stored.filter(s => s.snapshot);
+  const parts = withSnapshots
+    .map(s => `${s.kind}:${s.targetId}:${s.snapshot}`)
+    .sort();
+  const embedded = parts.length
+    ? createHash('sha256').update(parts.join(SEP), 'utf8').digest('hex')
+    : null;
+  const payload = [
+    entry.title,
+    entry.entryDate.toISOString(),
+    entry.body,
+    ...(embedded ? [embedded] : []),
+  ].join(SEP);
+  return createHash('sha256').update(payload, 'utf8').digest('hex');
 }
 
 export interface EditCheck {

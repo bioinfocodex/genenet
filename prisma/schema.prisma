@@ -61,6 +61,11 @@ model User {
   samplesCreated     Sample[]           @relation("SampleCreator")
   sampleUses         SampleUse[]        @relation("SampleUser")
   samplesHeld        Sample[]           @relation("SampleHolder")
+  comments           Comment[]          @relation("CommentWriter")
+  mentioned          CommentMention[]   @relation("Mentioned")
+  requestsMade       LabRequest[]       @relation("RequestedBy")
+  requestsTaken      LabRequest[]       @relation("RequestAssignee")
+  cardsMoved         StageCard[]        @relation("CardMover")
   oligosCreated      Oligo[]            @relation("OligoCreator")
   readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
@@ -200,6 +205,9 @@ model Project {
   entities  Entity[]        @relation("EntityProject")
   plates    Plate[]         @relation("PlateProject")
   notebook  NotebookEntry[] @relation("NotebookProject")
+  requests  LabRequest[]    @relation("RequestProject")
+  stages    ProjectStage[]  @relation("ProjectStages")
+  cards     StageCard[]     @relation("ProjectCards")
   members   ProjectMember[]
   /// When true, only users with a ProjectMember row may reach this project.
   restricted Boolean @default(false)
@@ -264,6 +272,161 @@ model GelImage {
 
   task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
   taskId String?
+}
+
+/// One step in a project's workflow: design, clone, verify, express.
+///
+/// Defined by the lab rather than shipped. One lab's workflow is not another's,
+/// and a fixed set would be wrong for everybody in a different way.
+model ProjectStage {
+  id        String  @id @default(cuid())
+  project   Project @relation("ProjectStages", fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  name     String
+  /// 0-based, left to right on the board.
+  position Int
+
+  cards StageCard[]
+
+  @@unique([projectId, name])
+  @@index([projectId, position])
+}
+
+/// Where one record has got to in one project's workflow.
+///
+/// Its own table rather than a column on each kind of record, because a
+/// construct can be in two projects at once and be at a different step in
+/// each -- which a column could not say.
+model StageCard {
+  id        String  @id @default(cuid())
+  project   Project @relation("ProjectCards", fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  /// Same vocabulary as a notebook link.
+  kind     String
+  targetId String
+  /// The record's name when it was placed, so a deleted one still reads.
+  label    String
+
+  /// Null while the record is in the project but not yet on the board.
+  stage   ProjectStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  stageId String?
+
+  /// When it entered this stage, which is what says a card is stuck.
+  since   DateTime @default(now())
+  movedBy   User?  @relation("CardMover", fields: [movedById], references: [id])
+  movedById String?
+
+  @@unique([projectId, kind, targetId])
+  @@index([stageId])
+}
+
+/// Somebody asking somebody else to do something.
+///
+/// Deliberately not a Task. A task is work somebody has taken on; a request is
+/// work somebody wants, which may be refused, may queue behind thirty others,
+/// and belongs to two people at once. Collapsing them loses the distinction
+/// that makes a queue worth having. See lib/requests.ts for the state graph
+/// and who may move it.
+model LabRequest {
+  id        String   @id @default(cuid())
+  /// One of lib/requests.ts REQUEST_KINDS.
+  kind      String
+  title     String
+  body      String   @default("")
+
+  /// OPEN | ACCEPTED | DONE | DECLINED | WITHDRAWN
+  state     String   @default("OPEN")
+  /// Why it was declined or withdrawn, which is the part people actually need.
+  outcome   String?
+
+  requester   User   @relation("RequestedBy", fields: [requesterId], references: [id])
+  requesterId String
+  /// Null while nobody has taken it on, which is what makes it a queue.
+  assignee   User?   @relation("RequestAssignee", fields: [assigneeId], references: [id])
+  assigneeId String?
+
+  project   Project? @relation("RequestProject", fields: [projectId], references: [id])
+  projectId String?
+
+  /// The day it is wanted, read as the end of that day.
+  neededBy  DateTime?
+
+  subjects  RequestSubject[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  closedAt  DateTime?
+
+  @@index([state, neededBy])
+  @@index([requesterId])
+  @@index([assigneeId])
+}
+
+/// One record a request is about: a clone, a construct, a plate.
+model RequestSubject {
+  id        String     @id @default(cuid())
+  request   LabRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  requestId String
+
+  /// Same vocabulary as a notebook link.
+  kind     String
+  targetId String
+  /// The record's name when it was attached, so a deleted one still reads.
+  label    String
+
+  @@index([requestId])
+  @@index([kind, targetId])
+}
+
+/// A comment on any record, and who it names.
+///
+/// Tasks had comments; nothing else did, so the conversation about a construct
+/// happened somewhere else, where it is not attached to the construct and is
+/// gone in ninety days. The next person to open the record found the sequence
+/// and none of the argument about it.
+model Comment {
+  id       String   @id @default(cuid())
+  /// One of lib/mentions.ts COMMENTABLE. A closed list, because the kind is
+  /// what decides where a notification links back to.
+  kind     String
+  targetId String
+  /// The record's name when the comment was written, so a comment on
+  /// something since deleted still reads as being about something.
+  label    String
+
+  body     String
+
+  author   User   @relation("CommentWriter", fields: [authorId], references: [id])
+  authorId String
+
+  /// Who the comment names. Resolved when it is written rather than when it is
+  /// read: a comment saying @Jane means the Jane who was there at the time.
+  mentions CommentMention[]
+
+  createdAt DateTime @default(now())
+  editedAt  DateTime?
+
+  @@index([kind, targetId, createdAt])
+  @@index([authorId])
+}
+
+/// One person named in one comment.
+model CommentMention {
+  id        String  @id @default(cuid())
+  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  commentId String
+
+  person   User   @relation("Mentioned", fields: [personId], references: [id], onDelete: Cascade)
+  personId String
+
+  /// Cleared when the person has seen it. Null means unread, which is what
+  /// the badge counts.
+  readAt   DateTime?
+
+  @@unique([commentId, personId])
+  @@index([personId, readAt])
 }
 
 model TaskComment {
@@ -1263,6 +1426,14 @@ model NotebookLink {
   targetId String
   /// The target's name when the link was made, so a deleted target still reads.
   label    String
+
+  /// A digest of the target's state at the moment the entry was signed.
+  ///
+  /// Null on a draft, and on a link made before this existed. It is what lets
+  /// a reader be told the difference between "the words were changed" and
+  /// "the construct this page shows was edited after it was signed" -- see
+  /// lib/notebook-embeds.ts.
+  snapshot String?
 
   @@index([entryId])
   @@index([kind, targetId])

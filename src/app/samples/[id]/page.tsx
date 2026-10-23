@@ -6,12 +6,15 @@ import SampleDetailClient from './client';
 import QuantityPanel from '@/components/samples/QuantityPanel';
 import SampleBarcode from '@/components/samples/SampleBarcode';
 import CustodyPanel from '@/components/samples/CustodyPanel';
+import CommentThread from '@/components/CommentThread';
+import { threadFor } from '@/lib/comments';
+import { requireUser } from '@/lib/auth-guard';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SampleDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [sample, freezers, sequences] = await Promise.all([
+  const [sample, freezers, sequences, thread, viewer] = await Promise.all([
     prisma.sample.findUnique({
       where: { id },
       include: {
@@ -29,6 +32,8 @@ export default async function SampleDetailPage({ params }: { params: Promise<{ i
     }),
     prisma.freezer.findMany({ orderBy: { temperature: 'asc' } }),
     prisma.geneSequence.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    threadFor('sample', id),
+    requireUser(),
   ]);
 
   if (!sample) notFound();
@@ -57,6 +62,10 @@ export default async function SampleDetailPage({ params }: { params: Promise<{ i
         where={[sample.freezer?.name, sample.rack, sample.box, sample.position].filter(Boolean).join(' · ')}
       />
       <SampleBarcode code={sample.sampleId} caption={sample.name} />
+      <CommentThread
+        kind="sample" targetId={sample.id} label={sample.sampleId}
+        comments={thread.comments} people={thread.people} me={viewer.id}
+      />
       <QuantityPanel
         sample={{
           id: sample.id,
