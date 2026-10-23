@@ -6,6 +6,7 @@ import {
   kindById, canMove, rolesOf, isOpen,
   type RequestState,
 } from '@/lib/requests';
+import { emit } from '@/lib/webhook-sender';
 
 /**
  * Making a request, and moving it along.
@@ -90,5 +91,8 @@ export async function moveRequest(fd: FormData) {
 
   revalidatePath('/requests');
   revalidatePath(`/requests/${id}`);
+  void emit('request.changed', { kind: 'request', id, label: '' }, {
+    from: request.state, to, by: user.name, outcome: outcome || null,
+  });
   return { ok: true as const };
 }

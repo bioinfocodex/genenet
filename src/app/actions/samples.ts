@@ -6,6 +6,7 @@ import { requireUser } from '@/lib/auth-guard';
 import { parseQuantity, canTake, type Stock } from '@/lib/quantities';
 import { planSampleImport } from '@/lib/sample-import';
 import { canCheckOut, problemWithDueDate } from '@/lib/custody';
+import { emit } from '@/lib/webhook-sender';
 
 /** The sample's quantity fields, as the arithmetic in lib/quantities wants them. */
 function stockOf(s: {
@@ -224,6 +225,9 @@ export async function recordSampleUse(fd: FormData) {
     },
   });
   revalidatePath(`/samples/${id}`);
+  void emit('sample.used', { kind: 'sample', id, label: sample.sampleId }, {
+    amount: drawn.value, unit: drawn.unit, by: user.name,
+  });
   return { ok: true as const };
 }
 

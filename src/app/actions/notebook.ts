@@ -6,6 +6,7 @@ import { contentHash, canEdit, canWitness, extractLinks, type EntryStatus } from
 import type { ActionResult } from './entities';
 import { statesFor } from '@/lib/embed-state';
 import { embedDigest } from '@/lib/notebook-embeds';
+import { emit } from '@/lib/webhook-sender';
 
 /**
  * Notebook entries.
@@ -134,6 +135,9 @@ export async function signEntry(data: FormData): Promise<ActionResult> {
 
     revalidatePath(`/notebook/${id}`);
     revalidatePath('/notebook');
+    void emit('entry.signed', { kind: 'entry', id, label: entry.title }, {
+      by: user.name, entryDate: entry.entryDate.toISOString(), embeds: links.length,
+    });
     return { ok: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Could not sign the entry.' };
