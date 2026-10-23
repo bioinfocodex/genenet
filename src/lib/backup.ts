@@ -1,4 +1,5 @@
 import 'server-only';
+import { canSnapshotInProcess, SNAPSHOT_NOTE } from './db-provider';
 import path from 'path';
 import { mkdir, readdir, stat, unlink } from 'fs/promises';
 import { prisma } from '@/lib/prisma';
@@ -81,6 +82,15 @@ export async function listBackups(): Promise<BackupFile[]> {
  * backups started in the same second cannot silently overwrite one another.
  */
 export async function createBackup(): Promise<BackupFile> {
+  /*
+   * Refused rather than attempted on PostgreSQL. VACUUM INTO is SQLite's, and
+   * the Postgres equivalent is pg_dump -- a separate process with its own
+   * credentials, which is not a thing to shell out to from a web request. A
+   * button that produced something that was not a backup would be worse than
+   * no button, because it would be believed.
+   */
+  if (!canSnapshotInProcess()) throw new Error(SNAPSHOT_NOTE);
+
   const dir = await backupDir();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const target = path.join(dir, `${BACKUP_PREFIX}${stamp}${BACKUP_SUFFIX}`);
