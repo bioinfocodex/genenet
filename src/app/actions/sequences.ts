@@ -15,6 +15,8 @@ import { identifyUnsupported } from '@/lib/formats/proprietary';
 import { fetchAccession } from '@/lib/accession';
 import { findHost, findStrain } from '@/lib/hosts';
 import { parseStyle, serialiseStyle } from '@/lib/map-display';
+import { planBackfill, prefixFor } from '@/lib/sequence-codes';
+import { nextCode } from '@/lib/fields';
 
 export async function createSequence(data: FormData) {
   const name = (data.get('name') as string).trim();
@@ -36,7 +38,10 @@ export async function createSequence(data: FormData) {
   if (sequence.length === 0) throw new Error('Sequence must contain valid nucleotides.');
 
   await prisma.geneSequence.create({
-    data: { name, type, description, sequence, size: sequence.length, tags, host, strain },
+    data: {
+      name, type, description, sequence, size: sequence.length, tags, host, strain,
+      code: await issueSequenceCode(type),
+    },
   });
 
   revalidatePath('/sequences');
@@ -201,6 +206,7 @@ export async function importSequence(formData: FormData) {
       description: parsed.description || null,
       // Circularity is not a column, so it goes where the viewer already looks.
       type: parsed.circular ? 'plasmid' : (parsed.sequence.length > 3000 ? 'plasmid' : 'gene'),
+      code: await issueSequenceCode(parsed.circular || parsed.sequence.length > 3000 ? 'plasmid' : 'gene'),
       sequence: parsed.sequence,
       size: parsed.sequence.length,
       tags: null,
@@ -311,6 +317,7 @@ export async function saveConstruct(formData: FormData): Promise<SaveConstructRe
       name,
       description: `Assembled by ${method}${parts ? ` from ${parts}` : ''}.`,
       type: topology === 'circular' ? 'plasmid' : 'gene',
+      code: await issueSequenceCode(topology === 'circular' ? 'plasmid' : 'gene'),
       sequence,
       size: sequence.length,
       features,
@@ -401,4 +408,47 @@ export async function addFeaturesToLibrary(formData: FormData): Promise<AddParts
   const added = await addParts(parts, source, session.id);
   revalidatePath(`/sequences/${sequenceId ?? ''}`);
   return { added };
+}
+
+/**
+ * Give every construct that has none a code.
+ *
+ * A one-off, run from the sequence list. Written as a plan first so the
+ * numbering is decided in one place and can be tested: oldest construct gets
+ * 001, each prefix counts on its own, and anything already carrying a code is
+ * left alone -- which is what makes running it twice harmless.
+ */
+export async function backfillSequenceCodes() {
+  await requireUser();
+  const records = await prisma.geneSequence.findMany({
+    select: { id: true, type: true, code: true, createdAt: true },
+  });
+
+  const plan = planBackfill(records.map(r => ({
+    id: r.id, type: r.type, code: r.code, createdAt: r.createdAt.toISOString(),
+  })));
+
+  for (const { id, code } of plan.assignments) {
+    await prisma.geneSequence.update({ where: { id }, data: { code } });
+  }
+
+  revalidatePath('/sequences');
+  return { ok: true as const, issued: plan.assignments.length, alreadyCoded: plan.alreadyCoded };
+}
+
+/**
+ * The next code for a type, reserved at the moment a construct is made.
+ *
+ * Read and written in the same breath rather than held anywhere, because the
+ * highest code in use is the only state there is: two creates at once can
+ * still collide, and the unique constraint on the column is what catches that
+ * rather than a lock nothing else respects.
+ */
+export async function issueSequenceCode(type: string): Promise<string> {
+  const prefix = prefixFor(type);
+  const existing = await prisma.geneSequence.findMany({
+    where: { code: { startsWith: `${prefix}-` } },
+    select: { code: true },
+  });
+  return nextCode(prefix, existing.map(e => e.code!).filter(Boolean));
 }

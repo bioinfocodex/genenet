@@ -3,6 +3,22 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireUser } from '@/lib/auth-guard';
+import { parseQuantity, canTake, type Stock } from '@/lib/quantities';
+import { planSampleImport } from '@/lib/sample-import';
+import { canCheckOut, problemWithDueDate } from '@/lib/custody';
+
+/** The sample's quantity fields, as the arithmetic in lib/quantities wants them. */
+function stockOf(s: {
+  amount: number | null; amountUnit: string | null;
+  concValue: number | null; concPer: string | null; concVolume: string | null;
+}): Stock {
+  return {
+    initial: { value: s.amount ?? 0, unit: s.amountUnit ?? 'item' },
+    concentration: s.concValue && s.concPer && s.concVolume
+      ? { value: s.concValue, per: s.concPer, volume: s.concVolume }
+      : null,
+  };
+}
 
 const TYPE_PREFIX: Record<string, string> = {
   PLASMID:       'PLA',
@@ -109,4 +125,285 @@ export async function deleteFreezer(fd: FormData) {
   const id = fd.get('id') as string;
   await prisma.freezer.delete({ where: { id } });
   revalidatePath('/freezers');
+}
+
+// ─── Quantities and uses ─────────────────────────────────────────────────────
+
+/**
+ * What is in the tube, and what links a volume to a mass.
+ *
+ * Set separately from the sample's other details because it is a different
+ * kind of fact: the name and the freezer position describe where a thing is,
+ * and this describes how much of it there is -- which only means anything
+ * alongside the uses recorded against it.
+ */
+export async function setSampleQuantity(fd: FormData) {
+  await requireUser();
+  const id = fd.get('id') as string;
+  if (!id) return { error: 'No sample.' };
+
+  const typed = (fd.get('amount') as string | null)?.trim() ?? '';
+  const parsed = typed ? parseQuantity(typed) : null;
+  if (typed && !parsed) {
+    return { error: `"${typed}" is not an amount this understands. Try 50 µL, 10 µg, or 3 tubes.` };
+  }
+
+  /*
+   * A concentration is all three parts or none of them. Half of one -- a
+   * number with no unit, or units with no number -- would be stored as a
+   * link between a volume and a mass that cannot actually convert anything,
+   * and would then fail at the point of use rather than here.
+   */
+  const concRaw = (fd.get('concValue') as string | null)?.trim() ?? '';
+  const concPer = (fd.get('concPer') as string | null) ?? '';
+  const concVolume = (fd.get('concVolume') as string | null) ?? '';
+  const concValue = concRaw ? Number(concRaw) : null;
+  if (concRaw && (!Number.isFinite(concValue) || (concValue as number) <= 0)) {
+    return { error: 'A concentration has to be a number greater than nought.' };
+  }
+  if (concRaw && !(concPer && concVolume)) {
+    return { error: 'A concentration needs both of its units.' };
+  }
+
+  const expires = (fd.get('expiresAt') as string | null)?.trim();
+
+  await prisma.sample.update({
+    where: { id },
+    data: {
+      amount: parsed ? parsed.value : null,
+      amountUnit: parsed ? parsed.unit : null,
+      concValue: concRaw ? concValue : null,
+      concPer: concRaw ? concPer : null,
+      concVolume: concRaw ? concVolume : null,
+      lot: ((fd.get('lot') as string | null)?.trim() || null),
+      expiresAt: expires ? new Date(expires) : null,
+    },
+  });
+  revalidatePath(`/samples/${id}`);
+  return { ok: true as const };
+}
+
+/**
+ * Record that somebody took some.
+ *
+ * Checked against what is left before it is written, so the common mistake --
+ * taking a tube that somebody else emptied an hour ago -- is caught while the
+ * person is still standing at the bench, rather than appearing later as a
+ * negative number nobody can explain.
+ */
+export async function recordSampleUse(fd: FormData) {
+  const user = await requireUser();
+  const id = fd.get('id') as string;
+  const typed = (fd.get('amount') as string | null)?.trim() ?? '';
+  if (!id || !typed) return { error: 'How much was taken?' };
+
+  const drawn = parseQuantity(typed);
+  if (!drawn) return { error: `"${typed}" is not an amount this understands.` };
+  if (drawn.value <= 0) return { error: 'A use has to be more than nothing.' };
+
+  const sample = await prisma.sample.findUnique({
+    where: { id },
+    include: { uses: { select: { amount: true, unit: true } } },
+  });
+  if (!sample) return { error: 'That sample is gone.' };
+  if (sample.amount === null || !sample.amountUnit) {
+    return { error: 'This sample has no amount recorded, so there is nothing to take from.' };
+  }
+
+  const stock = stockOf(sample);
+  const verdict = canTake(stock, sample.uses.map(u => ({ amount: { value: u.amount, unit: u.unit } })), drawn);
+  if (!verdict.ok) return { error: verdict.why };
+
+  await prisma.sampleUse.create({
+    data: {
+      sampleId: id,
+      amount: drawn.value,
+      unit: drawn.unit,
+      note: ((fd.get('note') as string | null)?.trim() || null),
+      usedById: user.id,
+    },
+  });
+  revalidatePath(`/samples/${id}`);
+  return { ok: true as const };
+}
+
+/** Undo a use. The tube fills back up, because the use was the only claim it was ever empty. */
+export async function deleteSampleUse(fd: FormData) {
+  await requireUser();
+  const useId = fd.get('useId') as string;
+  if (!useId) return { error: 'No use.' };
+  const use = await prisma.sampleUse.findUnique({ where: { id: useId }, select: { sampleId: true } });
+  if (!use) return { error: 'That use is already gone.' };
+  await prisma.sampleUse.delete({ where: { id: useId } });
+  revalidatePath(`/samples/${use.sampleId}`);
+  return { ok: true as const };
+}
+
+// ─── Bulk import ─────────────────────────────────────────────────────────────
+
+/**
+ * What importing this file would do.
+ *
+ * Read and shown before anything is written. The plan is derived from the
+ * file's text, and so is the import itself a moment later -- the browser never
+ * sends back a plan to be trusted, because a plan that arrives from outside is
+ * a list of writes somebody else chose.
+ */
+export async function previewSampleImport(fd: FormData) {
+  await requireUser();
+  const text = (fd.get('text') as string | null) ?? '';
+  if (!text.trim()) return { error: 'Nothing to read.' };
+  if (text.length > 2_000_000) return { error: 'That file is too big to import in one go.' };
+
+  const [existing, freezers] = await Promise.all([
+    prisma.sample.findMany({ select: { sampleId: true } }),
+    prisma.freezer.findMany({ select: { id: true, name: true } }),
+  ]);
+
+  const plan = planSampleImport(text, new Set(existing.map(s => s.sampleId)));
+  const known = new Set(freezers.map(f => f.name.toLowerCase()));
+
+  /*
+   * A freezer nobody has set up is a note, not a rejection. The tube is real
+   * and the row is good; what is missing is somewhere to put it, and refusing
+   * eighty rows over a freezer that takes ten seconds to create would be the
+   * wrong trade.
+   */
+  const unknownFreezers = new Set<string>();
+  for (const row of plan.rows) {
+    const f = row.value?.freezer;
+    if (f && !known.has(f.toLowerCase())) {
+      unknownFreezers.add(f);
+      row.notes.push(`No freezer called "${f}"; the tube will be filed without one.`);
+    }
+  }
+
+  return { plan, unknownFreezers: [...unknownFreezers] };
+}
+
+/**
+ * Do it.
+ *
+ * The file is planned again here rather than taking the browser's word for
+ * what the plan was: between the preview and the button somebody else may have
+ * created the same code, and in any case a list of writes that arrived over
+ * the wire is not one this should run.
+ */
+export async function commitSampleImport(fd: FormData) {
+  const user = await requireUser();
+  const text = (fd.get('text') as string | null) ?? '';
+  if (!text.trim()) return { error: 'Nothing to import.' };
+
+  const [existing, freezers] = await Promise.all([
+    prisma.sample.findMany({ select: { id: true, sampleId: true } }),
+    prisma.freezer.findMany({ select: { id: true, name: true } }),
+  ]);
+  const byCode = new Map(existing.map(s => [s.sampleId, s.id]));
+  const freezerByName = new Map(freezers.map(f => [f.name.toLowerCase(), f.id]));
+
+  const plan = planSampleImport(text, new Set(byCode.keys()));
+
+  let created = 0, updated = 0;
+  for (const row of plan.rows) {
+    if (row.verdict === 'reject' || !row.value) continue;
+    const v = row.value;
+    const data = {
+      name: v.name,
+      type: v.type,
+      notes: v.notes ?? null,
+      freezerId: v.freezer ? freezerByName.get(v.freezer.toLowerCase()) ?? null : null,
+      rack: v.rack ?? null,
+      box: v.box ?? null,
+      position: v.position ?? null,
+      amount: v.amount ?? null,
+      amountUnit: v.amountUnit ?? null,
+      concValue: v.concValue ?? null,
+      concPer: v.concPer ?? null,
+      concVolume: v.concVolume ?? null,
+      lot: v.lot ?? null,
+      expiresAt: v.expiresAt ? new Date(v.expiresAt) : null,
+    };
+
+    const id = v.sampleId ? byCode.get(v.sampleId) : undefined;
+    if (id) {
+      await prisma.sample.update({ where: { id }, data });
+      updated++;
+    } else {
+      await prisma.sample.create({
+        data: {
+          ...data,
+          sampleId: v.sampleId ?? await nextSampleId(TYPE_PREFIX[v.type] ?? 'SAM'),
+          createdById: user.id,
+        },
+      });
+      created++;
+    }
+  }
+
+  revalidatePath('/samples');
+  return { ok: true as const, created, updated, rejected: plan.counts.reject };
+}
+
+// ─── Taking a tube out, and putting it back ──────────────────────────────────
+
+/**
+ * Take a sample out of the freezer.
+ *
+ * The check runs against the row as it stands rather than against what the
+ * page was showing: two people clicking at once is exactly the case this
+ * exists for, and the one who loses should be told who has it.
+ */
+export async function checkOutSample(fd: FormData) {
+  const user = await requireUser();
+  const id = fd.get('id') as string;
+  if (!id) return { error: 'No sample.' };
+
+  const due = ((fd.get('dueBack') as string | null) ?? '').trim();
+  const problem = due ? problemWithDueDate(due) : null;
+  if (problem) return { error: problem };
+
+  const sample = await prisma.sample.findUnique({
+    where: { id },
+    select: { heldById: true, heldSince: true, dueBack: true, heldBy: { select: { name: true } } },
+  });
+  if (!sample) return { error: 'That sample is gone.' };
+
+  const verdict = canCheckOut({
+    heldBy: sample.heldBy?.name ?? null,
+    heldSince: sample.heldSince?.toISOString() ?? null,
+    dueBack: sample.dueBack?.toISOString() ?? null,
+  }, user.name);
+  if (!verdict.ok) return { error: verdict.why };
+
+  await prisma.sample.update({
+    where: { id },
+    data: {
+      heldById: user.id,
+      heldSince: new Date(),
+      // A date with no time means the end of that day; see lib/custody.ts.
+      dueBack: due ? new Date(due) : null,
+    },
+  });
+  revalidatePath(`/samples/${id}`);
+  revalidatePath('/freezers');
+  return { ok: true as const };
+}
+
+/** Put it back. Anybody may, because tubes come back in somebody else's rack. */
+export async function checkInSample(fd: FormData) {
+  await requireUser();
+  const id = fd.get('id') as string;
+  if (!id) return { error: 'No sample.' };
+
+  const sample = await prisma.sample.findUnique({ where: { id }, select: { heldById: true } });
+  if (!sample) return { error: 'That sample is gone.' };
+  if (!sample.heldById) return { error: 'This one is not out.' };
+
+  await prisma.sample.update({
+    where: { id },
+    data: { heldById: null, heldSince: null, dueBack: null },
+  });
+  revalidatePath(`/samples/${id}`);
+  revalidatePath('/freezers');
+  return { ok: true as const };
 }

@@ -59,6 +59,8 @@ model User {
   simulations        Simulation[]       @relation("SimulationCreator")
   gelsCreated        GelSimulation[]    @relation("GelCreator")
   samplesCreated     Sample[]           @relation("SampleCreator")
+  sampleUses         SampleUse[]        @relation("SampleUser")
+  samplesHeld        Sample[]           @relation("SampleHolder")
   oligosCreated      Oligo[]            @relation("OligoCreator")
   readsUploaded      SequencingRead[]   @relation("ReadUploader")
 
@@ -436,6 +438,13 @@ model Activity {
 
 model GeneSequence {
   id          String   @id @default(cuid())
+  /// A short identifier of the kind written on a tube: PL-001, GN-014.
+  ///
+  /// Names are not identifiers. Two people make "pEGFP-N1 v2", somebody
+  /// renames one, and the freezer label points at a record nobody can find.
+  /// Issued once and unchanged when the name changes. Nullable because
+  /// records made before codes existed have none until they are backfilled.
+  code        String?  @unique
   name        String
   description String?
   type        String   @default("gene")
@@ -750,8 +759,64 @@ model Sample {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// How much was put in, with a unit id from lib/quantities.ts ("uL", "ug",
+  /// "item"). What is *left* is never stored: it is computed from the uses
+  /// below, because a stored remainder is a number somebody has to remember to
+  /// update, and the first time it is not updated it is a claim about a tube
+  /// that is wrong with nothing to say so.
+  amount       Float?
+  amountUnit   String?
+
+  /// What links a volume to a mass, where one was measured: 200 ng/µL is
+  /// value 200, per "ng", volume "uL". Without it, a mass cannot be taken out
+  /// of a tube recorded as a volume, and the application says so rather than
+  /// guessing.
+  concValue    Float?
+  concPer      String?
+  concVolume   String?
+
+  /// The supplier's lot, and when it stops being trustworthy.
+  lot          String?
+  expiresAt    DateTime?
+
+  /// Who is holding it, when they took it and when it is due back. Null
+  /// across all three means it is where the freezer fields say it is.
+  ///
+  /// A lending record, not a chain of custody: it answers "where is it really"
+  /// at the moment somebody walks to the freezer and finds a gap, which is the
+  /// commonest way an inventory stops being believed.
+  heldBy      User?     @relation("SampleHolder", fields: [heldById], references: [id])
+  heldById    String?
+  heldSince   DateTime?
+  dueBack     DateTime?
+
+  uses    SampleUse[]
   wells   PlateWell[]   @relation("SampleWells")
   results AssayResult[] @relation("SampleResults")
+}
+
+/// One withdrawal from a sample: who took how much, when, and what for.
+///
+/// The unit is whatever they measured in, not whatever the tube is recorded
+/// in. Somebody pipetting 5 µL and somebody taking 1 µg out of the same
+/// 200 ng/µL stock are describing the same act, and both are stored as said
+/// rather than converted on the way in -- the conversion is arithmetic that
+/// can be redone, and the words are a record that cannot be recovered.
+model SampleUse {
+  id        String   @id @default(cuid())
+
+  sample    Sample   @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  sampleId  String
+
+  amount    Float
+  unit      String
+  note      String?
+
+  usedBy    User?    @relation("SampleUser", fields: [usedById], references: [id])
+  usedById  String?
+  usedAt    DateTime @default(now())
+
+  @@index([sampleId])
 }
 
 /**

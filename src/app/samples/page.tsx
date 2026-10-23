@@ -53,6 +53,8 @@ export default async function SamplesPage({ searchParams }: { searchParams: Prom
         </div>
         <div style={{ display: 'flex', gap: '0.65rem' }}>
           <Link href="/freezers" className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>🧊 Freezers</Link>
+          <Link href="/samples/labels" className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>Labels</Link>
+          <Link href="/samples/import" className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>Import</Link>
           <Link href="/samples/new" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
             <Plus size={15} /> Register Sample
           </Link>
