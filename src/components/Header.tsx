@@ -23,7 +23,7 @@ export default function Header({ user }: { user: User | null }) {
   };
 
   return (
-    <header className="glass-panel" style={{ height: '70px', borderRadius: 0, borderBottom: '1px solid var(--glass-border)', borderTop: 'none', borderLeft: 'none', borderRight: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2rem', position: 'sticky', top: 0, zIndex: 40, flexShrink: 0 }}>
+    <header className="glass-panel app-header" style={{ height: '70px', borderRadius: 0, borderBottom: '1px solid var(--glass-border)', borderTop: 'none', borderLeft: 'none', borderRight: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2rem', position: 'sticky', top: 0, zIndex: 40, flexShrink: 0 }}>
       <form onSubmit={handleSearch} className="input-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '300px', padding: '0.5rem 0.85rem' }}>
           <Search size={16} color="var(--text-secondary)" />
           <input

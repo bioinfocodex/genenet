@@ -97,7 +97,7 @@ export default function Sidebar({ userRole = 'MEMBER', userName = '' }: Props) {
   };
 
   return (
-    <aside className="glass-panel" style={{
+    <aside className="glass-panel app-sidebar" style={{
       width: 260, minWidth: 260, flexShrink: 0,
       height: '100vh', position: 'sticky', top: 0,
       borderRadius: 0, borderTop: 'none', borderBottom: 'none', borderLeft: 'none',

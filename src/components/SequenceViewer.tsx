@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
   FlaskConical, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check, Dna,
+  Maximize2, Minimize2,
 } from 'lucide-react';
 import { ENZYMES } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
@@ -128,6 +129,9 @@ const FEATURE_TYPES = [
 ];
 /** The two panels either side of the work, and how wide they are when open. */
 const RAIL_W = 178;
+
+/** Where the panel preference lives. One key, so one read and one write. */
+const PANELS_KEY = 'genenet.sequence.panels';
 const SIDEBAR_W = 272;
 
 /**
@@ -387,6 +391,15 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   const [sidebarOpen, setSidebarOpen] = useState(true);
   /** The rail of views and numbers slides away the same way the tools do. */
   const [railOpen, setRailOpen] = useState(true);
+  /*
+   * Just the sequence: the workspace navigation and the top bar go away.
+   *
+   * Not remembered between visits, unlike the two panels. This is a mode
+   * somebody enters for a minute while they read a map, and coming back to
+   * an application with no navigation and no memory of asking for it would
+   * be a puzzle rather than a convenience. Escape leaves it.
+   */
+  const [focusMode, setFocusMode] = useState(false);
 
   const enzymeSetNames = useMemo(() => {
     if (enzymeSet === 'all') return null;
@@ -510,6 +523,56 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   // are gone — their contents were duplicates of menu commands — so the flags
   // that opened them went with them.
   const [statsOpen, setStatsOpen] = useState(false);
+
+  /*
+   * Which panels are open is a working preference, so it outlives the page.
+   *
+   * Read in an effect rather than in the initial state: the server has no
+   * localStorage, and initialising from it would render one thing on the
+   * server and another in the browser -- the hydration mismatch this
+   * component has already been bitten by once, and which React does not
+   * patch up.
+   */
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PANELS_KEY);
+      if (!saved) return;
+      const { rail, tools } = JSON.parse(saved) as { rail?: boolean; tools?: boolean };
+      if (typeof rail === 'boolean') setRailOpen(rail);
+      if (typeof tools === 'boolean') setSidebarOpen(tools);
+    } catch {
+      /* A browser with storage blocked keeps the defaults, which are fine. */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANELS_KEY, JSON.stringify({ rail: railOpen, tools: sidebarOpen }));
+    } catch {
+      /* Not being able to remember the preference is not worth an error. */
+    }
+  }, [railOpen, sidebarOpen]);
+
+  /* The body carries the mode, because what it hides is outside this tree. */
+  useEffect(() => {
+    document.body.classList.toggle('focus-mode', focusMode);
+    return () => document.body.classList.remove('focus-mode');
+  }, [focusMode]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && focusMode) { setFocusMode(false); return; }
+      // Not while somebody is typing: 'f' belongs to the field they are in.
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setFocusMode(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focusMode]);
   const [digestOpen, setDigestOpen] = useState(false);
 
   // Digest simulation state
@@ -1331,6 +1394,21 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               ! Verification stale
             </span>
           ) : null}
+          {/*
+            * A button as well as a key. A shortcut nobody is told about is a
+            * feature for whoever wrote it; the button is how everybody else
+            * finds out there is one, which is what the tooltip says.
+            */}
+          <button
+            onClick={() => setFocusMode(v => !v)}
+            title={focusMode ? 'Bring the navigation back (Esc, or f)' : 'Just the sequence — hide the navigation (f)'}
+            aria-pressed={focusMode}
+            className="btn btn-secondary"
+            style={{ fontSize: '0.74rem', padding: '0.2rem 0.45rem', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+          >
+            {focusMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            {focusMode ? 'Exit' : 'Focus'}
+          </button>
           <Link href="/sequences/new" className="btn btn-secondary" style={{ fontSize: '0.74rem', padding: '0.2rem 0.55rem', whiteSpace: 'nowrap' }}>
             + New
           </Link>
