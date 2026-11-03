@@ -4,8 +4,9 @@ import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
   FlaskConical, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check, Dna,
-  Maximize2, Minimize2,
+  Maximize2, Minimize2, AlignLeft, Tag, Frame, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { ENZYMES } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
 import {
@@ -89,14 +90,14 @@ type LeftTab = 'map' | 'sequence' | 'feature' | 'sites' | 'primers' | 'orfs' | '
  * so the bar can always say where you are. Tools are not views and are not
  * here — see TOOL_NAMES.
  */
-const VIEW_TABS: [LeftTab, string][] = [
-  ['map', 'Map'],
-  ['sequence', 'Sequence'],
-  ['feature', 'Features'],
-  ['sites', 'Enzymes'],
-  ['primers', 'Primers'],
-  ['orfs', 'ORFs'],
-  ['translate', 'Translation'],
+const VIEW_TABS: [LeftTab, string, LucideIcon][] = [
+  ['map', 'Map', MapPin],
+  ['sequence', 'Sequence', AlignLeft],
+  ['feature', 'Features', Tag],
+  ['sites', 'Enzymes', Scissors],
+  ['primers', 'Primers', Link2],
+  ['orfs', 'ORFs', Frame],
+  ['translate', 'Translation', Atom],
 ];
 
 /**
@@ -129,6 +130,15 @@ const FEATURE_TYPES = [
 ];
 /** The two panels either side of the work, and how wide they are when open. */
 const RAIL_W = 178;
+/**
+ * The rail with the labels hidden.
+ *
+ * Wide enough for a 16px icon with a comfortable target around it, and
+ * narrow enough that the 122px it gives back goes to the drawing. A rail
+ * costs width once; the horizontal bands it replaced cost height on every
+ * row of the window.
+ */
+const RAIL_W_NARROW = 56;
 
 /** Where the panel preference lives. One key, so one read and one write. */
 const PANELS_KEY = 'genenet.sequence.panels';
@@ -392,6 +402,16 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   /** The rail of views and numbers slides away the same way the tools do. */
   const [railOpen, setRailOpen] = useState(true);
   /*
+   * Icons, or icons with their names.
+   *
+   * Narrow is the default because it is what the width is for, but an
+   * unlabelled rail is faster for somebody who uses this daily and worse for
+   * everybody else -- so the labels are one click away and the choice is
+   * remembered, like the panels.
+   */
+  const [railWide, setRailWide] = useState(false);
+  const railWidth = railWide ? RAIL_W : RAIL_W_NARROW;
+  /*
    * Just the sequence: the workspace navigation and the top bar go away.
    *
    * Not remembered between visits, unlike the two panels. This is a mode
@@ -537,9 +557,10 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     try {
       const saved = localStorage.getItem(PANELS_KEY);
       if (!saved) return;
-      const { rail, tools } = JSON.parse(saved) as { rail?: boolean; tools?: boolean };
+      const { rail, tools, wide } = JSON.parse(saved) as { rail?: boolean; tools?: boolean; wide?: boolean };
       if (typeof rail === 'boolean') setRailOpen(rail);
       if (typeof tools === 'boolean') setSidebarOpen(tools);
+      if (typeof wide === 'boolean') setRailWide(wide);
     } catch {
       /* A browser with storage blocked keeps the defaults, which are fine. */
     }
@@ -547,11 +568,11 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
 
   useEffect(() => {
     try {
-      localStorage.setItem(PANELS_KEY, JSON.stringify({ rail: railOpen, tools: sidebarOpen }));
+      localStorage.setItem(PANELS_KEY, JSON.stringify({ rail: railOpen, tools: sidebarOpen, wide: railWide }));
     } catch {
       /* Not being able to remember the preference is not worth an error. */
     }
-  }, [railOpen, sidebarOpen]);
+  }, [railOpen, sidebarOpen, railWide]);
 
   /* The body carries the mode, because what it hides is outside this tree. */
   useEffect(() => {
@@ -1469,37 +1490,49 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           */}
         <div
           className="pane-slide"
-          style={{ width: railOpen ? RAIL_W : 0, flexShrink: 0, overflow: 'hidden' }}
+          style={{ width: railOpen ? railWidth : 0, flexShrink: 0, overflow: 'hidden' }}
         >
-        <nav className="sequence-editor-rail" style={{ width: RAIL_W, display: 'flex', flexDirection: 'column', gap: '0.85rem', maxHeight: '100%' }}>
+        <nav className="sequence-editor-rail" style={{ width: railWidth, display: 'flex', flexDirection: 'column', gap: '0.85rem', maxHeight: '100%' }}>
 
-          <div style={{ display: 'flex', gap: '0.4rem' }}>
+          <div style={{ display: 'flex', gap: '0.4rem', flexDirection: railWide ? 'row' : 'column' }}>
             {dirty && (
-              <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem' }} onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving…' : <><Save size={13} /> Save</>}
+              <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem', justifyContent: 'center' }} onClick={handleSave} disabled={saving}
+                title={saving ? 'Saving…' : 'Save the changes'}>
+                {saving ? (railWide ? 'Saving…' : '…') : <><Save size={13} />{railWide ? ' Save' : ''}</>}
               </button>
             )}
-            <button className="btn btn-secondary" style={{ flex: dirty ? 0 : 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem' }}
+            <button className="btn btn-secondary" style={{ flex: dirty && railWide ? 0 : 1, fontSize: '0.76rem', padding: '0.3rem 0.5rem', justifyContent: 'center' }}
               title="Copy the whole sequence"
               onClick={() => navigator.clipboard.writeText(sequence)}>
-              <Copy size={13} />{dirty ? '' : ' Copy'}
+              <Copy size={13} />{railWide && !dirty ? ' Copy' : ''}
             </button>
           </div>
 
           {/* Views */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {VIEW_TABS.map(([t, label]) => (
-              <button key={t} onClick={() => setLeftTab(t)}
+            {VIEW_TABS.map(([t, label, Icon]) => (
+              /*
+               * The name is always on the button, as a title, whether or not
+               * it is drawn. An icon rail is quick for somebody who uses it
+               * every day and a guessing game for everybody else, and the
+               * tooltip is the difference.
+               */
+              <button key={t} onClick={() => setLeftTab(t)} title={label} aria-label={label}
+                aria-current={leftTab === t ? 'page' : undefined}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '0.4rem', textAlign: 'left',
-                  padding: '0.32rem 0.55rem', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '0.45rem',
+                  justifyContent: railWide ? 'flex-start' : 'center',
+                  textAlign: 'left',
+                  padding: railWide ? '0.32rem 0.55rem' : '0.45rem 0',
+                  borderRadius: 6, border: 'none', cursor: 'pointer',
                   fontSize: '0.82rem', fontFamily: 'inherit',
                   fontWeight: leftTab === t ? 600 : 400,
                   color: leftTab === t ? 'var(--accent-blue)' : 'var(--text-secondary)',
                   background: leftTab === t ? 'var(--accent-blue-15)' : 'transparent',
                   borderLeft: `2px solid ${leftTab === t ? 'var(--accent-blue)' : 'transparent'}`,
                 }}>
-                {label}
+                <Icon size={16} style={{ flexShrink: 0 }} />
+                {railWide && label}
               </button>
             ))}
 
@@ -1509,14 +1542,17 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               back to the view you came from.
             */}
             {TOOL_NAMES[leftTab] && (
-              <span style={{
+              <span title={TOOL_NAMES[leftTab]} style={{
                 display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.3rem',
-                padding: '0.32rem 0.55rem', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
+                justifyContent: railWide ? 'flex-start' : 'center',
+                padding: railWide ? '0.32rem 0.55rem' : '0.32rem 0.2rem',
+                borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
                 background: 'var(--accent-purple-15, rgba(168,85,247,0.12))', color: 'var(--accent-purple)',
               }}>
-                {TOOL_NAMES[leftTab]}
+                {/* Narrow, the name will not fit; its initial still says which. */}
+                {railWide ? TOOL_NAMES[leftTab] : TOOL_NAMES[leftTab]!.charAt(0)}
                 <button onClick={() => setLeftTab(lastView)} aria-label="Close this tool"
-                  style={{ marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontSize: '0.9rem', lineHeight: 1, padding: 0, fontFamily: 'inherit' }}>
+                  style={{ marginLeft: railWide ? 'auto' : 0, border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontSize: '0.9rem', lineHeight: 1, padding: 0, fontFamily: 'inherit' }}>
                   &times;
                 </button>
               </span>
@@ -1525,11 +1561,16 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
 
           {/* The map's own topology, next to the view it belongs to. */}
           {leftTab === 'map' && (
-            <div style={{ display: 'flex', gap: '0.3rem' }}>
-              {(['linear', 'circular'] as const).map(v => (
-                <button key={v} onClick={() => setMapView(v)}
-                  style={{ flex: 1, padding: '0.28rem 0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: mapView === v ? 'var(--accent-blue-15)' : 'white', color: mapView === v ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: mapView === v ? 600 : 400 }}>
-                  {v === 'linear' ? 'Linear' : 'Circular'}
+            <div style={{ display: 'flex', gap: '0.3rem', flexDirection: railWide ? 'row' : 'column' }}>
+              {([['linear', 'Linear', AlignLeft], ['circular', 'Circular', Globe]] as const).map(([v, label, Icon]) => (
+                <button key={v} onClick={() => setMapView(v)} title={`Draw it ${label.toLowerCase()}`} aria-label={label}
+                  aria-pressed={mapView === v}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
+                    padding: '0.28rem 0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)',
+                    background: mapView === v ? 'var(--accent-blue-15)' : 'white',
+                    color: mapView === v ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer',
+                    fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: mapView === v ? 600 : 400 }}>
+                  <Icon size={14} />{railWide && label}
                 </button>
               ))}
             </div>
@@ -1542,6 +1583,22 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             edge, where SnapGene keeps the same figures and where they cost
             no height that the drawing wanted.
           */}
+
+          {/* Names on or off, at the foot where it is out of the way. */}
+          <button
+            onClick={() => setRailWide(w => !w)}
+            title={railWide ? 'Hide the names and give the room to the drawing' : 'Show the names'}
+            aria-label={railWide ? 'Hide the view names' : 'Show the view names'}
+            style={{
+              marginTop: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem',
+              justifyContent: railWide ? 'flex-start' : 'center',
+              padding: '0.32rem 0.45rem', border: 'none', background: 'none', cursor: 'pointer',
+              color: 'var(--text-muted)', fontSize: '0.76rem', fontFamily: 'inherit',
+            }}
+          >
+            {railWide ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+            {railWide && 'Names'}
+          </button>
 
         </nav>
         </div>
