@@ -36,8 +36,24 @@ const SITE_FS = 10;
 
 const MIN_ZOOM = 0.5, MAX_ZOOM = 8;
 
+/**
+ * Every coordinate this map draws is rounded to a tenth before it reaches the
+ * DOM, and nothing emits a raw `CX + r * Math.cos(a)`.
+ *
+ * Math.cos and Math.sin are allowed to be off by an ULP, and the engine that
+ * server-renders this component and the one in the browser do not always
+ * agree on the last bit. React treats the resulting attribute as a hydration
+ * mismatch and does not patch it, so the ring on screen would be the server's
+ * while the component believed it had drawn the client's. A tenth of a unit
+ * is far finer than a pixel in an 800-unit viewBox, and coarse enough to
+ * absorb the disagreement.
+ */
+const round1 = (n: number) => Math.round(n * 10) / 10;
+const px = (r: number, a: number) => round1(CX + r * Math.cos(a));
+const py = (r: number, a: number) => round1(CY + r * Math.sin(a));
+
 /** A point on the circle, as SVG path coordinates. */
-const p = (r: number, a: number) => `${CX + r * Math.cos(a)},${CY + r * Math.sin(a)}`;
+const p = (r: number, a: number) => `${px(r, a)},${py(r, a)}`;
 
 /** SVG's large-arc flag for a sweep from a1 to a2 going forwards. */
 const large = (a1: number, a2: number) => (((a2 - a1) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) > Math.PI ? 1 : 0;
@@ -201,7 +217,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
     const a2 = toAngle(adjustedEnd);
     const { ri, ro } = radii(trackIdx, strand);
     const rm = (ri + ro) / 2;
-    const q = (a: number) => `${CX + rm * Math.cos(a)},${CY + rm * Math.sin(a)}`;
+    const q = (a: number) => p(rm, a);
     return `M${q(a1)} A${rm},${rm} 0 ${large(a1, a2)} 1 ${q(a2)}`;
   }
 
@@ -219,14 +235,14 @@ export default function CircularMap({ sequence, features, reSites, selection, on
     if (strand === 1) {
       const bodyEnd = a2 - arrowAngle;
       const bLarge = large(a1, bodyEnd);
-      const tx = CX + rm * Math.cos(a2), ty = CY + rm * Math.sin(a2);
+      const tx = px(rm, a2), ty = py(rm, a2);
       const roW = ro + 3, riW = ri - 3;
       return [
         `M${p(ro, a1)}`,
         `A${ro},${ro} 0 ${bLarge},1 ${p(ro, bodyEnd)}`,
-        `L${CX + roW * Math.cos(bodyEnd)},${CY + roW * Math.sin(bodyEnd)}`,
+        `L${p(roW, bodyEnd)}`,
         `L${tx},${ty}`,
-        `L${CX + riW * Math.cos(bodyEnd)},${CY + riW * Math.sin(bodyEnd)}`,
+        `L${p(riW, bodyEnd)}`,
         `L${p(ri, bodyEnd)}`,
         `A${ri},${ri} 0 ${bLarge},0 ${p(ri, a1)}`,
         'Z',
@@ -234,16 +250,16 @@ export default function CircularMap({ sequence, features, reSites, selection, on
     } else {
       const bodyStart = a1 + arrowAngle;
       const bLarge = large(bodyStart, a2);
-      const tx = CX + rm * Math.cos(a1), ty = CY + rm * Math.sin(a1);
+      const tx = px(rm, a1), ty = py(rm, a1);
       const roW = ro + 3, riW = ri - 3;
       return [
         `M${tx},${ty}`,
-        `L${CX + roW * Math.cos(bodyStart)},${CY + roW * Math.sin(bodyStart)}`,
+        `L${p(roW, bodyStart)}`,
         `L${p(ro, bodyStart)}`,
         `A${ro},${ro} 0 ${bLarge},1 ${p(ro, a2)}`,
         `L${p(ri, a2)}`,
         `A${ri},${ri} 0 ${bLarge},0 ${p(ri, bodyStart)}`,
-        `L${CX + riW * Math.cos(bodyStart)},${CY + riW * Math.sin(bodyStart)}`,
+        `L${p(riW, bodyStart)}`,
         `L${tx},${ty}`,
         'Z',
       ].join(' ');
@@ -291,8 +307,8 @@ export default function CircularMap({ sequence, features, reSites, selection, on
     const arm = `M${p(near, start)} L${p(far, start)} A${far},${far} 0 ${arcLarge},${sweep} ${p(far, armEnd)}`;
     const head = [
       p(far, stop),
-      `${CX + (far - 4) * Math.cos(armEnd)},${CY + (far - 4) * Math.sin(armEnd)}`,
-      `${CX + (far + 4) * Math.cos(armEnd)},${CY + (far + 4) * Math.sin(armEnd)}`,
+      p(far - 4, armEnd),
+      p(far + 4, armEnd),
     ].join(' ');
 
     return { arm, head };
@@ -342,7 +358,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
       // Diff from mean
       const dr = (d.val - origin) * (R_GC_OUT - R_GC_IN) * 2;
       const r = (R_GC_OUT + R_GC_IN) / 2 + dr;
-      return `${CX + Math.min(R_GC_OUT, Math.max(R_GC_IN, r)) * Math.cos(angle)},${CY + Math.min(R_GC_OUT, Math.max(R_GC_IN, r)) * Math.sin(angle)}`;
+      return p(Math.min(R_GC_OUT, Math.max(R_GC_IN, r)), angle);
     });
     return `M${pts.join(' L')} Z`;
   }, [gcData, R_GC_OUT, R_GC_IN, toAngle]);
@@ -398,8 +414,8 @@ export default function CircularMap({ sequence, features, reSites, selection, on
         if (deg < 0) deg += 360;
         if (deg > 90 && deg < 270) deg -= 180;
         inside.set(feat.id, {
-          x: CX + rMid * Math.cos(midA),
-          y: CY + rMid * Math.sin(midA),
+          x: px(rMid, midA),
+          y: py(rMid, midA),
           ink: labelInk(feat.color),
           deg,
         });
@@ -461,10 +477,10 @@ export default function CircularMap({ sequence, features, reSites, selection, on
     ];
 
     const placed = all.map(l => {
-      const cos = Math.cos(l.angle), sin = Math.sin(l.angle);
+      const cos = Math.cos(l.angle);
       return {
-        l, cos, sin,
-        y: CY + R_LBL * sin,
+        l, cos,
+        y: py(R_LBL, l.angle),
         side: cos > 0 ? 1 : -1,
         width: estimateTextWidth(l.text, l.fontSize, l.strong),
       };
@@ -712,10 +728,10 @@ export default function CircularMap({ sequence, features, reSites, selection, on
            const startAngle = toAngle(selection.start - 1);
            let endAngle = toAngle(selection.end);
            if (endAngle < startAngle) endAngle += 2 * Math.PI;
-           const sX = CX + R_IN * Math.cos(startAngle);
-           const sY = CY + R_IN * Math.sin(startAngle);
-           const eX = CX + R_IN * Math.cos(endAngle);
-           const eY = CY + R_IN * Math.sin(endAngle);
+           const sX = px(R_IN, startAngle);
+           const sY = py(R_IN, startAngle);
+           const eX = px(R_IN, endAngle);
+           const eY = py(R_IN, endAngle);
            const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
            return (
              <path d={`M${CX},${CY} L${sX},${sY} A${R_IN},${R_IN} 0 ${largeArc},1 ${eX},${eY} Z`} fill="rgba(59,130,246,0.1)" />
@@ -739,13 +755,12 @@ export default function CircularMap({ sequence, features, reSites, selection, on
           return Array.from({ length: count }, (_, i) => i * step);
         })().map((pos, i) => {
            const a = (pos / len) * 2 * Math.PI - Math.PI / 2;
-           const cos = Math.cos(a), sin = Math.sin(a);
            // GenBank counts from 1, and so does everything else on this page.
            const shown = pos === 0 ? 1 : pos;
            return (
              <g key={i}>
-               <line x1={CX + R_IN * cos} y1={CY + R_IN * sin} x2={CX + R_OUT * cos} y2={CY + R_OUT * sin} stroke="#9ca3af" strokeWidth={1.5} />
-               <text x={CX + R_RULER * cos} y={CY + R_RULER * sin} textAnchor="middle" dominantBaseline="middle" fontSize={9} fill="#6b7280" fontFamily="monospace" fontWeight="600">{shown >= 1000 ? `${(shown / 1000).toFixed(1)}k` : shown}</text>
+               <line x1={px(R_IN, a)} y1={py(R_IN, a)} x2={px(R_OUT, a)} y2={py(R_OUT, a)} stroke="#9ca3af" strokeWidth={1.5} />
+               <text x={px(R_RULER, a)} y={py(R_RULER, a)} textAnchor="middle" dominantBaseline="middle" fontSize={9} fill="#6b7280" fontFamily="monospace" fontWeight="600">{shown >= 1000 ? `${(shown / 1000).toFixed(1)}k` : shown}</text>
              </g>
            );
         })}
@@ -870,7 +885,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
             <g key={`orf-${o.frame}-${o.start}-${i}`} style={{ cursor: 'help' }}>
               <title>{orfTitle(o)}</title>
               <path
-                d={`M ${CX + r * Math.cos(from)} ${CY + r * Math.sin(from)} A ${r} ${r} 0 ${large(a1, a2)} ${sweep} ${CX + r * Math.cos(to)} ${CY + r * Math.sin(to)}`}
+                d={`M ${px(r, from)} ${py(r, from)} A ${r} ${r} 0 ${large(a1, a2)} ${sweep} ${px(r, to)} ${py(r, to)}`}
                 fill="none"
                 stroke={colour}
                 strokeWidth={o.coveredBy ? 2 : 3.5}
@@ -912,16 +927,16 @@ export default function CircularMap({ sequence, features, reSites, selection, on
               : a1 + Math.min(0.05, (a2 - a1) * 0.35);
 
             const arc = pr.strand === 'forward'
-              ? `M ${CX + r * Math.cos(a1)} ${CY + r * Math.sin(a1)} A ${r} ${r} 0 ${large(a1, bodyEnd)} 1 ${CX + r * Math.cos(bodyEnd)} ${CY + r * Math.sin(bodyEnd)}`
-              : `M ${CX + r * Math.cos(a2)} ${CY + r * Math.sin(a2)} A ${r} ${r} 0 ${large(bodyEnd, a2)} 0 ${CX + r * Math.cos(bodyEnd)} ${CY + r * Math.sin(bodyEnd)}`;
+              ? `M ${px(r, a1)} ${py(r, a1)} A ${r} ${r} 0 ${large(a1, bodyEnd)} 1 ${px(r, bodyEnd)} ${py(r, bodyEnd)}`
+              : `M ${px(r, a2)} ${py(r, a2)} A ${r} ${r} 0 ${large(bodyEnd, a2)} 0 ${px(r, bodyEnd)} ${py(r, bodyEnd)}`;
 
             // A little triangle at the 3' end.
-            const hx = CX + r * Math.cos(headA), hy = CY + r * Math.sin(headA);
+            const hx = px(r, headA), hy = py(r, headA);
             const back = pr.strand === 'forward' ? headA - 0.045 : headA + 0.045;
             const head = [
               `${hx},${hy}`,
-              `${CX + (r - 3.5) * Math.cos(back)},${CY + (r - 3.5) * Math.sin(back)}`,
-              `${CX + (r + 3.5) * Math.cos(back)},${CY + (r + 3.5) * Math.sin(back)}`,
+              p(r - 3.5, back),
+              p(r + 3.5, back),
             ].join(' ');
 
             const colour = pr.directionMismatch ? '#b91c1c' : '#7c3aed';
@@ -941,11 +956,11 @@ export default function CircularMap({ sequence, features, reSites, selection, on
         })()}
 
         {/* Everything that had to be written outside what it names */}
-        {laidOut.placed.map(({ l, cos, sin, y }) => {
+        {laidOut.placed.map(({ l, cos, y }) => {
           const isRight = cos > 0;
-          const elbowX = CX + (R_LBL - 20) * cos;
-          const textX = CX + R_LBL * cos + (isRight ? 10 : -10);
-          const anchorX = CX + l.anchorR * cos, anchorY = CY + l.anchorR * sin;
+          const elbowX = px(R_LBL - 20, l.angle);
+          const textX = px(R_LBL, l.angle) + (isRight ? 10 : -10);
+          const anchorX = px(l.anchorR, l.angle), anchorY = py(l.anchorR, l.angle);
 
           return (
             <g key={l.key}
@@ -957,7 +972,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
               <title>{l.title}</title>
               {/* A cut lands on the backbone, so its mark is drawn across it. */}
               {l.tick && (
-                <line x1={CX + R_IN * cos} y1={CY + R_IN * sin} x2={anchorX} y2={anchorY}
+                <line x1={px(R_IN, l.angle)} y1={py(R_IN, l.angle)} x2={anchorX} y2={anchorY}
                       stroke={l.colour} strokeWidth={2} />
               )}
               {/* Leader from the glyph out to the label's own row. */}
