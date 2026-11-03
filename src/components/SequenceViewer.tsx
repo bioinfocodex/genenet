@@ -1224,7 +1224,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   };
 
   return (
-    <div style={{ padding: '0.5rem 1.5rem 0', background: 'var(--bg-primary)', borderTop: '1px solid var(--glass-border)' }}>
+    <div className="sequence-editor" style={{ padding: '0.5rem 1.5rem 0', background: 'var(--bg-primary)', borderTop: '1px solid var(--glass-border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
 
       {/* ── Editor bar ── */}
       <div
@@ -1374,7 +1374,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
         * the tools wrap underneath and the work gets the whole width, which is
         * the right way round.
         */}
-      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div className="sequence-editor-row" style={{ display: 'flex', gap: '1rem', minWidth: 0 }}>
 
         {/*
           * ── Rail ──
@@ -1393,7 +1393,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           className="pane-slide"
           style={{ width: railOpen ? RAIL_W : 0, flexShrink: 0, overflow: 'hidden' }}
         >
-        <nav style={{ width: RAIL_W, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+        <nav className="sequence-editor-rail" style={{ width: RAIL_W, display: 'flex', flexDirection: 'column', gap: '0.85rem', maxHeight: '100%' }}>
 
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             {dirty && (
@@ -1483,7 +1483,17 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
         />
 
         {/* ── Left column ── */}
-        <div style={{ flex: '1 1 360px', minWidth: 'min(360px, 100%)' }}>
+        {/*
+          * The canvas takes what is left, rather than asking for its share.
+          *
+          * This was `flex: 1 1 360px`, which made it one of three columns
+          * each claiming a 360px basis -- so on a 1440px window the drawing
+          * settled at 518px while the rail and the statistics panel took the
+          * rest. A zero basis means the other two get the width they ask for
+          * and the drawing gets everything else, which is the right way round
+          * on a page that exists to show it.
+          */}
+        <div className="sequence-editor-canvas" style={{ flex: '1 1 0', minWidth: 'min(360px, 100%)', minHeight: 0 }}>
 
           {/* Tab content */}
           {leftTab === 'map' && (
@@ -1634,7 +1644,17 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                   {showOrfs && ` · ${orfSummary.drawn} of ${orfSummary.total.toLocaleString()} reading frames`}
                 </span>
               </div>
-              <div ref={mapRef}>
+              {/*
+                * The drawing is bounded by the shorter side of its box.
+                *
+                * Widening the canvas made the circular map wider, and a
+                * circular map is square -- so at 968px of canvas it became
+                * 800px tall in a 687px box and the bottom third of the
+                * plasmid was below the window. Capping the height here means
+                * collapsing a panel makes the map as large as the room
+                * allows and never larger.
+                */}
+              <div ref={mapRef} className="sequence-editor-drawing">
               {mapView === 'linear'
                 ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={mapSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
                 : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />

@@ -105,6 +105,72 @@ a:hover {
   min-width: 0;
 }
 
+/* ── The sequence editor fills the window ──────────────────────────────────
+ *
+ * The editor's whole purpose is the drawing in the middle of it, and the page
+ * used to let that drawing sit wherever the stack of controls above it
+ * happened to end -- at 1440x900 the page needed 1403px, so the map could not
+ * be seen whole without scrolling the toolbar that drives it off the top.
+ *
+ * Instead the editor claims exactly the height of the content area: the bar
+ * at the top, the status strip at the bottom, and the canvas taking what is
+ * left and scrolling inside itself. Provenance still lives below and is still
+ * a scroll away, which is right -- the sequence is what people open the page
+ * for, and the history is what they come back for.
+ *
+ * Only above 1024px. Below it the columns wrap and the work gets the whole
+ * width, and pinning a height there would squash three stacked columns into
+ * one screen rather than letting them run.
+ */
+/*
+ * Columns size to their own content by default, which is what a wrapped,
+ * narrow layout wants. Above 1024px they stretch instead, so the canvas is
+ * exactly as tall as the row and scrolls inside itself rather than growing
+ * past the bottom of the window and taking the map with it.
+ */
+.sequence-editor-row { align-items: flex-start; flex-wrap: wrap; }
+
+@media (min-width: 1024px) {
+  .sequence-editor-row { align-items: stretch; }
+  .sequence-editor {
+    /* the 70px header, then .page-content's own 2rem of padding */
+    height: calc(100dvh - 70px - 4rem);
+    min-height: 520px;
+  }
+  .sequence-editor-row {
+    flex: 1;
+    /* without this a flex child refuses to shrink below its content */
+    min-height: 0;
+    /*
+     * No wrapping up here, which is what lets the columns stretch.
+     * A wrapped flex line is sized by its own content, so `stretch` has
+     * nothing to stretch to and the canvas grows past the bottom of the
+     * window -- which is the whole thing this rule set exists to prevent.
+     * Below 1024px the columns still wrap and the work gets the full width.
+     */
+    flex-wrap: nowrap;
+  }
+  .sequence-editor-canvas {
+    overflow: auto;
+  }
+  .sequence-editor-rail {
+    overflow-y: auto;
+  }
+  /*
+   * A square map in a wide, short box is bounded by the box's height, not
+   * its width. svg keeps its aspect ratio on its own, so capping the height
+   * and letting the width follow is all this needs.
+   */
+  .sequence-editor-drawing { min-height: 0; }
+  .sequence-editor-drawing svg {
+    max-height: calc(100dvh - 70px - 4rem - 260px);
+    width: auto;
+    max-width: 100%;
+    display: block;
+    margin: 0 auto;
+  }
+}
+
 /* UI Elements */
 .title-gradient {
   background: linear-gradient(135deg, #0f172a, #334155);
