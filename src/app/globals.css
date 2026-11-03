@@ -171,6 +171,40 @@ a:hover {
   }
 }
 
+/* ── Focus mode ────────────────────────────────────────────────────────────
+ *
+ * Just the sequence. The workspace navigation and the top bar are how you
+ * get to a record; once you are reading one and checking which way round an
+ * insert went in, they are 330px of width and height spent on somewhere you
+ * are not going.
+ *
+ * Deliberately not remembered between visits. The two panels inside the
+ * editor are a working preference and are remembered; this is a mode you
+ * enter for a minute, and a person who closed the browser in it should not
+ * come back to an application with no navigation and no memory of why.
+ * Escape leaves, and so does the button that entered.
+ */
+/*
+ * !important because both of these set `display: flex` inline, and an inline
+ * style beats a stylesheet rule however specific it is. This is the case the
+ * keyword exists for -- overriding something you cannot reach -- rather than
+ * a way of winning an argument with another rule.
+ */
+body.focus-mode .app-sidebar,
+body.focus-mode .app-header { display: none !important; }
+
+body.focus-mode .page-content { padding: 0.75rem; }
+
+@media (min-width: 1024px) {
+  body.focus-mode .sequence-editor {
+    /* no header to subtract any more, and the slimmer page padding */
+    height: calc(100dvh - 1.5rem);
+  }
+  body.focus-mode .sequence-editor-drawing svg {
+    max-height: calc(100dvh - 1.5rem - 260px);
+  }
+}
+
 /* UI Elements */
 .title-gradient {
   background: linear-gradient(135deg, #0f172a, #334155);
