@@ -14,7 +14,6 @@ interface CircularMapProps {
   onSelect?: (s: { start: number; end: number }) => void;
   onFeatureClick?: (f: SequenceFeature) => void;
   name?: string;
-  onAddFeature?: (sel: { start: number; end: number }) => void;
   /** How to choose which sites are worth drawing. Defaults are SnapGene's. */
   enzymeDisplay?: ChooseOptions;
   /** Primers already located on this sequence. */
@@ -84,7 +83,7 @@ interface OutsideLabel {
   feature?: SequenceFeature;
 }
 
-export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, onAddFeature, enzymeDisplay, primers = [], orfs = [] }: CircularMapProps) {
+export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, enzymeDisplay, primers = [], orfs = [] }: CircularMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   /*
    * Zoom and pan are one piece of state, not two.

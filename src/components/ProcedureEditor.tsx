@@ -72,7 +72,7 @@ export default function ProcedureEditor({ initial = {}, cancelHref = '/procedure
     const fd = new FormData();
     if (isEdit) fd.append('id', initial.id!);
     fd.append('data', JSON.stringify(payload));
-    startTransition(() => { isEdit ? updateProcedure(fd) : createProcedure(fd); });
+    startTransition(() => { if (isEdit) updateProcedure(fd); else createProcedure(fd); });
   };
 
   const tabs: [typeof activeTab, string][] = [['basic','Basic Info'],['steps','Steps'],['materials','Materials'],['safety','Safety & Review']];

@@ -25,7 +25,6 @@ interface Props {
 }
 
 export default function CollectionManager({ collections: init, sequences, proteins }: Props) {
-  const [collections, setCollections] = useState(init);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [showForm, setShowForm] = useState(false);

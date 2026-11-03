@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronRight, Database, Dna } from 'lucide-react';
-import SequenceViewer, { type SequenceFeature } from '@/components/SequenceViewer';
+import SequenceViewer from '@/components/SequenceViewer';
 import { normaliseFeatures } from '@/lib/features';
 import { ancestryOf, descendantsOf } from '@/lib/lineage';
 import { historyFor } from '@/lib/history';

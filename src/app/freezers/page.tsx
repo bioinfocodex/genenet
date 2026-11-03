@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
-import { ChevronRight } from 'lucide-react';
 import FreezerViewer from '@/components/FreezerViewer';
 import FreezersClient from './client';
 import OutOfFreezer from '@/components/samples/OutOfFreezer';

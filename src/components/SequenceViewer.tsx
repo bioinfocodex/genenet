@@ -3,7 +3,7 @@ import React, { useState, useMemo, useTransition, useRef, useCallback, useEffect
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
-  FlaskConical, Dna, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check,
+  FlaskConical, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check,
 } from 'lucide-react';
 import { ENZYMES } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
@@ -19,7 +19,7 @@ import { verifyRead, type ReadVerification } from '@/lib/alignment';
 import TracePanel, { type SavedReadInfo, type VerificationInfo } from './sequences/TracePanel';
 import { annotate } from '@/lib/annotation';
 import { annotationReport, type AnnotationReport } from '@/lib/annotation-report';
-import { dormantEnzymes, blockedSites, type BlockedSite } from '@/lib/methylation';
+import { dormantEnzymes, blockedSites } from '@/lib/methylation';
 import { isoschizomersOf, STARTER_SETS, resolveSet } from '@/lib/enzyme-sets';
 import type { LibraryFeature } from '@/lib/features.data';
 import type { SequenceFeature } from '@/lib/features';
@@ -1577,7 +1577,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               <div ref={mapRef}>
               {mapView === 'linear'
                 ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={mapSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} onAddFeature={(sel) => { setSelection(sel); setModalFeat({ name: '', type: 'gene', start: String(sel.start), end: String(sel.end), strand: '1', color: PRESET_COLORS[features.length % PRESET_COLORS.length], notes: '' }); setShowAddFeatureModal(true); }} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
               }
               </div>
 
@@ -1667,8 +1667,6 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                 setLayers={setMolLayers}
                 frames={molFrames}
                 setFrames={setMolFrames}
-                viewMode="wrap"
-                setViewMode={() => {}}
                 lineLen={effectiveLineLen}
                 setLineLen={setMolLineLen}
                 showStats={showMolStats}
@@ -1684,12 +1682,11 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
               />
               {showMolFind && (
                 <MolbuilderFindReplace 
-                  onFind={(q) => {
-                    // Search logic could be expanded here to highlight in the renderer
+                  onFind={() => {
+                    // Not implemented: finding would highlight in the renderer.
                   }} 
                   onReplace={(q, r) => {
                     if (!q || !r) return;
-                    const next = sequence.replace(new RegExp(q, 'gi'), r);
                     // This would normally trigger a full state update. 
                     // Caution: modifying the main sequence requires careful handling in this project's architecture.
                     alert(`Replace ${q} with ${r} (Action: Not applied to safeguard data, implementation check)`);
@@ -2802,18 +2799,6 @@ function RailStat({ label, value, title }: { label: string; value: string; title
 
 // ─── Linear Map ──────────────────────────────────────────────────────────────
 
-function assignRows(features: SequenceFeature[]): Map<string, number> {
-  const sorted = [...features].sort((a, b) => a.start - b.start);
-  const rowEnds: number[] = [];
-  const map = new Map<string, number>();
-  for (const f of sorted) {
-    let row = rowEnds.findIndex(e => e < f.start);
-    if (row === -1) { row = rowEnds.length; rowEnds.push(0); }
-    rowEnds[row] = f.end;
-    map.set(f.id, row);
-  }
-  return map;
-}
 
 // ─── RE Sites Panel ──────────────────────────────────────────────────────────
 
@@ -3104,472 +3089,6 @@ function RESitesPanel({
 
 // ─── Sequence Panel ──────────────────────────────────────────────────────────
 
-function baseColor(base: string): string {
-  switch (base.toUpperCase()) {
-    case 'A': return '#16a34a';
-    case 'T': return '#dc2626';
-    case 'G': return '#ea580c';
-    case 'C': return '#2563eb';
-    default: return '#374151';
-  }
-}
-
-const CODON_TABLE: Record<string, string> = {
-  TTT:'F',TTC:'F',TTA:'L',TTG:'L',CTT:'L',CTC:'L',CTA:'L',CTG:'L',
-  ATT:'I',ATC:'I',ATA:'I',ATG:'M',GTT:'V',GTC:'V',GTA:'V',GTG:'V',
-  TCT:'S',TCC:'S',TCA:'S',TCG:'S',CCT:'P',CCC:'P',CCA:'P',CCG:'P',
-  ACT:'T',ACC:'T',ACA:'T',ACG:'T',GCT:'A',GCC:'A',GCA:'A',GCG:'A',
-  TAT:'Y',TAC:'Y',TAA:'*',TAG:'*',CAT:'H',CAC:'H',CAA:'Q',CAG:'Q',
-  AAT:'N',AAC:'N',AAA:'K',AAG:'K',GAT:'D',GAC:'D',GAA:'E',GAG:'E',
-  TGT:'C',TGC:'C',TGA:'*',TGG:'W',CGT:'R',CGC:'R',CGA:'R',CGG:'R',
-  AGT:'S',AGC:'S',AGA:'R',AGG:'R',GGT:'G',GGC:'G',GGA:'G',GGG:'G',
-};
-const AA_3: Record<string, string> = {
-  F:'Phe',L:'Leu',I:'Ile',M:'Met',V:'Val',S:'Ser',P:'Pro',T:'Thr',A:'Ala',
-  Y:'Tyr',H:'His',Q:'Gln',N:'Asn',K:'Lys',D:'Asp',E:'Glu',C:'Cys',W:'Trp',
-  R:'Arg',G:'Gly','*':'Stop',
-};
-function translate1(seq: string): string {
-  let out = '';
-  for (let i = 0; i + 2 < seq.length; i += 3) out += CODON_TABLE[seq.substring(i, i + 3).toUpperCase()] ?? 'X';
-  return out;
-}
-function translate3(seq: string): string {
-  const r: string[] = [];
-  for (let i = 0; i + 2 < seq.length; i += 3) {
-    const aa = CODON_TABLE[seq.substring(i, i + 3).toUpperCase()] ?? 'X';
-    r.push(AA_3[aa] ?? aa);
-  }
-  return r.join('-');
-}
-
-function GCGraph({ sequence }: { sequence: string }) {
-  const WINDOW = 100;
-  const windows: number[] = [];
-  for (let i = 0; i < sequence.length - WINDOW; i += WINDOW) {
-    windows.push(calcGC(sequence.substring(i, i + WINDOW)));
-  }
-  if (windows.length === 0) return null;
-  const W = 600;
-  const H = 60;
-  const barW = Math.max(1, W / windows.length);
-  return (
-    <div style={{ marginTop: '1rem' }}>
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.3rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-        GC Content ({WINDOW} bp window)
-      </div>
-      <svg width={W} height={H + 20} style={{ display: 'block', overflow: 'visible' }}>
-        {/* Axis lines */}
-        <line x1={0} y1={H} x2={W} y2={H} stroke="#e2e8f0" strokeWidth={1} />
-        <line x1={0} y1={H * 0.4} x2={W} y2={H * 0.4} stroke="#e2e8f0" strokeWidth={1} strokeDasharray="4,4" />
-        <text x={W + 2} y={H * 0.4 + 4} fontSize={8} fill="#94a3b8">60%</text>
-        <line x1={0} y1={H * 0.6} x2={W} y2={H * 0.6} stroke="#e2e8f0" strokeWidth={1} strokeDasharray="4,4" />
-        <text x={W + 2} y={H * 0.6 + 4} fontSize={8} fill="#94a3b8">40%</text>
-        {windows.map((gc, i) => {
-          const barH = (gc / 100) * H;
-          const color = gc >= 40 && gc <= 60 ? '#22c55e' : gc < 40 ? '#3b82f6' : '#ef4444';
-          return (
-            <rect
-              key={i}
-              x={i * barW}
-              y={H - barH}
-              width={Math.max(barW - 0.5, 1)}
-              height={barH}
-              fill={color}
-              opacity={0.7}
-            />
-          );
-        })}
-        {/* X-axis labels */}
-        {[0, 0.25, 0.5, 0.75, 1].map((frac, i) => {
-          const pos = Math.round(frac * sequence.length);
-          const x = frac * W;
-          return (
-            <text key={i} x={x} y={H + 14} textAnchor="middle" fontSize={8} fill="#94a3b8" fontFamily="monospace">
-              {pos >= 1000 ? `${(pos / 1000).toFixed(1)}k` : pos}
-            </text>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
-
-function SequencePanel({
-  sequence, features, reSites, selection, onSelect, onMakePrimer,
-}: {
-  sequence: string;
-  features: SequenceFeature[];
-  reSites: ReSite[];
-  selection: { start: number; end: number } | null;
-  onSelect: (sel: { start: number; end: number } | null) => void;
-  onMakePrimer?: (sel: { start: number; end: number }) => void;
-}) {
-  const BASES_PER_LINE = 60;
-  const GROUP = 10;
-  const [dsMode, setDsMode] = useState<'single' | 'double'>('single');
-  const [viewMode, setViewMode] = useState<'normal' | 'colored' | 'codon'>('normal');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [clickStart, setClickStart] = useState<number | null>(null);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; abs: number } | null>(null);
-
-  const rc = useMemo(() => reverseComplement(sequence), [sequence]);
-
-  const searchMatches = useMemo(() => {
-    if (!searchQuery || searchQuery.length < 3) return [];
-    const q = searchQuery.toUpperCase().replace(/[^ACGT]/g, '');
-    if (!q) return [];
-    const matches: number[] = [];
-    let idx = 0;
-    while ((idx = sequence.toUpperCase().indexOf(q, idx)) !== -1) {
-      matches.push(idx);
-      idx++;
-    }
-    return matches;
-  }, [sequence, searchQuery]);
-
-  const searchLen = useMemo(() => {
-    const q = searchQuery.toUpperCase().replace(/[^ACGT]/g, '');
-    return q.length;
-  }, [searchQuery]);
-
-  // Per-character styling: feature color takes priority, then RE recognition site
-  const charStyle = useMemo(() => {
-    const style: ({ bg: string; border?: string; isSearch?: boolean } | null)[] = new Array(sequence.length).fill(null);
-    reSites.forEach(s => {
-      const start = Math.max(0, s.recognitionStart);
-      const end = Math.min(sequence.length, s.recognitionStart + s.recognitionLen);
-      for (let i = start; i < end; i++) {
-        if (!style[i]) style[i] = { bg: '#fef08a', border: '#ca8a04' };
-      }
-    });
-    features.forEach(feat => {
-      for (let i = feat.start - 1; i < feat.end && i < sequence.length; i++) {
-        style[i] = { bg: feat.color + '33', border: feat.color };
-      }
-    });
-    // Search matches override everything
-    searchMatches.forEach(pos => {
-      for (let i = pos; i < pos + searchLen && i < sequence.length; i++) {
-        style[i] = { bg: '#fbbf24', border: '#d97706', isSearch: true };
-      }
-    });
-    // Selection highlight
-    if (selection) {
-      for (let i = selection.start - 1; i < selection.end && i < sequence.length; i++) {
-        const existing = style[i];
-        style[i] = { bg: 'rgba(59,130,246,0.18)', border: '#3b82f6', isSearch: existing?.isSearch };
-      }
-    }
-    return style;
-  }, [sequence, features, reSites, searchMatches, searchLen, selection]);
-
-  const lines = [];
-  for (let i = 0; i < sequence.length; i += BASES_PER_LINE) {
-    lines.push({ start: i, text: sequence.substring(i, i + BASES_PER_LINE) });
-  }
-
-  const handleBaseClick = (abs: number) => {
-    if (clickStart === null) {
-      setClickStart(abs);
-    } else {
-      const s = Math.min(clickStart, abs) + 1;
-      const e = Math.max(clickStart, abs) + 1;
-      onSelect({ start: s, end: e });
-      setClickStart(null);
-      setTooltip(null);
-    }
-  };
-
-  const handleBaseMouseEnter = (abs: number, e: React.MouseEvent) => {
-    setTooltip({ x: e.clientX, y: e.clientY, abs });
-  };
-
-  const handleBaseMouseMove = (abs: number, e: React.MouseEvent) => {
-    setTooltip({ x: e.clientX, y: e.clientY, abs });
-  };
-
-  // Compute what the tooltip should show
-  const tooltipContent = React.useMemo(() => {
-    if (!tooltip) return null;
-    if (clickStart !== null) {
-      // actively selecting — show live Tm of the range so far
-      const s = Math.min(clickStart, tooltip.abs);
-      const e = Math.max(clickStart, tooltip.abs);
-      const len = e - s + 1;
-      if (len < 4) return { label: `${len} bp`, tm: null, gc: null };
-      const seq = sequence.substring(s, e + 1).toUpperCase();
-      return { label: `${s + 1}–${e + 1} · ${len} bp`, tm: calcTm(seq), gc: calcGC(seq) };
-    }
-    // hovering without selection active — show single-base position
-    return { label: `pos ${tooltip.abs + 1}`, tm: null, gc: null };
-  }, [tooltip, clickStart, sequence]);
-
-  return (
-    <div>
-      {/* Search bar */}
-      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap' }}>
-        <input
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          className="input-control"
-          placeholder="Search sequence (IUPAC)…"
-          style={{ padding: '0.38rem 0.75rem', fontSize: '0.82rem', flex: 1, minWidth: 180 }}
-        />
-        {searchMatches.length > 0 && (
-          <span style={{ fontSize: '0.76rem', color: 'var(--accent-blue)', fontWeight: 600 }}>
-            {searchMatches.length} match{searchMatches.length !== 1 ? 'es' : ''}
-          </span>
-        )}
-        {searchQuery.length >= 3 && searchMatches.length === 0 && (
-          <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>No matches</span>
-        )}
-      </div>
-
-      {/* Mode toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-        {([['normal','Plain'], ['colored','A/T/G/C Colors'], ['codon','Codon View']] as const).map(([m, label]) => (
-          <button key={m} onClick={() => setViewMode(m)} style={{ padding: '0.28rem 0.7rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: viewMode === m ? 'var(--accent-blue-15)' : 'white', color: viewMode === m ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: viewMode === m ? 600 : 400 }}>
-            {label}
-          </button>
-        ))}
-        {(['single', 'double'] as const).map(m => (
-          <button key={m} onClick={() => setDsMode(m)} style={{ padding: '0.28rem 0.7rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: dsMode === m ? 'rgba(124,58,237,0.1)' : 'white', color: dsMode === m ? '#7c3aed' : 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: dsMode === m ? 600 : 400 }}>
-            {m === 'single' ? '1-strand' : '2-strand'}
-          </button>
-        ))}
-        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Click base to start, click again to end selection</span>
-      </div>
-
-      {/* Live selection info: Tm, GC, Make Primer */}
-      {selection && (() => {
-        const selSeq = sequence.substring(selection.start - 1, selection.end).toUpperCase();
-        const tm = selSeq.length >= 4 ? calcTm(selSeq) : null;
-        const gc = selSeq.length >= 4 ? calcGC(selSeq) : null;
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.9rem', marginBottom: '0.75rem', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--accent-blue)', fontWeight: 600 }}>
-              {selection.start}–{selection.end} ({selection.end - selection.start + 1} bp)
-            </span>
-            {tm !== null && <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Tm: <strong>{tm}°C</strong></span>}
-            {gc !== null && <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>GC: <strong>{gc}%</strong></span>}
-            <span style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--text-muted)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selSeq.length > 30 ? selSeq.slice(0, 15) + '…' + selSeq.slice(-15) : selSeq}</span>
-            {onMakePrimer && selection.end - selection.start + 1 >= 4 && (
-              <button
-                onClick={() => { setClickStart(null); setTooltip(null); onMakePrimer?.({ start: selection.start, end: selection.end }); }}
-                style={{ marginLeft: 'auto', padding: '0.3rem 0.75rem', borderRadius: '6px', border: '1px solid var(--accent-blue)', background: 'var(--accent-blue-15)', color: 'var(--accent-blue)', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: 600 }}
-              >
-                <Dna size={13} /> Make primer
-              </button>
-            )}
-            <button onClick={() => onSelect(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.75rem', padding: 0 }}>✕</button>
-          </div>
-        );
-      })()}
-      {/* ── Copy toolbar ── */}
-      {selection && (
-        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: '#f8fafc', border: '1px solid var(--glass-border)', borderRadius: '8px' }}>
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', alignSelf: 'center', marginRight: '0.25rem', fontWeight: 600 }}>Copy:</span>
-          {[
-            { label: "Top 5′→3′", action: () => navigator.clipboard.writeText(sequence.substring(selection.start - 1, selection.end).toUpperCase()) },
-            { label: "Bottom 3′→5′", action: () => navigator.clipboard.writeText(reverseComplement(sequence.substring(selection.start - 1, selection.end)).split('').reverse().join('').toUpperCase()) },
-            { label: 'Rev. Complement', action: () => navigator.clipboard.writeText(reverseComplement(sequence.substring(selection.start - 1, selection.end)).toUpperCase()) },
-            { label: 'FASTA', action: () => navigator.clipboard.writeText(`>selection_${selection.start}_${selection.end}\n${sequence.substring(selection.start - 1, selection.end).toUpperCase()}`) },
-            { label: '1-letter AA', action: () => navigator.clipboard.writeText(translate1(sequence.substring(selection.start - 1, selection.end))) },
-            { label: '3-letter AA', action: () => navigator.clipboard.writeText(translate3(sequence.substring(selection.start - 1, selection.end))) },
-          ].map(({ label, action }) => (
-            <button key={label} onClick={action} style={{ fontSize: '0.7rem', padding: '0.2rem 0.55rem', borderRadius: '5px', border: '1px solid var(--glass-border)', background: 'white', cursor: 'pointer', color: 'var(--text-secondary)', fontFamily: 'inherit' }}>
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-muted)' }}>
-          <span style={{ width: 12, height: 10, background: '#fef08a', border: '1px solid #ca8a04', display: 'inline-block', borderRadius: '1px' }} />
-          Restriction site
-        </span>
-        <span style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-muted)' }}>
-          <span style={{ width: 12, height: 10, background: '#fbbf2480', border: '1px solid #d97706', display: 'inline-block', borderRadius: '1px' }} />
-          Search match
-        </span>
-        <span style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-muted)' }}>
-          <span style={{ width: 12, height: 10, background: 'rgba(59,130,246,0.18)', border: '1px solid #3b82f6', display: 'inline-block', borderRadius: '1px' }} />
-          Selection
-        </span>
-        {features.map(f => (
-          <span key={f.id} style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-muted)' }}>
-            <span style={{ width: 12, height: 10, background: f.color + '33', border: `1px solid ${f.color}`, display: 'inline-block', borderRadius: '1px' }} />
-            {f.name}
-          </span>
-        ))}
-      </div>
-
-      {/* Sequence */}
-      <div style={{ fontFamily: 'monospace', fontSize: '0.76rem', lineHeight: 1.9, overflowX: 'auto', background: 'white', padding: '1rem', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
-        {lines.map(({ start, text }) => {
-          return (
-            <div key={start} style={{ marginBottom: dsMode === 'double' ? '0.6rem' : 0 }}>
-              {/* Forward strand */}
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <span style={{ color: 'var(--text-muted)', minWidth: 52, textAlign: 'right', userSelect: 'none', flexShrink: 0 }}>{start + 1}</span>
-                <div>
-                  {Array.from({ length: Math.ceil(text.length / GROUP) }, (_, gi) => {
-                    const gStart = gi * GROUP;
-                    const group = text.substring(gStart, gStart + GROUP);
-                    return (
-                      <span key={gi} style={{ marginRight: '0.45rem' }}>
-                        {group.split('').map((base, bi) => {
-                          const abs = start + gStart + bi;
-                          const s = charStyle[abs];
-
-                          // Codon mode: check if start of codon is ATG or stop
-                          let codonHighlight: string | null = null;
-                          if (viewMode === 'codon') {
-                            const codonStart = abs - (abs % 3);
-                            const codon = sequence.substring(codonStart, codonStart + 3).toUpperCase();
-                            if (abs % 3 === 0 && codon === 'ATG') codonHighlight = 'rgba(34,197,94,0.18)';
-                            else if (abs % 3 === 0 && ['TAA','TAG','TGA'].includes(codon)) codonHighlight = 'rgba(239,68,68,0.18)';
-                          }
-
-                          const textColor = viewMode === 'colored' || viewMode === 'codon' ? baseColor(base) : 'inherit';
-
-                          return (
-                            <span
-                              key={bi}
-                              onClick={() => handleBaseClick(abs)}
-                              onMouseEnter={ev => handleBaseMouseEnter(abs, ev)}
-                              onMouseMove={ev => handleBaseMouseMove(abs, ev)}
-                              onMouseLeave={() => setTooltip(null)}
-                              style={{
-                                display: 'inline-block',
-                                width: '1ch',
-                                textAlign: 'center',
-                                background: s?.bg ?? codonHighlight ?? 'transparent',
-                                borderBottom: s?.border ? `2px solid ${s.border}` : 'none',
-                                borderRadius: '1px',
-                                cursor: clickStart !== null ? 'crosshair' : 'pointer',
-                                color: textColor,
-                                fontWeight: viewMode === 'colored' ? 600 : 'inherit',
-                                boxSizing: 'border-box',
-                              }}
-                            >
-                              {base}
-                            </span>
-                          );
-                        })}
-                      </span>
-                    );
-                  })}
-                </div>
-                <span style={{ color: 'var(--text-muted)', userSelect: 'none', flexShrink: 0 }}>{start + text.length}</span>
-              </div>
-
-              {/* Base-pair bonds row */}
-              {dsMode === 'double' && (
-                <div style={{ display: 'flex', gap: '0.75rem', lineHeight: 1, margin: '1px 0' }}>
-                  <span style={{ minWidth: 52, flexShrink: 0 }} />
-                  <div style={{ fontFamily: 'monospace', fontSize: '0.76rem', color: '#cbd5e1' }}>
-                    {Array.from({ length: Math.ceil(text.length / GROUP) }, (_, gi) => {
-                      const gStart = gi * GROUP;
-                      const group = text.substring(gStart, gStart + GROUP);
-                      return (
-                        <span key={gi} style={{ marginRight: '0.45rem' }}>
-                          {group.split('').map((_, bi2) => (
-                            <span key={bi2} style={{ display: 'inline-block', width: '1ch', textAlign: 'center' }}>|</span>
-                          ))}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              {/* Reverse complement strand — each base aligned directly below forward */}
-              {dsMode === 'double' && (
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                  <span style={{ color: '#64748b', minWidth: 52, textAlign: 'right', userSelect: 'none', flexShrink: 0, fontSize: '0.7rem' }}>3′</span>
-                  <div>
-                    {Array.from({ length: Math.ceil(text.length / GROUP) }, (_, gi) => {
-                      const gStart = gi * GROUP;
-                      const group = text.substring(gStart, gStart + GROUP);
-                      return (
-                        <span key={gi} style={{ marginRight: '0.45rem' }}>
-                          {group.split('').map((_, bi) => {
-                            const abs = start + gStart + bi;
-                            // complement base aligned directly below forward base
-                            const compBase = rc[rc.length - 1 - abs] ?? '?';
-                            return (
-                              <span key={bi} style={{ display: 'inline-block', width: '1ch', textAlign: 'center', color: viewMode === 'colored' ? baseColor(compBase) : '#64748b' }}>
-                                {compBase}
-                              </span>
-                            );
-                          })}
-                        </span>
-                      );
-                    })}
-                  </div>
-                  <span style={{ color: '#64748b', userSelect: 'none', flexShrink: 0, fontSize: '0.7rem' }}>5′</span>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* GC Content Graph */}
-      <GCGraph sequence={sequence} />
-
-      {/* ── Live Tm tooltip ── */}
-      {tooltip && tooltipContent && (clickStart !== null || tooltipContent.tm !== null) && (
-        <div style={{
-          position: 'fixed',
-          left: tooltip.x + 14,
-          top: tooltip.y - 44,
-          zIndex: 1500,
-          pointerEvents: 'none',
-          background: '#0f172a',
-          color: '#f1f5f9',
-          borderRadius: '7px',
-          padding: '0.3rem 0.6rem',
-          fontSize: '0.72rem',
-          fontFamily: 'monospace',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
-          whiteSpace: 'nowrap',
-          display: 'flex',
-          gap: '0.5rem',
-          alignItems: 'center',
-        }}>
-          {clickStart !== null && (
-            <span style={{ color: '#94a3b8' }}>
-              {tooltipContent.label}
-            </span>
-          )}
-          {tooltipContent.tm !== null && (
-            <>
-              <span style={{ color: '#60a5fa', fontWeight: 700 }}>Tm {tooltipContent.tm}°C</span>
-              <span style={{ color: '#86efac' }}>GC {tooltipContent.gc}%</span>
-            </>
-          )}
-          {clickStart !== null && tooltipContent.tm === null && (
-            <span style={{ color: '#64748b', fontSize: '0.65rem' }}>select end…</span>
-          )}
-          {/* small arrow */}
-          <div style={{
-            position: 'absolute', bottom: -5, left: 14,
-            width: 0, height: 0,
-            borderLeft: '5px solid transparent',
-            borderRight: '5px solid transparent',
-            borderTop: '5px solid #0f172a',
-          }} />
-        </div>
-      )}
-
-    </div>
-  );
-}
-
 // ─── ORFs Panel ───────────────────────────────────────────────────────────────
 
 const START_CODON_INFO: Record<string, string> = {
@@ -3803,7 +3322,7 @@ function PCRPanel({ sequenceId, sequenceName, template, primers, result, fwd, re
   // Every product the pair can give, each as its own band: a second band on
   // the gel is the finding, and showing only the intended one hides it.
   const products = result?.products ?? [];
-  const bands = products.map((p, i) => ({
+  const bands = products.map((p) => ({
     size: p.size,
     label: `${p.size.toLocaleString()} bp${p.mismatches ? ' (mismatched)' : ''}`,
     color: p.mismatches ? '#a3560a' : 'var(--accent-blue)',
@@ -4839,7 +4358,7 @@ function VirtualGelPanel({ sequence, reSitesByEnzyme, seqType }: { sequence: str
     return 30 + ((logMax - logBp) / (logMax - logMin)) * (GEL_H - 60);
   }
 
-  const bandColor = (bp: number) => '#00FF00'; // SnapGene Fluorescent Green
+  const bandColor = (_bp: number) => '#00FF00'; // SnapGene Fluorescent Green
 
   return (
     <div>

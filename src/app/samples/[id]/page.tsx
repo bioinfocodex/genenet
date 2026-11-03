@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRight, FlaskConical } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import SampleDetailClient from './client';
 import QuantityPanel from '@/components/samples/QuantityPanel';
 import SampleBarcode from '@/components/samples/SampleBarcode';

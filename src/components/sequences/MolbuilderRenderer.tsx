@@ -2,13 +2,8 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { 
   NT_COL, 
-  NT_BOT, 
-  AA_COL_SEQ, 
-  AA_BG_SEQ, 
-  COMP_MAP, 
-  AA3, 
-  AA3BG, 
-  AA3FG,
+  NT_BOT,   
+  COMP_MAP,   
   translateSeq,
   getAAStyle
 } from '@/lib/molbuilder-logic';
