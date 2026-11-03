@@ -84,6 +84,14 @@ interface MolbuilderRendererProps {
   };
   frames: Set<number>;
   selection?: { start: number; end: number } | null;
+  /**
+   * Every place a search matched, 1-based and inclusive.
+   *
+   * Separate from the selection: the selection is the hit being read now
+   * and scrolls into view, and these are the others, so a search answers
+   * "where else" as well as "where".
+   */
+  searchHits?: { start: number; end: number }[];
   onSelect: (sel: { start: number; end: number } | null) => void;
   /** Insertion point, as a 0-indexed gap between bases. Null when not editing. */
   caret?: number | null;
@@ -101,11 +109,25 @@ export default function MolbuilderRenderer({
   layers,
   frames,
   selection,
+  searchHits = [],
   onSelect,
   caret = null,
   onCaret,
   onFeatureClick,
 }: MolbuilderRendererProps) {
+  /*
+   * A set of positions rather than a scan per base. A search on a plasmid
+   * can return thousands of hits and the renderer draws every base, so
+   * testing each base against each hit is the one shape this must not take.
+   */
+  const hitPositions = useMemo(() => {
+    const set = new Set<number>();
+    for (const h of searchHits) {
+      for (let p = h.start; p <= h.end; p++) set.add(p);
+    }
+    return set;
+  }, [searchHits]);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number | null>(null);
 
@@ -679,6 +701,7 @@ export default function MolbuilderRenderer({
           {chunk.split('').map((c, j) => {
             const pos = i + j;
             const isSelected = selection && pos + 1 >= selection.start && pos + 1 <= selection.end;
+            const isHit = !isSelected && hitPositions.has(pos + 1);
             const ink = siteInk[j];
             return (
               <span 
@@ -693,6 +716,9 @@ export default function MolbuilderRenderer({
                   // Selection is set by a class, so leaving the inline
                   // background off is what lets it win where the two meet.
                   ...(ink && !isSelected ? { background: `${ink}2e` } : {}),
+                  // A search hit is tinted, not selected: one of them is the
+                  // one being read and the rest are where else to look.
+                  ...(isHit ? { background: 'rgba(250,204,21,0.45)' } : {}),
                   ...(ink ? { boxShadow: `inset 0 -2px 0 ${ink}` } : {}),
                 }}
               >
