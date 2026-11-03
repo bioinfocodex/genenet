@@ -135,7 +135,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
     if (!a || !el) return;
     const xAtNewZoom = PAD_L + (a.bp / len) * (box * zoom - PAD_L - PAD_R);
     el.scrollLeft = xAtNewZoom - a.offset;
-  }, [zoom, boxW, len]);
+  }, [zoom, box, len]);
 
   const zoomBy = useCallback((factor: number, at?: { bp: number; offset: number }) => {
     // The anchor is recorded here rather than inside the updater: a state
@@ -167,7 +167,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [zoomBy, boxW, zoom, len]);
+  }, [zoomBy, box, zoom, len]);
 
   /*
    * The x range actually on screen.

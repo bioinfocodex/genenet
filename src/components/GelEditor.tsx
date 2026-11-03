@@ -2,7 +2,7 @@
 import { useState, useTransition } from 'react';
 import { updateGel } from '@/app/actions/gels';
 import { LADDER_1KB, gelPosition } from '@/lib/simulation';
-import { Plus, Trash2, GripVertical, Save } from 'lucide-react';
+import { Plus, Trash2, Save } from 'lucide-react';
 
 interface Band {
   size: number;

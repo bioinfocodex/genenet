@@ -54,7 +54,7 @@ async function main() {
     }
   });
   
-  const exp3 = await prisma.experiment.create({
+  await prisma.experiment.create({
     data: {
       title: 'Plasmid Assembly',
       protocol: 'Plasmid construction',

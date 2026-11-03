@@ -6,7 +6,6 @@ import { Dna } from 'lucide-react';
 import { Suspense } from 'react';
 import SsoButton from './sso-button';
 
-type State = { error?: string } | undefined;
 
 export default function LoginForm({ sso }: { sso: { enabled: boolean; label: string } }) {
   const [state, action, pending] = useActionState(login, undefined);

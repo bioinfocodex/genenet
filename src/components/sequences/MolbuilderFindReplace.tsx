@@ -5,9 +5,7 @@ import {
   Replace, 
   ArrowRight, 
   ArrowLeft, 
-  X,
-  Type,
-  Dna
+  X
 } from 'lucide-react';
 
 /** The toggles this panel owns, handed to the caller with each search. */
@@ -34,7 +32,8 @@ export default function MolbuilderFindReplace({
   const [query, setQuery] = useState('');
   const [replace, setReplace] = useState('');
   const [showReplace, setShowReplace] = useState(false);
-  const [matchCase, setMatchCase] = useState(false);
+  // No control offers this yet; find and replace are case-insensitive.
+  const matchCase = false;
   const [matchType, setMatchType] = useState<'dna' | 'aa'>('dna');
 
   const handleSearch = (q: string) => {

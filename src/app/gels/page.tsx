@@ -1,7 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
-import { Plus, Layers } from 'lucide-react';
-import { getSession } from '@/lib/session';
+import { Plus } from 'lucide-react';
 import { createGel, deleteGel } from '@/app/actions/gels';
 
 export const dynamic = 'force-dynamic';

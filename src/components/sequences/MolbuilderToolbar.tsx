@@ -22,8 +22,6 @@ interface MolbuilderToolbarProps {
   setLayers: (layers: MolbuilderToolbarProps['layers']) => void;
   frames: Set<number>;
   setFrames: (frames: Set<number>) => void;
-  viewMode: 'wrap' | 'linear';
-  setViewMode: (mode: 'wrap' | 'linear') => void;
   lineLen: number;
   setLineLen: (len: number) => void;
   showStats: boolean;
@@ -45,8 +43,6 @@ export default function MolbuilderToolbar({
   setLayers,
   frames,
   setFrames,
-  viewMode,
-  setViewMode,
   lineLen,
   setLineLen,
   showStats,

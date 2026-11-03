@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Box as BoxIcon, Search } from 'lucide-react';
+import { Box as Search } from 'lucide-react';
 
 interface Sample {
   id: string; sampleId: string; name: string; type: string;

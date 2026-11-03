@@ -1,7 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import Link from 'next/link';
-import { Layers, Plus, Trash2 } from 'lucide-react';
-import { deleteCollection, createCollection } from '@/app/actions/collections';
+import { Layers } from 'lucide-react';
 import CollectionManager from '@/components/CollectionManager';
 
 export const dynamic = 'force-dynamic';

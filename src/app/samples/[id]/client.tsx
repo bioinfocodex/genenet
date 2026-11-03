@@ -1,7 +1,7 @@
 'use client';
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
-import { Save, Trash2, FlaskConical } from 'lucide-react';
+import { Save, Trash2 } from 'lucide-react';
 import { updateSample, updateSampleStatus, deleteSample } from '@/app/actions/samples';
 
 const TYPE_COLOR: Record<string, string> = {

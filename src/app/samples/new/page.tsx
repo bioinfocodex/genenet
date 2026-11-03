@@ -1,5 +1,4 @@
 import { prisma } from '@/lib/prisma';
-import SampleRegistrationModal from '@/components/SampleRegistrationModal';
 import SampleNewWrapper from './client';
 
 export const dynamic = 'force-dynamic';

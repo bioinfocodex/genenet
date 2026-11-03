@@ -6,7 +6,7 @@ import {
   addTable, updateTable, deleteTable,
   importTask, removeTaskLink,
 } from '@/app/actions/reports';
-import { Save, Plus, Trash2, ChevronDown, ChevronUp, Download, Image, Table as TableIcon, CheckSquare } from 'lucide-react';
+import { Save, Plus, Trash2, ChevronDown, ChevronUp, Download, Image as ImageIcon, Table as TableIcon, CheckSquare } from 'lucide-react';
 
 interface Section { id: string; sectionKey: string; title: string; content: string; }
 interface Figure  { id: string; imageUrl: string | null; title: string; legend: string; order: number; }
@@ -143,7 +143,7 @@ export default function ReportEditor({ report }: Props) {
             <div key={fig.id} className="glass-panel" style={{ padding: '1.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <span style={{ fontWeight: 700, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <Image size={16} color="var(--accent-blue)" /> Figure {i + 1}
+                  <ImageIcon size={16} color="var(--accent-blue)" /> Figure {i + 1}
                 </span>
                 <button onClick={() => {
                   const fd = new FormData(); fd.append('id', fig.id);

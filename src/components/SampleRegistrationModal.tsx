@@ -26,7 +26,6 @@ export default function SampleRegistrationModal({ taskId, projectId, geneSequenc
   const [type, setType] = useState<SampleType>('PLASMID');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [notes, setNotes] = useState('');
   const [freezerId, setFreezerId] = useState(freezers[0]?.id ?? '');
   const [rack, setRack] = useState('');
   const [box, setBox] = useState('');
@@ -45,7 +44,6 @@ export default function SampleRegistrationModal({ taskId, projectId, geneSequenc
     fd.append('name', name);
     fd.append('type', type);
     fd.append('description', description);
-    fd.append('notes', notes);
     fd.append('freezerId', freezerId);
     fd.append('rack', rack);
     fd.append('box', box);

@@ -1,8 +1,7 @@
 'use client';
-import { useState, useTransition, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Upload, ImageIcon, X, Link2, Trash2, CheckCircle } from 'lucide-react';
 import { uploadGelImage, attachGelToTask, detachGelFromTask, deleteGelImage } from '@/app/actions/gelImages';
-import Image from 'next/image';
 
 type ExperimentType = 'PCR' | 'DIGESTION' | 'LIGATION' | 'OTHER';
 
@@ -28,8 +27,7 @@ interface Props {
 const EXP_TYPES: ExperimentType[] = ['PCR', 'DIGESTION', 'LIGATION', 'OTHER'];
 
 export default function GelImportPanel({ images: initial, tasks, taskId }: Props) {
-  const [images, setImages] = useState<GelImg[]>(initial);
-  const [isPending, startTransition] = useTransition();
+  const [images] = useState<GelImg[]>(initial);
   const [selected, setSelected] = useState<GelImg | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');

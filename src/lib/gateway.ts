@@ -115,7 +115,7 @@ function between(seq: string, from: number, to: number, circular: boolean): stri
  * length with both junctions in the wrong place.
  */
 function spliceBetween(
-  seq: string, from: number, to: number, insert: string, circular: boolean,
+  seq: string, from: number, to: number, insert: string, _circular: boolean,
 ): string {
   if (from <= to) return seq.slice(0, from) + insert + seq.slice(to);
   // The replaced span crosses the origin, so what survives is one contiguous

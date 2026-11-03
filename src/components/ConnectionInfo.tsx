@@ -31,7 +31,6 @@ export default function ConnectionInfo({ systemId, connectionCode, storageType, 
   };
 
   const regenerate = () => {
-    const fd = new FormData();
     startTransition(() => { regenerateConnectionCode(); });
   };
 

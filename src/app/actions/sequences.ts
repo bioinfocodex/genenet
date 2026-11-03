@@ -2,7 +2,7 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { calcTm, calcGC, parseFasta, parseGenBank } from '@/lib/simulation';
+import { calcTm, calcGC } from '@/lib/simulation';
 import { requireUser } from '@/lib/auth-guard';
 import { recordLineage } from '@/lib/lineage';
 import { addParts } from '@/lib/feature-library';
