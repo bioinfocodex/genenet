@@ -3,7 +3,7 @@ import React, { useState, useMemo, useTransition, useRef, useCallback, useEffect
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight,
   Download, Copy, Save, Pencil, Eye, EyeOff, Plus, MapPin, Scissors,
-  FlaskConical, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check,
+  FlaskConical, Atom, Link2, BarChart3, Globe, Trash2, LibraryBig, Check, Dna,
 } from 'lucide-react';
 import { ENZYMES } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
@@ -173,6 +173,16 @@ interface Props {
    * read by the code that has to draw with it.
    */
   initialMapStyle?: string | null;
+  /**
+   * What the page header used to carry above the editor.
+   *
+   * It is passed down rather than drawn above, because a title block and a
+   * menu bar stacked on top of each other cost 142px of a 900px window before
+   * the map was allowed to start. Both now live in one bar inside the editor.
+   */
+  code?: string | null;
+  description?: string | null;
+  tags?: string | null;
 }
 
 // ─── Auto-suggest feature type from name ─────────────────────────────────────
@@ -235,7 +245,7 @@ function buildGenBank(name: string, sequence: string, features: SequenceFeature[
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [], initialMapStyle = null }: Props) {
+export default function SequenceViewer({ id, name: seqName, sequence: initialSequence, size, seqType, host, strain, initialFeatures, initialPrimers = [], library, collection = [], savedReads = [], verifications = [], initialMapStyle = null, code = null, description = null, tags = null }: Props) {
   const router = useRouter();
   /*
    * Where you are, and how to get back.
@@ -551,6 +561,13 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
 
   // Menu bar state
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+
+  /*
+   * The sign-off that still stands, if any. A verification made before the
+   * last edit is not a verification of what is on screen, so it is reported
+   * as stale rather than quietly shown as a tick.
+   */
+  const currentVerification = verifications.find(v => v.current) ?? null;
 
   // Molbuilder state
   const [molLayers, setMolLayers] = useState({ feat: true, enz: true, primer: true, orf: true });
@@ -1207,19 +1224,66 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   };
 
   return (
-    <div style={{ padding: '1.25rem 1.5rem', background: 'var(--bg-primary)', borderTop: '1px solid var(--glass-border)' }}>
+    <div style={{ padding: '0.5rem 1.5rem 0', background: 'var(--bg-primary)', borderTop: '1px solid var(--glass-border)' }}>
 
-      {/* ── Menu bar ── */}
+      {/* ── Editor bar ── */}
       <div
         /*
-         * Wrapping, because seven menus and the sequence name do not fit a
-         * narrow window on one line -- and not wrapping does not make them
-         * fit, it just pushes the name past the right edge and gives the
-         * whole page a horizontal scrollbar to reach it.
+         * One bar where there were three.
+         *
+         * A breadcrumb, a title block and a menu bar used to stack on top of
+         * each other and spend 353px of a 900px window before the map was
+         * allowed to begin -- on a page whose whole purpose is the map. They
+         * are one row now: where you are and what this is on the left, what
+         * you can do to it in the middle, the way out on the right.
+         *
+         * Still wrapping. Seven menus and a sequence name do not fit a narrow
+         * window on one line, and refusing to wrap does not make them fit --
+         * it pushes the name past the right edge and gives the whole page a
+         * horizontal scrollbar to reach it.
          */
-        style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.35rem', position: 'relative', zIndex: 200, flexWrap: 'wrap' }}
+        style={{ display: 'flex', alignItems: 'center', gap: '0.1rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.3rem', position: 'relative', zIndex: 200, flexWrap: 'wrap', rowGap: '0.2rem' }}
         onMouseLeave={() => setOpenMenu(null)}
       >
+        <Link href="/sequences" title="Back to the sequence library"
+              style={{ display: 'flex', alignItems: 'center', color: 'var(--text-muted)', marginRight: '0.3rem', flexShrink: 0 }}>
+          <ChevronLeft size={16} />
+        </Link>
+
+        <Dna size={15} color="var(--accent-blue)" style={{ flexShrink: 0 }} />
+        <h1 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0, whiteSpace: 'nowrap' }}>
+          {seqName}
+        </h1>
+
+        {/*
+          Beside the name rather than instead of it. The name is what people
+          say; the code is what survives somebody renaming it, and what a
+          label points at.
+        */}
+        {code && (
+          <span style={{ fontFamily: 'monospace', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-muted)', border: '1px solid var(--glass-border)', borderRadius: 5, padding: '0 0.3rem', marginLeft: '0.35rem', flexShrink: 0 }}>
+            {code}
+          </span>
+        )}
+
+        <span style={{
+          fontSize: '0.6rem', fontWeight: 700, padding: '0.1rem 0.35rem', borderRadius: 4, marginLeft: '0.35rem', flexShrink: 0,
+          background: seqType === 'plasmid' ? 'rgba(37,99,235,0.1)' : 'rgba(5,150,105,0.1)',
+          color: seqType === 'plasmid' ? 'var(--accent-blue)' : 'var(--accent-green)',
+          border: `1px solid ${seqType === 'plasmid' ? 'rgba(37,99,235,0.2)' : 'rgba(5,150,105,0.2)'}`,
+        }}>
+          {seqType === 'plasmid' ? 'PLASMID' : 'GENE'}
+        </span>
+
+        {/* The description is worth a hover, not a line of its own. */}
+        {description && (
+          <span title={description} style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginLeft: '0.5rem', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {description}
+          </span>
+        )}
+
+        <span style={{ width: 1, height: 18, background: 'var(--glass-border)', margin: '0 0.5rem', flexShrink: 0 }} />
+
         {Object.entries(menuItems).map(([menuName, items]) => (
           <div key={menuName} style={{ position: 'relative' }}>
             <button
@@ -1250,19 +1314,26 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             )}
           </div>
         ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', paddingBottom: '0.1rem', minWidth: 0 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center', minWidth: 0 }}>
           {/*
-            * Truncated rather than pushing. Wrapping alone fixes the seven
-            * short menus; a long construct name is wider than the window on
-            * its own and would still push past the edge. The full name stays
-            * available on hover, which is what a title is for.
+            * Whether the bases have been confirmed against a read is the one
+            * fact worth a permanent place up here: everything drawn below is
+            * only as trustworthy as the answer.
             */}
-          <span
-            title={seqName}
-            style={{ fontSize: '0.75rem', color: 'var(--text-muted)', alignSelf: 'center', fontFamily: 'monospace', background: 'var(--bg-secondary)', padding: '0.15rem 0.5rem', borderRadius: '4px', border: '1px solid var(--glass-border)', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
-            {seqName}
-          </span>
+          {currentVerification ? (
+            <span title={currentVerification.note ?? `Verified by ${currentVerification.signerName}`}
+                  style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--accent-green)', whiteSpace: 'nowrap' }}>
+              ✓ Verified
+            </span>
+          ) : verifications.length > 0 ? (
+            <span title="Verified before the sequence was last edited; it needs confirming again."
+                  style={{ fontSize: '0.72rem', fontWeight: 600, color: '#a3560a', whiteSpace: 'nowrap' }}>
+              ! Verification stale
+            </span>
+          ) : null}
+          <Link href="/sequences/new" className="btn btn-secondary" style={{ fontSize: '0.74rem', padding: '0.2rem 0.55rem', whiteSpace: 'nowrap' }}>
+            + New
+          </Link>
         </div>
       </div>
 
@@ -1386,24 +1457,13 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             </div>
           )}
 
-          {/* The record's numbers. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', borderTop: '1px solid var(--glass-border)', paddingTop: '0.7rem' }}>
-            <RailStat label="Length" value={sequenceEdited
-              ? `${sequence.length.toLocaleString()} bp (was ${size.toLocaleString()})`
-              : `${sequence.length.toLocaleString()} bp`} />
-            <RailStat label="GC" value={`${gcContent}%`} />
-            <RailStat label="Type" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
-            <RailStat label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
-            <RailStat label="Features" value={`${features.length}`} />
-            {findHost(host) && <RailStat label="Host" value={findHost(host)!.organism.name} />}
-            {findStrain(strain) && (
-              <RailStat
-                label="Strain"
-                value={strainSummary(strain)!}
-                title={[findStrain(strain)!.strain.genotype, findStrain(strain)!.strain.use].filter(Boolean).join('\n')}
-              />
-            )}
-          </div>
+          {/*
+            The record's numbers used to sit here, in a column, under the
+            views. They are reference rather than navigation -- nobody clicks
+            them -- so they have moved to the status strip along the bottom
+            edge, where SnapGene keeps the same figures and where they cost
+            no height that the drawing wanted.
+          */}
 
         </nav>
         </div>
@@ -2454,6 +2514,41 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           </div>
         </ModalOverlay>
       )}
+
+      {/* ── Status strip ── */}
+      {/*
+        * The record's numbers, along the bottom edge.
+        *
+        * They were a column in the left rail, above the map and beside the
+        * views, where they were read perhaps once a session and cost height
+        * every second of it. SnapGene keeps the same figures on a status bar
+        * for the same reason: reference belongs at the edge of the window,
+        * not between you and the thing you came to look at.
+        */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '0.9rem', flexWrap: 'wrap',
+        borderTop: '1px solid var(--glass-border)', marginTop: '0.6rem',
+        padding: '0.3rem 0.1rem', fontSize: '0.72rem', color: 'var(--text-muted)',
+      }}>
+        <StatusItem label="Length" value={sequenceEdited
+          ? `${sequence.length.toLocaleString()} bp (was ${size.toLocaleString()})`
+          : `${sequence.length.toLocaleString()} bp`} />
+        <StatusItem label="GC" value={`${gcContent}%`} />
+        <StatusItem label="Topology" value={seqType === 'plasmid' ? 'Circular' : 'Linear'} />
+        <StatusItem label="RE sites" value={`${reSitesByEnzyme.size} enzymes · ${allReSites.length} cuts`} />
+        <StatusItem label="Features" value={`${features.length}`} />
+        {findHost(host) && <StatusItem label="Host" value={findHost(host)!.organism.name} />}
+        {findStrain(strain) && (
+          <StatusItem label="Strain" value={strainSummary(strain)!}
+            title={[findStrain(strain)!.strain.genotype, findStrain(strain)!.strain.use].filter(Boolean).join('\n')} />
+        )}
+        {tags && tags.split(',').filter(t => t.trim()).map(t => (
+          <span key={t} style={{ fontSize: '0.68rem', padding: '0 0.35rem', borderRadius: 4, border: '1px solid var(--glass-border)' }}>
+            {t.trim()}
+          </span>
+        ))}
+      </div>
+
     </div>
   );
 }
@@ -2787,12 +2882,13 @@ function PaneHandle(
   );
 }
 
-function RailStat({ label, value, title }: { label: string; value: string; title?: string }) {
+/** One figure on the status strip: label quiet, value readable, on one line. */
+function StatusItem({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div title={title} style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
-      <span style={{ fontSize: '0.64rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>{label}</span>
-      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>{value}</span>
-    </div>
+    <span title={title} style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.3rem', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: '0.64rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+      <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{value}</span>
+    </span>
   );
 }
 
