@@ -8,16 +8,13 @@ import {
   X
 } from 'lucide-react';
 
-/** The toggles this panel owns, handed to the caller with each search. */
-interface FindOptions {
-  matchCase: boolean;
-  matchType: 'dna' | 'aa';
-}
-
 interface MolbuilderFindReplaceProps {
-  onFind: (query: string, options: FindOptions) => void;
-  onReplace: (query: string, replace: string, options: FindOptions) => void;
+  onFind: (query: string) => void;
+  onReplace: (query: string, replace: string) => void;
+  onNext: () => void;
+  onPrev: () => void;
   onClose: () => void;
+  /** 1-based, for display. 0 when nothing is found. */
   currentMatch?: number;
   totalMatches?: number;
 }
@@ -25,6 +22,8 @@ interface MolbuilderFindReplaceProps {
 export default function MolbuilderFindReplace({
   onFind,
   onReplace,
+  onNext,
+  onPrev,
   onClose,
   currentMatch = 0,
   totalMatches = 0
@@ -32,13 +31,10 @@ export default function MolbuilderFindReplace({
   const [query, setQuery] = useState('');
   const [replace, setReplace] = useState('');
   const [showReplace, setShowReplace] = useState(false);
-  // No control offers this yet; find and replace are case-insensitive.
-  const matchCase = false;
-  const [matchType, setMatchType] = useState<'dna' | 'aa'>('dna');
 
   const handleSearch = (q: string) => {
     setQuery(q);
-    onFind(q, { matchCase, matchType });
+    onFind(q);
   };
 
   return (
@@ -56,14 +52,14 @@ export default function MolbuilderFindReplace({
           <input
             value={query}
             onChange={(e) => handleSearch(e.target.value)}
-            placeholder={`Find ${matchType === 'dna' ? 'DNA motif...' : 'Amino acids...'}`}
+            placeholder="Find bases — IUPAC codes allowed, both strands"
             style={{
               width: '100%',
               padding: '0.5rem 2.5rem 0.5rem 2.2rem',
               borderRadius: '8px',
               border: '1px solid var(--seq-border)',
               fontSize: '0.85rem',
-              fontFamily: matchType === 'dna' ? 'var(--seq-font)' : 'inherit',
+              fontFamily: 'var(--seq-font)',
               outline: 'none',
               transition: 'border-color 0.2s',
             }}
@@ -77,30 +73,19 @@ export default function MolbuilderFindReplace({
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'white', padding: '0.2rem', borderRadius: '8px', border: '1px solid var(--seq-border)' }}>
-          <button 
-            onClick={() => setMatchType('dna')}
-            style={{ 
-              padding: '0.3rem 0.6rem', borderRadius: '6px', border: 'none', fontSize: '0.72rem', fontWeight: 700, 
-              cursor: 'pointer', background: matchType === 'dna' ? 'var(--accent-blue-15)' : 'transparent',
-              color: matchType === 'dna' ? 'var(--accent-blue)' : '#64748b'
-            }}
-          > DNA </button>
-          <button 
-            onClick={() => setMatchType('aa')}
-            style={{ 
-              padding: '0.3rem 0.6rem', borderRadius: '6px', border: 'none', fontSize: '0.72rem', fontWeight: 700, 
-              cursor: 'pointer', background: matchType === 'aa' ? 'var(--accent-purple-10)' : 'transparent',
-              color: matchType === 'aa' ? 'var(--accent-purple)' : '#64748b'
-            }}
-          > AA </button>
-        </div>
+        {/*
+          There was a DNA / AA pair here and neither did anything, because
+          nothing was searching. DNA search works now; searching for a
+          peptide means translating six frames and mapping the hit back to
+          base coordinates, which is a different piece of work -- so the
+          toggle is gone rather than left offering a mode that is not there.
+        */}
 
         <div style={{ height: '24px', width: '1px', background: 'var(--seq-border)', margin: '0 0.25rem' }} />
 
         <div style={{ display: 'flex', gap: '0.25rem' }}>
-          <NavBtn icon={<ArrowLeft size={16} />} onClick={() => {}} disabled={totalMatches === 0} />
-          <NavBtn icon={<ArrowRight size={16} />} onClick={() => {}} disabled={totalMatches === 0} />
+          <NavBtn icon={<ArrowLeft size={16} />} onClick={onPrev} disabled={totalMatches === 0} title="Previous match" />
+          <NavBtn icon={<ArrowRight size={16} />} onClick={onNext} disabled={totalMatches === 0} title="Next match" />
         </div>
 
         <button 
@@ -139,7 +124,7 @@ export default function MolbuilderFindReplace({
             />
           </div>
           <button 
-            onClick={() => onReplace(query, replace, { matchCase, matchType })}
+            onClick={() => onReplace(query, replace)}
             style={{ 
               padding: '0.5rem 1.25rem', borderRadius: '8px', border: 'none', 
               background: 'var(--accent-blue)', color: 'white', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700
@@ -153,11 +138,12 @@ export default function MolbuilderFindReplace({
   );
 }
 
-function NavBtn({ icon, onClick, disabled }: { icon: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+function NavBtn({ icon, onClick, disabled, title }: { icon: React.ReactNode; onClick: () => void; disabled?: boolean; title?: string }) {
   return (
     <button 
       onClick={onClick}
       disabled={disabled}
+      title={title}
       style={{ 
         padding: '0.35rem', borderRadius: '6px', border: '1px solid var(--seq-border)', 
         background: 'white', color: disabled ? '#cbd5e1' : '#1e293b', 

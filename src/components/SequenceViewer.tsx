@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight,
 import type { LucideIcon } from 'lucide-react';
 import { ENZYMES } from '@/lib/restrictionEnzymes';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
+import { findMatches, stepThrough, planReplacements } from '@/lib/sequence-search';
 import {
   findORFs, reverseComplement,
   reverseTranslate,
@@ -409,6 +410,9 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * everybody else -- so the labels are one click away and the choice is
    * remembered, like the panels.
    */
+  const [findQuery, setFindQuery] = useState('');
+  /** Which hit is being shown, as an index into the list below. */
+  const [findAt, setFindAt] = useState<number | null>(null);
   const [railWide, setRailWide] = useState(false);
   const railWidth = railWide ? RAIL_W : RAIL_W_NARROW;
   /*
@@ -617,6 +621,75 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * same way: the eye in the feature list used to be forgotten on reload,
    * which made it useless for preparing a figure.
    */
+  /*
+   * Every place the query occurs, recomputed as it is typed.
+   *
+   * Derived rather than stored: the sequence is editable, and a list of
+   * positions kept in state would go stale the moment somebody typed a base
+   * -- pointing at bases that had moved, which is worse than no search.
+   */
+  const findMatchList = useMemo(
+    () => (findQuery.trim() ? findMatches(sequence, findQuery, { circular: seqType === 'plasmid' }) : []),
+    [sequence, findQuery, seqType],
+  );
+
+  /**
+   * Show the next hit, selecting it so the view scrolls to it.
+   *
+   * Selecting rather than inventing a second kind of highlight: the
+   * renderer already scrolls a selection into view and draws it, and a
+   * found motif is a selected range as far as everything downstream is
+   * concerned -- copying it, making a primer from it, reading its Tm.
+   */
+  const goToMatch = useCallback((direction: 1 | -1) => {
+    const next = stepThrough(findMatchList, findAt, direction);
+    if (next === null) return;
+    setFindAt(next);
+    const m = findMatchList[next];
+    /*
+     * A hit through the origin has an end before its start, which is true
+     * of the molecule and not something a selection can express. It is
+     * shown from its start to the end of the sequence; the rest is drawn by
+     * the all-matches highlight.
+     */
+    setSelection({ start: m.start, end: m.wrapsOrigin ? sequence.length : m.end });
+  }, [findMatchList, findAt, sequence.length]);
+
+  const handleReplaceAll = useCallback((q: string, r: string) => {
+    if (!q) return;
+    const matches = findMatches(sequence, q, { circular: seqType === 'plasmid' });
+    if (matches.length === 0) return;
+
+    const { edits, skippedWrapping } = planReplacements(matches, r);
+    if (edits.length === 0) {
+      window.alert('Nothing was replaced: the match runs through the origin, and replacing across it would reorder the molecule.');
+      return;
+    }
+
+    /*
+     * Folded through replaceRange rather than spliced into the string,
+     * because the bases are the easy half: every feature after an edit has
+     * to move by the change in length, and replaceRange is what already
+     * knows how. The plan is already ordered right to left, which is what
+     * keeps the untouched positions true as the string changes underneath.
+     */
+    let next = { sequence, features };
+    for (const e of edits) {
+      next = replaceRange(next.sequence, next.features, e.start, e.end, e.text);
+    }
+
+    /*
+     * Through the same path as typing, so undo keeps working and the save
+     * button lights up. An edit made behind the editor's back would be
+     * unundoable and would look saved when it was not.
+     */
+    applyEdit(`replace ${edits.length} × ${q.toUpperCase()}`, next, edits[edits.length - 1].start - 1);
+    setFindAt(null);
+    if (skippedWrapping > 0) {
+      window.alert(`Replaced ${edits.length}. ${skippedWrapping} match${skippedWrapping === 1 ? '' : 'es'} through the origin left alone.`);
+    }
+  }, [sequence, features, seqType, applyEdit]);
+
   const hiddenFeatures = useMemo(() => new Set(mapStyle.hiddenIds), [mapStyle.hiddenIds]);
   const setHiddenFeatures = (fn: (prev: Set<string>) => Set<string>) =>
     setMapStyle(s => ({ ...s, hiddenIds: [...fn(new Set(s.hiddenIds))] }));
@@ -1896,17 +1969,14 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                 onUndo={undo}
               />
               {showMolFind && (
-                <MolbuilderFindReplace 
-                  onFind={() => {
-                    // Not implemented: finding would highlight in the renderer.
-                  }} 
-                  onReplace={(q, r) => {
-                    if (!q || !r) return;
-                    // This would normally trigger a full state update. 
-                    // Caution: modifying the main sequence requires careful handling in this project's architecture.
-                    alert(`Replace ${q} with ${r} (Action: Not applied to safeguard data, implementation check)`);
-                  }} 
-                  onClose={() => setShowMolFind(false)} 
+                <MolbuilderFindReplace
+                  onFind={q => { setFindQuery(q); setFindAt(null); }}
+                  onNext={() => goToMatch(1)}
+                  onPrev={() => goToMatch(-1)}
+                  onReplace={handleReplaceAll}
+                  currentMatch={findAt ?? 0}
+                  totalMatches={findMatchList.length}
+                  onClose={() => { setShowMolFind(false); setFindQuery(''); setFindAt(null); }}
                 />
               )}
               {/*
@@ -1969,6 +2039,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                     layers={molLayers}
                     frames={molFrames}
                     selection={selection}
+                    searchHits={findMatchList}
                     onSelect={setSelection}
                     caret={editing ? caret : null}
                     onCaret={editing ? setCaret : undefined}
