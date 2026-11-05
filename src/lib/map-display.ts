@@ -64,6 +64,15 @@ export interface MapStyle {
   orfs: boolean;
   /** Also the frames that already have a CDS over them, faintly. */
   orfsAnnotated: boolean;
+  /**
+   * The base position beside each restriction site and primer.
+   *
+   * Off by default, as it is in SnapGene: a map with fifty labelled sites
+   * is crowded enough without a number on each. On when somebody is reading
+   * positions off the map, which is the moment they would otherwise go and
+   * find the site again in the sequence view.
+   */
+  siteCoords: boolean;
 }
 
 /*
@@ -90,6 +99,7 @@ export const DEFAULT_STYLE: Readonly<MapStyle> = Object.freeze({
   primers: true,
   orfs: false,
   orfsAnnotated: false,
+  siteCoords: false,
 });
 
 /** A style of one's own: the defaults, with arrays nobody else holds. */
@@ -146,6 +156,7 @@ export function parseStyle(raw: string | null | undefined): MapStyle {
     primers: bool(o.primers) ?? DEFAULT_STYLE.primers,
     orfs: bool(o.orfs) ?? DEFAULT_STYLE.orfs,
     orfsAnnotated: bool(o.orfsAnnotated) ?? DEFAULT_STYLE.orfsAnnotated,
+    siteCoords: bool(o.siteCoords) ?? DEFAULT_STYLE.siteCoords,
   };
 }
 

@@ -48,6 +48,68 @@ export async function createSequence(data: FormData) {
   redirect('/sequences');
 }
 
+/**
+ * A region of one sequence as a record of its own.
+ *
+ * Separate from createSequence because that one redirects to the library and
+ * takes no features: the point of an extraction is that the annotation comes
+ * with it, and that the person lands on the thing they just made rather than
+ * on a list.
+ *
+ * The bases and the features are worked out in the browser, by lib/selection,
+ * against the sequence as currently edited -- which may differ from what is
+ * stored if somebody has typed and not saved. They are validated here rather
+ * than trusted: a feature whose coordinates fall outside the new molecule
+ * would draw off the end of its own map.
+ */
+export async function extractToSequence(data: FormData) {
+  const parentId = data.get('parentId') as string;
+  const name = ((data.get('name') as string) || '').trim();
+  const rawSeq = (data.get('sequence') as string) || '';
+  const sequence = rawSeq.toUpperCase().replace(/[^ACGTRYMKSWHBVDN]/g, '');
+  if (!name) throw new Error('The new sequence needs a name.');
+  if (sequence.length === 0) throw new Error('A sequence cannot be extracted from nothing.');
+
+  const parent = await prisma.geneSequence.findUnique({
+    where: { id: parentId },
+    select: { name: true, type: true, host: true, strain: true },
+  });
+
+  let features: unknown[] = [];
+  try {
+    const parsed = JSON.parse((data.get('features') as string) || '[]');
+    if (Array.isArray(parsed)) {
+      features = parsed.filter((f: { start?: number; end?: number }) =>
+        typeof f?.start === 'number' && typeof f?.end === 'number'
+        && f.start >= 1 && f.end <= sequence.length && f.end >= f.start);
+    }
+  } catch {
+    /* A record with no annotation is better than one that will not open. */
+  }
+
+  /*
+   * Linear whatever the parent was. A piece cut out of a plasmid is a
+   * fragment until somebody closes it, and calling it a plasmid would draw
+   * it as a circle it is not.
+   */
+  const made = await prisma.geneSequence.create({
+    data: {
+      name,
+      type: 'gene',
+      description: parent ? `Extracted from ${parent.name}` : null,
+      sequence,
+      size: sequence.length,
+      host: parent?.host ?? null,
+      strain: parent?.strain ?? null,
+      features: JSON.stringify(features),
+      code: await issueSequenceCode('gene'),
+    },
+  });
+
+  revalidatePath('/sequences');
+  redirect(`/sequences/${made.id}`);
+}
+
 export async function deleteSequence(id: string) {
   await prisma.geneSequence.delete({ where: { id } });
   revalidatePath('/sequences');

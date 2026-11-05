@@ -216,7 +216,15 @@ export function parseGenBank(text: string): ParsedSequence | null {
 
 // ─── Protein / Translation Utilities ─────────────────────────────────────────
 
-const CODON_TABLE: Record<string, string> = {
+/**
+ * Exported because more than one thing needs to read a codon.
+ *
+ * translateDNA drops stop codons from its output, which is what the ORF
+ * scan wants and is wrong for copying a selection as protein: a premature
+ * stop that silently disappeared would make a broken construct read as a
+ * clean one. Callers that need the stop translate from this table instead.
+ */
+export const CODON_TABLE: Record<string, string> = {
   TTT:'F', TTC:'F', TTA:'L', TTG:'L',
   CTT:'L', CTC:'L', CTA:'L', CTG:'L',
   ATT:'I', ATC:'I', ATA:'I', ATG:'M',

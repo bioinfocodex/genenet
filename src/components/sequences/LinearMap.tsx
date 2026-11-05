@@ -29,6 +29,8 @@ interface LinearMapProps {
   /** Reading frames worth drawing, already chosen. */
   orfs?: MapOrf[];
   isCircular: boolean;
+  /** Put the cut position beside each site and primer. */
+  showCoords?: boolean;
   selection?: { start: number; end: number } | null;
   onSelect?: (s: { start: number; end: number }) => void;
   onFeatureClick?: (f: SequenceFeature) => void;
@@ -60,7 +62,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
   return map;
 }
 
-export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay, primers = [], orfs = [] }: LinearMapProps) {
+export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay, primers = [], orfs = [], showCoords = false }: LinearMapProps) {
   const len = sequence.length;
 
   /*
@@ -290,7 +292,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
     const rows: number[] = [];       // right-hand edge used so far, per row
     const placed = mapSites.map(s => {
       const x = toX(s.cutPos);
-      const label = siteLabel(s);
+      const label = siteLabel(s, showCoords);
       const halfWidth = estimateTextWidth(label, 9, s.cuts === 1) / 2 + 4;
       let row = rows.findIndex(edge => x - halfWidth > edge);
       if (row === -1) { row = rows.length; rows.push(0); }

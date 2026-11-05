@@ -168,9 +168,17 @@ export function countCuts(sites: SiteLike[]): Map<string, number> {
   return counts;
 }
 
-/** How the label should read when several enzymes share the site. */
-export function siteLabel(site: MapSite): string {
-  return site.alternatives.length ? `${site.enzyme} +${site.alternatives.length}` : site.enzyme;
+/**
+ * How the label should read when several enzymes share the site.
+ *
+ * With `withCoords`, the cut position comes too. That is the position of the
+ * cut on the top strand rather than the start of the recognition sequence,
+ * because the cut is the thing somebody reading a position off a map is
+ * about to do.
+ */
+export function siteLabel(site: MapSite, withCoords = false): string {
+  const name = site.alternatives.length ? `${site.enzyme} +${site.alternatives.length}` : site.enzyme;
+  return withCoords ? `${name} (${site.cutPos.toLocaleString()})` : name;
 }
 
 /** How the digest leaves the ends, in words. */

@@ -8,8 +8,12 @@ import { ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ENZYMES } from '@/lib/restrictionEnzymes';
-import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer } from '@/app/actions/sequences';
+import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer, extractToSequence } from '@/app/actions/sequences';
 import { findMatches, stepThrough, planReplacements } from '@/lib/sequence-search';
+import {
+  sliceRange, asStrand, asAminoAcids, extractRegion, extractedName, rangeLength,
+  type StrandForm, type AminoForm,
+} from '@/lib/selection';
 import {
   findORFs, reverseComplement,
   reverseTranslate,
@@ -410,6 +414,10 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * everybody else -- so the labels are one click away and the choice is
    * remembered, like the panels.
    */
+  /** The range being extracted, while the dialog is open. */
+  const [extractFor, setExtractFor] = useState<{ start: number; end: number } | null>(null);
+  const [extractName, setExtractName] = useState('');
+  const [extractRenumber, setExtractRenumber] = useState(true);
   const [findQuery, setFindQuery] = useState('');
   /** Which hit is being shown, as an index into the list below. */
   const [findAt, setFindAt] = useState<number | null>(null);
@@ -1302,6 +1310,54 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     setShowAddFeatureModal(true);
   };
 
+  /*
+   * The range a command acts on: what is selected, or the whole molecule.
+   *
+   * Returned with its bases already followed round the origin, so a
+   * selection that wraps a plasmid copies as the molecule reads rather than
+   * as the string happens to be stored.
+   */
+  const actingRange = useCallback(() => {
+    if (!selection) return { bases: sequence, start: 1, end: sequence.length, whole: true };
+    return {
+      bases: sliceRange(sequence, selection.start, selection.end),
+      start: selection.start,
+      end: selection.end,
+      whole: false,
+    };
+  }, [selection, sequence]);
+
+  /** The menu says what it will act on, rather than leaving it to be guessed. */
+  const copyLabel = (base: string) =>
+    selection ? `${base} — selection` : base;
+
+  const copyAs = useCallback((form: StrandForm) => {
+    void navigator.clipboard.writeText(asStrand(actingRange().bases, form));
+  }, [actingRange]);
+
+  const copyProtein = useCallback((form: AminoForm) => {
+    const { protein, leftover } = asAminoAcids(actingRange().bases, form);
+    void navigator.clipboard.writeText(protein);
+    /*
+     * Said rather than silently rounded: a range that is not a whole number
+     * of codons is usually a selection off by a base or two, and somebody
+     * ordering a peptide from it should know.
+     */
+    if (leftover > 0) {
+      window.alert(`Copied ${protein.length} residues. The last ${leftover} base${leftover === 1 ? '' : 's'} did not fill a codon and ${leftover === 1 ? 'was' : 'were'} left out.`);
+    }
+  }, [actingRange]);
+
+  const handleExtract = useCallback(() => {
+    if (!selection) {
+      window.alert('Select a region first — this makes a new sequence from what is selected.');
+      return;
+    }
+    setExtractName(extractedName(seqName, selection.start, selection.end));
+    setExtractRenumber(true);
+    setExtractFor({ start: selection.start, end: selection.end });
+  }, [selection, seqName]);
+
   const openAddPrimer = () => {
     if (selection) {
       setStrandPickerSel(selection);
@@ -1338,8 +1394,18 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
       { label: 'Open in AI Suite', action: () => { window.open(`http://localhost:8501/?id=${id}`, '_blank'); } },
     ],
     Edit: [
-      { label: 'Copy Sequence', action: () => navigator.clipboard.writeText(sequence) },
-      { label: 'Copy Reverse Complement', action: () => navigator.clipboard.writeText(reverseComplement(sequence)) },
+      /*
+       * Every copy acts on the selection when there is one and the whole
+       * molecule when there is not, which is what somebody who has just
+       * dragged across a region expects and what SnapGene does.
+       */
+      { label: copyLabel('Copy Sequence'), action: () => copyAs('top') },
+      { label: copyLabel("Copy Bottom Strand (5'→3')"), action: () => copyAs('bottom-5to3') },
+      { label: copyLabel("Copy Bottom Strand (3'→5')"), action: () => copyAs('bottom-3to5') },
+      { label: copyLabel('Copy Amino Acids (1-letter)'), action: () => copyProtein('one') },
+      { label: copyLabel('Copy Amino Acids (3-letter)'), action: () => copyProtein('three') },
+      { label: '──────────', action: () => {}, divider: true },
+      { label: 'Extract Selection to New Sequence…', action: handleExtract },
       { label: '──────────', action: () => {}, divider: true },
       { label: 'Find / Replace', action: () => { setLeftTab('sequence'); setShowMolFind(true); } },
     ],
@@ -1836,6 +1902,20 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                   </label>
                 )}
 
+                {/*
+                  Off by default, as in SnapGene: a map with fifty labelled
+                  sites is crowded before a number is added to each. On when
+                  somebody is reading positions off the map, which is the
+                  moment they would otherwise go and find the site again in
+                  the sequence view.
+                */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                       title="Show the cut position beside each site">
+                  <input type="checkbox" checked={mapStyle.siteCoords}
+                         onChange={e => patchStyle({ siteCoords: e.target.checked })} />
+                  positions
+                </label>
+
                 <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}
                       title={siteCounts.drawn < siteCounts.eligible
                         ? 'Too many to label legibly, so they are thinned evenly round the molecule rather than truncated on one side'
@@ -1864,8 +1944,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                 */}
               <div ref={mapRef} className="sequence-editor-drawing">
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={mapSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} />
+                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={mapSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} showCoords={mapStyle.siteCoords} />
+                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} showCoords={mapStyle.siteCoords} />
               }
               </div>
 
@@ -2704,6 +2784,68 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
           </div>
         </ModalOverlay>
       )}
+
+      {/* ── Extract a region to its own record ── */}
+      {extractFor && (() => {
+        const span = rangeLength(extractFor.start, extractFor.end, sequence.length);
+        const out = extractRegion(sequence, features, extractFor.start, extractFor.end, { renumber: extractRenumber });
+        const partial = out.features.filter(f => f.name.endsWith('(partial)')).length;
+        return (
+          <ModalOverlay onClose={() => setExtractFor(null)}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.35rem' }}>Extract to a new sequence</h3>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+              {extractFor.start.toLocaleString()}–{extractFor.end.toLocaleString()} · {span.toLocaleString()} bp
+              {extractFor.end < extractFor.start && ' · through the origin'}
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
+              <ModalField label="Name">
+                <input className="input-control" value={extractName} onChange={e => setExtractName(e.target.value)}
+                  style={{ padding: '0.5rem 0.7rem', fontSize: '0.85rem' }} />
+              </ModalField>
+
+              <ModalField label="Numbering">
+                <select className="input-control" value={extractRenumber ? 'reset' : 'keep'}
+                  onChange={e => setExtractRenumber(e.target.value === 'reset')}
+                  style={{ padding: '0.5rem 0.7rem', fontSize: '0.85rem' }}>
+                  <option value="reset">Start the new sequence at 1</option>
+                  <option value="keep">Keep the positions it had here</option>
+                </select>
+              </ModalField>
+
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', background: 'var(--bg-secondary)', border: '1px solid var(--glass-border)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
+                {out.features.length === 0
+                  ? 'No features fall inside this region.'
+                  : `${out.features.length} feature${out.features.length === 1 ? '' : 's'} come${out.features.length === 1 ? 's' : ''} with it`}
+                {partial > 0 && (
+                  <>
+                    {', '}
+                    <span style={{ color: '#a3560a' }}>
+                      {partial} cut at the boundary and marked partial
+                    </span>
+                    {'. '}
+                    {/* Said plainly: a clipped CDS is no longer the CDS. */}
+                    A feature cut in half no longer describes the thing it names.
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+              <button className="btn btn-secondary" onClick={() => setExtractFor(null)}>Cancel</button>
+              <form action={extractToSequence}>
+                <input type="hidden" name="parentId" value={id} />
+                <input type="hidden" name="name" value={extractName} />
+                <input type="hidden" name="sequence" value={out.sequence} />
+                <input type="hidden" name="features" value={JSON.stringify(out.features)} />
+                <button type="submit" className="btn btn-primary" disabled={!extractName.trim()}>
+                  Create sequence
+                </button>
+              </form>
+            </div>
+          </ModalOverlay>
+        );
+      })()}
 
       {showAddREModal && (
         <ModalOverlay onClose={() => setShowAddREModal(false)}>
