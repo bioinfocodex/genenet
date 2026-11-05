@@ -523,7 +523,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
      */
     const extent = Math.max(SVG / 2, reach + 8);
     return { placed, extent };
-  }, [featureLabels.outside, mapSites, toAngle, R_LBL]);
+  }, [featureLabels.outside, mapSites, toAngle, R_LBL, showCoords]);
 
   const EXTENT = laidOut.extent;
 
