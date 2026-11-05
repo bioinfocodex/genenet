@@ -263,6 +263,34 @@ export interface ORF {
   length: number;  // nt
   protein: string;
   strand: '+' | '-';
+  /**
+   * The reading frame ran off the end of the molecule rather than reaching a
+   * stop. Only ever set on a linear sequence, and only when asked for: an
+   * open frame at the end of a fragment is usually the rest of a gene that
+   * was cut through, which is worth seeing and worth labelling as unfinished.
+   */
+  truncated?: boolean;
+}
+
+export interface OrfOptions {
+  /**
+   * Require ATG, GTG or TTG to open the frame.
+   *
+   * On by default, because that is what makes a reading frame a candidate
+   * gene. Off gives every stop-to-stop stretch, which is what somebody
+   * looking for a frame they can clone into wants, and what SnapGene offers
+   * as the same choice.
+   */
+  requireStart?: boolean;
+  /**
+   * Keep a frame that reaches the end of the sequence without stopping.
+   *
+   * Off by default, which is right for a plasmid -- a circular molecule has
+   * no end to run off, so anything found this way is an artefact of where
+   * the file happens to start. On a linear fragment it is the opposite: the
+   * frame running off the end is often the point.
+   */
+  allowTruncated?: boolean;
 }
 
 /** Biologically valid start codons (ATG canonical, GTG/TTG alternative) */
@@ -272,37 +300,60 @@ const STOP_CODONS = new Set(['TAA', 'TAG', 'TGA']);
 
 /** Find all ORFs ≥ minLen nt across all 6 frames.
  *  Uses ATG (canonical), GTG, and TTG as start codons. */
-export function findORFs(seq: string, minLen = 100): ORF[] {
+export function findORFs(seq: string, minLen = 100, opts: OrfOptions = {}): ORF[] {
+  const { requireStart = true, allowTruncated = false } = opts;
   const s = seq.toUpperCase().replace(/[^ACGT]/g, '');
   const rc = reverseComplement(s);
   const orfs: ORF[] = [];
 
   for (const [strand, tpl] of [['+', s], ['-', rc]] as ['+' | '-', string][]) {
     for (let frame = 0; frame < 3; frame++) {
-      let inORF = false;
-      let orfStart = 0;
-      for (let i = frame; i + 2 < tpl.length; i += 3) {
+      /*
+       * Without a required start, a frame is open from the beginning and
+       * reopens after every stop -- every stop-to-stop stretch, which is
+       * what somebody hunting for somewhere to clone into is looking at.
+       */
+      let inORF = !requireStart;
+      let orfStart = frame;
+
+      /** One finished reading frame, in the original sequence's coordinates. */
+      const emit = (endExclusive: number, truncated: boolean) => {
+        const orfSeq = tpl.substring(orfStart, endExclusive);
+        if (orfSeq.length < minLen) return;
+        const realStart = strand === '+' ? orfStart : s.length - endExclusive;
+        const realEnd   = strand === '+' ? endExclusive : s.length - orfStart;
+        orfs.push({
+          frame: strand === '+' ? frame + 1 : -(frame + 1),
+          start: realStart,
+          end: realEnd,
+          length: orfSeq.length,
+          protein: translateDNA(orfSeq),
+          strand,
+          ...(truncated ? { truncated: true } : {}),
+        });
+      };
+
+      let i = frame;
+      for (; i + 2 < tpl.length; i += 3) {
         const codon = tpl.substring(i, i + 3);
         if (!inORF && START_CODONS.has(codon)) {
           inORF = true;
           orfStart = i;
         } else if (inORF && STOP_CODONS.has(codon)) {
-          const orfSeq = tpl.substring(orfStart, i + 3);
-          if (orfSeq.length >= minLen) {
-            const realStart = strand === '+' ? orfStart : s.length - (i + 3);
-            const realEnd   = strand === '+' ? i + 3    : s.length - orfStart;
-            orfs.push({
-              frame: strand === '+' ? frame + 1 : -(frame + 1),
-              start: realStart,
-              end: realEnd,
-              length: orfSeq.length,
-              protein: translateDNA(orfSeq),
-              strand,
-            });
-          }
+          emit(i + 3, false);
           inORF = false;
+          // The next stretch begins after the stop, not at the next start.
+          if (!requireStart) { inORF = true; orfStart = i + 3; }
         }
       }
+
+      /*
+       * Whatever is still open at the end. `i` is the first codon boundary
+       * past the last whole codon, so it is where the frame stops being
+       * readable -- trailing bases that do not fill a codon are not part of
+       * any reading frame.
+       */
+      if (inORF && allowTruncated && i > orfStart) emit(i, true);
     }
   }
   return orfs.sort((a, b) => b.length - a.length);
