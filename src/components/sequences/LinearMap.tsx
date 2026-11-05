@@ -300,7 +300,7 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
       return { s, x, label, row };
     });
     return { placed, rowCount: rows.length };
-  }, [mapSites, toX]);
+  }, [mapSites, toX, showCoords]);
 
   // Layout Y positions
   const reAreaH = Math.max(40, siteLabels.rowCount * 11 + 14);
