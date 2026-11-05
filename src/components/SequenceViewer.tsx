@@ -950,8 +950,21 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
   }), [displayedSites, allReSites, enzymeDisplay]);
 
   // ORFs count (lazy, for sidebar stats)
-  const orfsCount = useMemo(() => findORFs(sequence, 100).length, [sequence]);
-  const orfs = useMemo(() => findORFs(sequence, 100), [sequence]);
+  /*
+   * What counts as a reading frame, as the record's style says.
+   *
+   * Truncated frames are only ever offered on a linear molecule: a circular
+   * one has no end to run off, so a frame found that way would be an
+   * artefact of where the file happens to begin rather than anything about
+   * the plasmid.
+   */
+  const orfOptions = useMemo(() => ({
+    requireStart: mapStyle.orfRequireStart,
+    allowTruncated: mapStyle.orfTruncated && seqType !== 'plasmid',
+  }), [mapStyle.orfRequireStart, mapStyle.orfTruncated, seqType]);
+
+  const orfs = useMemo(() => findORFs(sequence, 100, orfOptions), [sequence, orfOptions]);
+  const orfsCount = orfs.length;
 
   /*
    * Which reading frames the map draws.
@@ -1969,6 +1982,29 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                     <input type="checkbox" checked={orfIncludeAnnotated}
                            onChange={e => setOrfIncludeAnnotated(e.target.checked)} />
                     incl. annotated
+                  </label>
+                )}
+
+                {showOrfs && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                         title="A frame must open with ATG, GTG or TTG. Off gives every stop-to-stop stretch.">
+                    <input type="checkbox" checked={mapStyle.orfRequireStart}
+                           onChange={e => patchStyle({ orfRequireStart: e.target.checked })} />
+                    needs a start
+                  </label>
+                )}
+
+                {/*
+                  * Only on a linear molecule. A circle has no end to run off,
+                  * so a frame found this way would say more about where the
+                  * file begins than about the plasmid.
+                  */}
+                {showOrfs && seqType !== 'plasmid' && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                         title="Keep a frame that reaches the end of the sequence without stopping">
+                    <input type="checkbox" checked={mapStyle.orfTruncated}
+                           onChange={e => patchStyle({ orfTruncated: e.target.checked })} />
+                    incl. run-off ends
                   </label>
                 )}
 

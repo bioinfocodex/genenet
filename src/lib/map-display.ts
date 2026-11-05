@@ -64,6 +64,10 @@ export interface MapStyle {
   orfs: boolean;
   /** Also the frames that already have a CDS over them, faintly. */
   orfsAnnotated: boolean;
+  /** Require ATG, GTG or TTG to open a frame. */
+  orfRequireStart: boolean;
+  /** Keep a frame that reaches the end of a linear molecule without stopping. */
+  orfTruncated: boolean;
   /**
    * The base position beside each restriction site and primer.
    *
@@ -105,6 +109,8 @@ export const DEFAULT_STYLE: Readonly<MapStyle> = Object.freeze({
   primers: true,
   orfs: false,
   orfsAnnotated: false,
+  orfRequireStart: true,
+  orfTruncated: false,
   siteCoords: false,
   origin: 1,
   flipped: false,
@@ -164,6 +170,8 @@ export function parseStyle(raw: string | null | undefined): MapStyle {
     primers: bool(o.primers) ?? DEFAULT_STYLE.primers,
     orfs: bool(o.orfs) ?? DEFAULT_STYLE.orfs,
     orfsAnnotated: bool(o.orfsAnnotated) ?? DEFAULT_STYLE.orfsAnnotated,
+    orfRequireStart: bool(o.orfRequireStart) ?? DEFAULT_STYLE.orfRequireStart,
+    orfTruncated: bool(o.orfTruncated) ?? DEFAULT_STYLE.orfTruncated,
     siteCoords: bool(o.siteCoords) ?? DEFAULT_STYLE.siteCoords,
     /*
      * No upper bound here: the style is parsed without knowing how long the
