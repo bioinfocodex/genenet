@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   chooseMapEnzymes, countCuts, siteLabel, siteTitle, endDescription, type SiteLike,
@@ -169,4 +169,26 @@ test('a site says what ends the digest leaves', () => {
   const iis = [site('BsaI', 300, { cutBottom: 305, overhang: '', overhangType: '5prime' })];
   const [bsaI] = chooseMapEnzymes(iis, countCuts(iis));
   assert.equal(endDescription(bsaI), "4 nt 5\u2032 overhang");
+});
+
+describe('a site label with its position', () => {
+  const site = {
+    enzyme: 'EcoRV', cutPos: 1842, cutBottom: 1842, recognitionStart: 1840,
+    recognitionLen: 6, overhang: '', overhangType: 'blunt', color: '#888',
+    alternatives: [] as string[], cuts: 1,
+  };
+
+  test('off by default, because fifty labelled sites are crowded already', () => {
+    assert.equal(siteLabel(site), 'EcoRV');
+  });
+
+  test('on, it carries the cut position', () => {
+    // The cut, not the start of the recognition sequence: the cut is what
+    // somebody reading a position off a map is about to do.
+    assert.equal(siteLabel(site, true), 'EcoRV (1,842)');
+  });
+
+  test('shared sites keep their count as well', () => {
+    assert.equal(siteLabel({ ...site, alternatives: ['Eco32I'] }, true), 'EcoRV +1 (1,842)');
+  });
 });

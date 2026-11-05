@@ -20,6 +20,8 @@ interface CircularMapProps {
   primers?: PlacedPrimer[];
   /** Reading frames worth drawing, already chosen. */
   orfs?: MapOrf[];
+  /** Put the cut position beside each site and primer. */
+  showCoords?: boolean;
 }
 
 // Fixed layout. Outside the component because none of it varies per render.
@@ -83,7 +85,7 @@ interface OutsideLabel {
   feature?: SequenceFeature;
 }
 
-export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, enzymeDisplay, primers = [], orfs = [] }: CircularMapProps) {
+export default function CircularMap({ sequence, features, reSites, selection, onSelect, onFeatureClick, name, enzymeDisplay, primers = [], orfs = [], showCoords = false }: CircularMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   /*
    * Zoom and pan are one piece of state, not two.
@@ -464,7 +466,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
         key: `site-${s.enzyme}-${i}`,
         angle: toAngle(s.cutPos),
         anchorR: R_OUT,
-        text: siteLabel(s),
+        text: siteLabel(s, showCoords),
         colour: s.color,
         title: siteTitle(s),
         mono: true,
@@ -521,7 +523,7 @@ export default function CircularMap({ sequence, features, reSites, selection, on
      */
     const extent = Math.max(SVG / 2, reach + 8);
     return { placed, extent };
-  }, [featureLabels.outside, mapSites, toAngle, R_LBL]);
+  }, [featureLabels.outside, mapSites, toAngle, R_LBL, showCoords]);
 
   const EXTENT = laidOut.extent;
 
