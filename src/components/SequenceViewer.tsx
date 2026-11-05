@@ -15,6 +15,10 @@ import {
   type StrandForm, type AminoForm,
 } from '@/lib/selection';
 import {
+  toDisplay, fromDisplay, orientSequence, orientFeature, orientSpan, orientSite,
+  originFor, isTurned, describe as describeOrientation, type Orientation,
+} from '@/lib/map-orientation';
+import {
   findORFs, reverseComplement,
   reverseTranslate,
   calcTm, calcGC,
@@ -42,7 +46,7 @@ import { downloadSvg, downloadPng } from '@/lib/svg-export';
 import { allSitesFor } from '@/lib/map-sites';
 import { simulatePcr, type PcrResult } from '@/lib/pcr';
 import { chooseMapEnzymes, countCuts } from '@/lib/map-enzymes';
-import { chooseMapOrfs, summariseOrfs } from '@/lib/map-orfs';
+import { chooseMapOrfs, summariseOrfs, type MapOrf } from '@/lib/map-orfs';
 import CrisprPanel from './sequences/CrisprPanel';
 import MolbuilderToolbar from './sequences/MolbuilderToolbar';
 import EnzymePicker from './sequences/EnzymePicker';
@@ -157,6 +161,7 @@ const SIDEBAR_W = 272;
 const PENDING = 'pending-';
 
 /** One empty list, so turning the sites layer off is not a new array each render. */
+const EMPTY_ORFS: MapOrf[] = [];
 const EMPTY_SITES: ReSite[] = [];
 
 
@@ -698,6 +703,28 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     }
   }, [sequence, features, seqType, applyEdit]);
 
+  /*
+   * How the map is turned, and everything it draws turned with it.
+   *
+   * Built once rather than taught to the renderers: a map that knew about an
+   * origin would have to apply it in every place it computes an angle, and
+   * the one it forgot would be the one nobody noticed. Handing it an already
+   * turned molecule keeps the drawing code the same code that draws an
+   * untouched one.
+   *
+   * The record itself does not move. Only what is handed to the two maps.
+   */
+  const orientation: Orientation = useMemo(
+    () => ({ origin: originFor(mapStyle.origin, sequence.length), flipped: mapStyle.flipped }),
+    [mapStyle.origin, mapStyle.flipped, sequence.length],
+  );
+  const turned = isTurned(orientation);
+
+  const mapSequence = useMemo(
+    () => (turned ? orientSequence(sequence, orientation) : sequence),
+    [sequence, orientation, turned],
+  );
+
   const hiddenFeatures = useMemo(() => new Set(mapStyle.hiddenIds), [mapStyle.hiddenIds]);
   const setHiddenFeatures = (fn: (prev: Set<string>) => Set<string>) =>
     setMapStyle(s => ({ ...s, hiddenIds: [...fn(new Set(s.hiddenIds))] }));
@@ -949,7 +976,12 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
     [orfIncludeAnnotated, orfs, features],
   );
 
-  const mapOrfs = showOrfs ? chosenOrfs : [];
+  /*
+   * A stable empty array when ORFs are off, matching EMPTY_SITES above. A
+   * fresh [] each render makes every memo that depends on it recompute
+   * every render, which is the whole point of the memo gone.
+   */
+  const mapOrfs = showOrfs ? chosenOrfs : EMPTY_ORFS;
 
   const orfSummary = useMemo(
     () => summariseOrfs(orfs, features, { includeAnnotated: orfIncludeAnnotated }),
@@ -1004,6 +1036,44 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * than as the choice it is.
    */
   const mapSites = mapStyle.sites ? allReSites : EMPTY_SITES;
+
+  /** The layers, turned with the map. Untouched when it is not turned. */
+  const mapFeaturesOriented = useMemo(
+    () => (turned ? visibleFeatures.map(f => orientFeature(f, sequence.length, orientation)) : visibleFeatures),
+    [visibleFeatures, orientation, turned, sequence.length],
+  );
+  const mapSitesOriented = useMemo(
+    () => (turned ? mapSites.map(x => orientSite(x, sequence.length, orientation)) : mapSites),
+    [mapSites, orientation, turned, sequence.length],
+  );
+  const mapPrimersOriented = useMemo(
+    () => (turned ? mapPrimers.map(x => orientSpan(x, sequence.length, orientation)) : mapPrimers),
+    [mapPrimers, orientation, turned, sequence.length],
+  );
+  const mapOrfsOriented = useMemo(
+    () => (turned ? mapOrfs.map(x => orientSpan(x, sequence.length, orientation)) : mapOrfs),
+    [mapOrfs, orientation, turned, sequence.length],
+  );
+
+  /*
+   * The selection, shown where the turned map draws it -- and turned back
+   * when the map hands one in. Without the second half a click on a rotated
+   * map would select a base a few hundred away and say nothing about it.
+   */
+  const mapSelection = useMemo(() => {
+    if (!selection || !turned) return selection;
+    const a = toDisplay(selection.start, sequence.length, orientation);
+    const b = toDisplay(selection.end, sequence.length, orientation);
+    return orientation.flipped ? { start: b, end: a } : { start: a, end: b };
+  }, [selection, orientation, turned, sequence.length]);
+
+  const selectFromMap = useCallback((sel: { start: number; end: number }) => {
+    if (!turned) { setSelection(sel); return; }
+    const a = fromDisplay(sel.start, sequence.length, orientation);
+    const b = fromDisplay(sel.end, sequence.length, orientation);
+    setSelection(orientation.flipped ? { start: b, end: a } : { start: a, end: b });
+  }, [turned, orientation, sequence.length]);
+
 
   const addFeatureFromModal = () => {
     const start = parseInt(modalFeat.start);
@@ -1916,6 +1986,45 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                   positions
                 </label>
 
+                {/*
+                  * Turning the map, not the record. Nothing is renumbered and
+                  * no signature is touched; only what the map is handed.
+                  */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                       title="Draw the reverse complement, with the features following">
+                  <input type="checkbox" checked={mapStyle.flipped}
+                         onChange={e => patchStyle({ flipped: e.target.checked })} />
+                  flip
+                </label>
+
+                {mapView === 'circular' && (
+                  <button
+                    onClick={() => patchStyle({ origin: selection ? selection.start : 1 })}
+                    disabled={!selection && mapStyle.origin === 1}
+                    title={selection
+                      ? `Put base ${selection.start.toLocaleString()} at the top`
+                      : 'Select a base first, or click to put base 1 back at the top'}
+                    style={{
+                      border: '1px solid var(--glass-border)', background: 'white',
+                      borderRadius: 6, padding: '0.1rem 0.4rem', fontSize: '0.72rem',
+                      fontFamily: 'inherit', cursor: (!selection && mapStyle.origin === 1) ? 'default' : 'pointer',
+                      color: (!selection && mapStyle.origin === 1) ? 'var(--text-muted)' : 'var(--text-primary)',
+                    }}>
+                    {selection ? 'origin here' : 'reset origin'}
+                  </button>
+                )}
+
+                {/*
+                  * Said out loud, because a turned map draws coordinates that
+                  * are not the record's and somebody reading a position off
+                  * it should know which numbering they are reading.
+                  */}
+                {turned && (
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#a3560a' }}>
+                    {describeOrientation(orientation)}{' \u2014 positions shown are the map\u2019s'}
+                  </span>
+                )}
+
                 <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}
                       title={siteCounts.drawn < siteCounts.eligible
                         ? 'Too many to label legibly, so they are thinned evenly round the molecule rather than truncated on one side'
@@ -1944,8 +2053,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                 */}
               <div ref={mapRef} className="sequence-editor-drawing">
               {mapView === 'linear'
-                ? <LinearMap sequence={sequence} features={visibleFeatures} reSites={mapSites} isCircular={seqType === 'plasmid'} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} showCoords={mapStyle.siteCoords} />
-                : <CircularMap sequence={sequence} features={visibleFeatures} reSites={mapSites} selection={selection} onSelect={setSelection} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimers : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfs} showCoords={mapStyle.siteCoords} />
+                ? <LinearMap sequence={mapSequence} features={mapFeaturesOriented} reSites={mapSitesOriented} isCircular={seqType === 'plasmid'} selection={mapSelection} onSelect={selectFromMap} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimersOriented : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfsOriented} showCoords={mapStyle.siteCoords} />
+                : <CircularMap sequence={mapSequence} features={mapFeaturesOriented} reSites={mapSitesOriented} selection={mapSelection} onSelect={selectFromMap} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimersOriented : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfsOriented} showCoords={mapStyle.siteCoords} />
               }
               </div>
 

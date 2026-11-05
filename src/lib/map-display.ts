@@ -73,6 +73,12 @@ export interface MapStyle {
    * find the site again in the sequence view.
    */
   siteCoords: boolean;
+  /**
+   * Which base is drawn at twelve o'clock, and whether the molecule is
+   * turned over. Both are presentation: the record does not move.
+   */
+  origin: number;
+  flipped: boolean;
 }
 
 /*
@@ -100,6 +106,8 @@ export const DEFAULT_STYLE: Readonly<MapStyle> = Object.freeze({
   orfs: false,
   orfsAnnotated: false,
   siteCoords: false,
+  origin: 1,
+  flipped: false,
 });
 
 /** A style of one's own: the defaults, with arrays nobody else holds. */
@@ -157,6 +165,14 @@ export function parseStyle(raw: string | null | undefined): MapStyle {
     orfs: bool(o.orfs) ?? DEFAULT_STYLE.orfs,
     orfsAnnotated: bool(o.orfsAnnotated) ?? DEFAULT_STYLE.orfsAnnotated,
     siteCoords: bool(o.siteCoords) ?? DEFAULT_STYLE.siteCoords,
+    /*
+     * No upper bound here: the style is parsed without knowing how long the
+     * sequence is, and a stored origin past the end of a shortened record
+     * is wrapped where it is used rather than clamped to a base that is not
+     * the one somebody chose.
+     */
+    origin: num(o.origin, [1, Number.MAX_SAFE_INTEGER]) ?? DEFAULT_STYLE.origin,
+    flipped: bool(o.flipped) ?? DEFAULT_STYLE.flipped,
   };
 }
 
