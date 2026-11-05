@@ -69,6 +69,13 @@ export interface MapStyle {
   /** Keep a frame that reaches the end of a linear molecule without stopping. */
   orfTruncated: boolean;
   /**
+   * Draw features on the DNA line rather than in tracks beneath it.
+   *
+   * Trades overlap for height, which is the trade a figure column usually
+   * wants and a crowded plasmid usually does not.
+   */
+  featuresOnLine: boolean;
+  /**
    * The base position beside each restriction site and primer.
    *
    * Off by default, as it is in SnapGene: a map with fifty labelled sites
@@ -111,6 +118,7 @@ export const DEFAULT_STYLE: Readonly<MapStyle> = Object.freeze({
   orfsAnnotated: false,
   orfRequireStart: true,
   orfTruncated: false,
+  featuresOnLine: false,
   siteCoords: false,
   origin: 1,
   flipped: false,
@@ -172,6 +180,7 @@ export function parseStyle(raw: string | null | undefined): MapStyle {
     orfsAnnotated: bool(o.orfsAnnotated) ?? DEFAULT_STYLE.orfsAnnotated,
     orfRequireStart: bool(o.orfRequireStart) ?? DEFAULT_STYLE.orfRequireStart,
     orfTruncated: bool(o.orfTruncated) ?? DEFAULT_STYLE.orfTruncated,
+    featuresOnLine: bool(o.featuresOnLine) ?? DEFAULT_STYLE.featuresOnLine,
     siteCoords: bool(o.siteCoords) ?? DEFAULT_STYLE.siteCoords,
     /*
      * No upper bound here: the style is parsed without knowing how long the

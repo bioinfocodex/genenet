@@ -31,6 +31,15 @@ interface LinearMapProps {
   isCircular: boolean;
   /** Put the cut position beside each site and primer. */
   showCoords?: boolean;
+  /**
+   * Draw the features on the DNA line rather than in tracks beneath it.
+   *
+   * They are allowed to overlap when they do -- which is the point. The
+   * tracks exist so that nothing covers anything, and they cost a row of
+   * height each; SnapGene made the same trade in 5.1, letting annotations
+   * overlap specifically to bring a linear map's height down.
+   */
+  featuresOnLine?: boolean;
   selection?: { start: number; end: number } | null;
   onSelect?: (s: { start: number; end: number }) => void;
   onFeatureClick?: (f: SequenceFeature) => void;
@@ -62,7 +71,7 @@ function assignRows(features: SequenceFeature[]): Map<string, number> {
   return map;
 }
 
-export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay, primers = [], orfs = [], showCoords = false }: LinearMapProps) {
+export default function LinearMap({ sequence, features, reSites, isCircular, selection, onSelect, onFeatureClick, enzymeDisplay, primers = [], orfs = [], showCoords = false, featuresOnLine = false }: LinearMapProps) {
   const len = sequence.length;
 
   /*
@@ -193,8 +202,22 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
 
   const onScreen = useCallback((x: number) => x >= span.x0 && x <= span.x1, [span]);
 
-  const featureRows = assignRows(features);
-  const maxRow = features.length > 0 ? Math.max(...featureRows.values()) + 1 : 0;
+  /*
+   * One row each, or one row for all of them. On the line there is nothing
+   * to assign: every feature sits at the same height and the ones that
+   * overlap are drawn over each other, which is the height this buys.
+   */
+  /*
+   * Memoised, which it was not before: assignRows built a fresh Map on every
+   * render and the label layout below depends on it, so that layout was
+   * recomputed on every render too.
+   */
+  const featureRows = useMemo(
+    () => (featuresOnLine ? new Map<string, number>() : assignRows(features)),
+    [features, featuresOnLine],
+  );
+  const maxRow = featuresOnLine ? (features.length > 0 ? 1 : 0)
+    : (features.length > 0 ? Math.max(...featureRows.values()) + 1 : 0);
 
   /*
    * Which names fit inside their own glyph and which have to be written above
@@ -700,7 +723,11 @@ export default function LinearMap({ sequence, features, reSites, isCircular, sel
           {/* Features */}
           {features.map(feat => {
             const row = featureRows.get(feat.id) ?? 0;
-            const y = featStartY + row * rowH;
+            /*
+             * Centred on the backbone when they are on the line, so the
+             * strand the feature sits on is the strand it is drawn over.
+             */
+            const y = featuresOnLine ? fwdY - FEAT_H / 2 + 4 : featStartY + row * rowH;
             const x1 = toX(feat.start - 1);
             const x2 = toX(feat.end);
             const w = Math.max(x2 - x1, 4);

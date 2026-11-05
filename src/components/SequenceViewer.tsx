@@ -2026,6 +2026,19 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                   * Turning the map, not the record. Nothing is renumbered and
                   * no signature is touched; only what the map is handed.
                   */}
+                {/*
+                  * Linear only. A circular map draws its features in a ring
+                  * of tracks and has no single line to put them on.
+                  */}
+                {mapView === 'linear' && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                         title="Draw features on the DNA line, letting them overlap, for a shorter map">
+                    <input type="checkbox" checked={mapStyle.featuresOnLine}
+                           onChange={e => patchStyle({ featuresOnLine: e.target.checked })} />
+                    on the line
+                  </label>
+                )}
+
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
                        title="Draw the reverse complement, with the features following">
                   <input type="checkbox" checked={mapStyle.flipped}
@@ -2089,7 +2102,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                 */}
               <div ref={mapRef} className="sequence-editor-drawing">
               {mapView === 'linear'
-                ? <LinearMap sequence={mapSequence} features={mapFeaturesOriented} reSites={mapSitesOriented} isCircular={seqType === 'plasmid'} selection={mapSelection} onSelect={selectFromMap} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimersOriented : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfsOriented} showCoords={mapStyle.siteCoords} />
+                ? <LinearMap sequence={mapSequence} features={mapFeaturesOriented} reSites={mapSitesOriented} isCircular={seqType === 'plasmid'} selection={mapSelection} onSelect={selectFromMap} onFeatureClick={setSelectedFeature} primers={mapStyle.primers ? mapPrimersOriented : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfsOriented} showCoords={mapStyle.siteCoords} featuresOnLine={mapStyle.featuresOnLine} />
                 : <CircularMap sequence={mapSequence} features={mapFeaturesOriented} reSites={mapSitesOriented} selection={mapSelection} onSelect={selectFromMap} onFeatureClick={setSelectedFeature} name={seqName} primers={mapStyle.primers ? mapPrimersOriented : []} enzymeDisplay={enzymeDisplay} orfs={mapOrfsOriented} showCoords={mapStyle.siteCoords} />
               }
               </div>
