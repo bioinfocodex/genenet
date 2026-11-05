@@ -1,9 +1,12 @@
+'use client';
 import React from 'react';
 
 interface CutSite {
   enzyme: string;
   position: number;
 }
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
 
 export interface PlasmidFeature {
   label: string;
@@ -28,9 +31,19 @@ export default function PlasmidMap({ name, totalBp, cuts, features = [], title =
   const cy = 160;
   const [dragStart, setDragStart] = React.useState<number | null>(null);
 
+  /**
+   * A point on the circle, rounded to a tenth.
+   *
+   * Math.cos and Math.sin may disagree by an ULP between the engine that
+   * server-renders this map and the one in the browser. React reports such a
+   * coordinate as a hydration mismatch and leaves the server's value in place
+   * rather than repainting it, so the drawing on screen stops matching the
+   * one the component thinks it made. A tenth is finer than a pixel here and
+   * coarse enough to absorb the disagreement.
+   */
   const getCoords = (bp: number, r = radius) => {
     const angle = (bp / totalBp) * 2 * Math.PI - Math.PI / 2;
-    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+    return { x: round1(cx + r * Math.cos(angle)), y: round1(cy + r * Math.sin(angle)) };
   };
 
   const fromCoords = (x: number, y: number) => {
