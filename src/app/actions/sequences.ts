@@ -10,6 +10,7 @@ import {
   parseSequenceText, countFastaRecords, type ImportedSequence,
 } from '@/lib/sequence-import';
 import { isSnapGene, parseSnapGene } from '@/lib/snapgene';
+import { IMPORT_FORMAT_LIST } from '@/lib/import-formats';
 import { isAb1, parseAb1 } from '@/lib/formats/ab1';
 import { identifyUnsupported } from '@/lib/formats/proprietary';
 import { fetchAccession } from '@/lib/accession';
@@ -251,7 +252,7 @@ export async function importSequence(formData: FormData) {
       const known = identifyUnsupported(bytes, upload.name);
       throw new Error(known
         ? `${upload.name} is ${known.format}. ${known.advice}`
-        : `Could not read ${upload.name}. Supported: GenBank, EMBL, FASTA, GFF3, SnapGene .dna, ABI .ab1, or a plain sequence.`);
+        : `Could not read ${upload.name}. Supported: ${IMPORT_FORMAT_LIST}, or a plain sequence.`);
     }
   } else if (raw) {
     const records = countFastaRecords(raw);

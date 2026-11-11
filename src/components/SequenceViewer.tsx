@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ENZYMES } from '@/lib/restrictionEnzymes';
+import { IMPORT_ACCEPT } from '@/lib/import-formats';
 import { saveSequenceEdit, saveFeatures, saveSimulation, addPrimer, deletePrimer, updatePrimer, extractToSequence } from '@/app/actions/sequences';
 import { findMatches, stepThrough, planReplacements } from '@/lib/sequence-search';
 import {
@@ -2687,7 +2688,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
             the reader to right-click the map and save it themselves; the map
             has real SVG and PNG buttons, so it is gone rather than moved.
           */}
-          <input ref={importFileRef} type="file" accept=".gb,.gbk,.genbank,.fasta,.fa,.fna" style={{ display: 'none' }} onChange={handleFileImport} />
+          <input ref={importFileRef} type="file" accept={IMPORT_ACCEPT} style={{ display: 'none' }} onChange={handleFileImport} />
           {importMsg && (
             <div style={{ fontSize: '0.75rem', padding: '0.45rem 0.6rem', borderRadius: 6, marginBottom: '0.75rem', background: importMsg.type === 'err' ? 'rgba(220,38,38,0.08)' : 'rgba(16,185,129,0.08)', color: importMsg.type === 'err' ? '#b91c1c' : 'var(--accent-green)' }}>
               {importMsg.text}
