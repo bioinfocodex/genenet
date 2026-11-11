@@ -76,7 +76,13 @@ function sequenceSegment(sequence: string, circular: boolean): Uint8Array {
   return segment(0, payload);
 }
 
-/** SnapGene's palette for the feature types it knows. */
+/**
+ * SnapGene's palette, for a feature that arrived without a colour of its own.
+ *
+ * A colour the file carried is used in preference to anything here. Repainting
+ * a feature from its type loses what the lab chose, and the lab's colours are
+ * how people recognise their own constructs at a glance.
+ */
 const TYPE_COLOURS: Record<string, string> = {
   CDS: '#993366',
   gene: '#ff9ccd',
@@ -104,12 +110,25 @@ function featureXml(features: ImportedFeature[], length: number): string {
       ? f.segments
       : [{ start: f.start, end: f.end }];
 
+    /*
+     * A segment whose end precedes its start runs through the origin, and
+     * SnapGene writes it that way round too. Clamping it to end >= start threw
+     * it away: a feature across base 1 went into the file and did not come
+     * out, silently, which on a plasmid is a feature people put there on
+     * purpose.
+     */
+    const inRange = (n: number) => n >= 0 && n < length;
     const clamped = segments
-      .map(s => ({ start: Math.max(0, s.start), end: Math.min(length - 1, s.end) }))
-      .filter(s => s.end >= s.start);
+      // A segment with both ends on the molecule is written as it stands,
+      // whichever way round they are. One that overhangs is trimmed to the
+      // molecule rather than dropped, which is what it meant anyway.
+      .map(s => inRange(s.start) && inRange(s.end)
+        ? s
+        : { start: Math.min(Math.max(0, s.start), length - 1), end: Math.min(Math.max(0, s.end), length - 1) })
+      .filter(s => inRange(s.start) && inRange(s.end));
     if (clamped.length === 0) return;
 
-    const colour = TYPE_COLOURS[f.type] ?? TYPE_COLOURS.misc_feature;
+    const colour = f.color ?? TYPE_COLOURS[f.type] ?? TYPE_COLOURS.misc_feature;
     const directionality = f.strand === '-' ? 2 : 1;
 
     parts.push(
@@ -129,15 +148,31 @@ function featureXml(features: ImportedFeature[], length: number): string {
   return parts.join('');
 }
 
-function notesXml(name: string, description: string): string {
-  const now = new Date().toISOString().slice(0, 10);
+/**
+ * The date, as this format writes dates.
+ *
+ * SnapGene writes 2025.12.15, not 2025-12-15. An ISO date here is not a
+ * cosmetic difference: BioPython parses this field with a fixed format and
+ * raises on anything else, so every file written by this codebase was
+ * unreadable by an independent reader -- and the only way to find that out was
+ * to write one and hand it to another parser.
+ */
+export function snapGeneDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
+}
+
+function notesXml(name: string, description: string, now = new Date()): string {
+  const date = snapGeneDate(now);
   return (
     '<Notes>' +
     `<Type>Synthetic</Type>` +
-    `<Created>${now}</Created>` +
-    `<LastModified>${now}</LastModified>` +
+    `<Created>${date}</Created>` +
+    `<LastModified>${date}</LastModified>` +
     `<Description>${esc(description)}</Description>` +
     `<CustomMapLabel>${esc(name)}</CustomMapLabel>` +
+    // Without this SnapGene has a label and no instruction to show it.
+    '<UseCustomMapLabel>1</UseCustomMapLabel>' +
     // Written so a reader can tell where the file came from. SnapGene ignores
     // fields it does not know rather than refusing the file.
     '<CreatedBy>GeneNet</CreatedBy>' +
