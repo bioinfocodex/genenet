@@ -6,6 +6,7 @@ import {
   keyFromLabel, uniqueKey, validateDefinition, coerceRecord, nextCode, validatePrefix,
   type FieldDefinition, type FieldType, FIELD_TYPES,
 } from '@/lib/fields';
+import { withCodeRetry, describeWriteError } from '@/lib/registry';
 
 /**
  * Creating and filling lab-defined record types.
@@ -320,26 +321,38 @@ export async function saveEntity(data: FormData): Promise<ActionResult<{ id: str
       return { ok: true, id: entityId };
     }
 
-    // Codes are issued from the highest already used, so a deleted record's
-    // code is never handed to a different record.
-    const existing = await prisma.entity.findMany({
-      where: { entityTypeId },
-      select: { code: true },
-    });
-    const code = nextCode(type.prefix, existing.map(e => e.code));
+    /*
+     * Codes are issued from the highest already used, so a deleted record's
+     * code is never handed to a different record.
+     *
+     * Reading the highest and then writing it is a race: two people
+     * registering at the same second both read the same number and both try
+     * to create it. Measured against a real database, three at once gave two
+     * records and one raw Prisma error shown where the confirmation should
+     * have been, with the typed record lost. The read is therefore inside the
+     * retry, so a loser recomputes its code from what is now there rather
+     * than repeating a write that cannot succeed.
+     */
+    const created = await withCodeRetry(async () => {
+      const existing = await prisma.entity.findMany({
+        where: { entityTypeId },
+        select: { code: true },
+      });
+      const code = nextCode(type.prefix, existing.map(e => e.code));
 
-    const created = await prisma.entity.create({
-      data: {
-        code, name, entityTypeId, projectId, createdById: user.id,
-        values: { create: withLabels.map(([def, v]) => ({ fieldId: def.id!, ...v })) },
-      },
-      select: { id: true },
-    });
+      return prisma.entity.create({
+        data: {
+          code, name, entityTypeId, projectId, createdById: user.id,
+          values: { create: withLabels.map(([def, v]) => ({ fieldId: def.id!, ...v })) },
+        },
+        select: { id: true },
+      });
+    }, { field: 'code' });
 
     revalidatePath(`/entities/${entityTypeId}`);
     return { ok: true, id: created.id };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Could not save the record.' };
+    return { error: describeWriteError(e, 'record') };
   }
 }
 
