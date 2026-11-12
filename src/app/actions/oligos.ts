@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth-guard';
 import { nextCode } from '@/lib/fields';
+import { withCodeRetry } from '@/lib/registry';
 import {
   OLIGO_PREFIX, cleanOligo, validateOligo, findDuplicate, parseOligoList, planPrimerImport,
   type PrimerImportPlan,
@@ -27,17 +28,27 @@ export async function createOligo(data: FormData): Promise<ActionResult<{ id: st
   const dup = findDuplicate(sequence, existing);
   if (dup) return { error: `${dup.code} (${dup.name}) already has this sequence.` };
 
-  const created = await prisma.oligo.create({
-    data: {
-      code: nextCode(OLIGO_PREFIX, existing.map(o => o.code)),
-      name, sequence,
-      modifications: text(data, 'modifications'),
-      location: text(data, 'location'),
-      notes: text(data, 'notes'),
-      createdById: user.id,
-    },
-    select: { id: true, code: true },
-  });
+  /*
+   * The code is read off what exists and then written, which two people
+   * ordering primers at the same moment both do with the same answer. The
+   * column is unique, so the loser used to get the database's own error where
+   * its code should have been. Re-reading inside the retry gives it the next
+   * code instead.
+   */
+  const created = await withCodeRetry(async () => {
+    const codes = (await prisma.oligo.findMany({ select: { code: true } })).map(o => o.code);
+    return prisma.oligo.create({
+      data: {
+        code: nextCode(OLIGO_PREFIX, codes),
+        name, sequence,
+        modifications: text(data, 'modifications'),
+        location: text(data, 'location'),
+        notes: text(data, 'notes'),
+        createdById: user.id,
+      },
+      select: { id: true, code: true },
+    });
+  }, { field: 'code' });
   revalidatePath('/oligos');
   return { ok: true, ...created };
 }
@@ -103,13 +114,22 @@ export async function importOligos(data: FormData): Promise<ActionResult<ImportO
       outcome.skipped.push({ name: row.name, existing: `${dup.code} (${dup.name})` });
       continue;
     }
-    const code = nextCode(OLIGO_PREFIX, codes);
-    await prisma.oligo.create({
-      data: { code, name: row.name, sequence: row.sequence, notes: row.notes ?? null, createdById: user.id },
-    });
-    codes.push(code);
-    known.push({ code, name: row.name, sequence: row.sequence });
-    outcome.added.push({ code, name: row.name });
+    // One failed row in an import of two hundred should cost that row, not
+    // the import.
+    const made = await withCodeRetry(async (attempt) => {
+      if (attempt > 0) {
+        codes.length = 0;
+        codes.push(...(await prisma.oligo.findMany({ select: { code: true } })).map(o => o.code));
+      }
+      const code = nextCode(OLIGO_PREFIX, codes);
+      await prisma.oligo.create({
+        data: { code, name: row.name, sequence: row.sequence, notes: row.notes ?? null, createdById: user.id },
+      });
+      return code;
+    }, { field: 'code' });
+    codes.push(made);
+    known.push({ code: made, name: row.name, sequence: row.sequence });
+    outcome.added.push({ code: made, name: row.name });
   }
 
   revalidatePath('/oligos');
@@ -133,10 +153,14 @@ export async function addPrimerToCollection(primerId: string): Promise<ActionRes
   const dup = findDuplicate(sequence, existing);
   if (dup) return { ok: true, code: dup.code, existed: true };
 
-  const code = nextCode(OLIGO_PREFIX, existing.map(o => o.code));
-  await prisma.oligo.create({
-    data: { code, name: primer.name, sequence, notes: primer.notes, createdById: user.id },
-  });
+  const code = await withCodeRetry(async () => {
+    const codes = (await prisma.oligo.findMany({ select: { code: true } })).map(o => o.code);
+    const next = nextCode(OLIGO_PREFIX, codes);
+    await prisma.oligo.create({
+      data: { code: next, name: primer.name, sequence, notes: primer.notes, createdById: user.id },
+    });
+    return next;
+  }, { field: 'code' });
   revalidatePath('/oligos');
   revalidatePath(`/sequences/${primer.geneSequenceId}`);
   return { ok: true, code, existed: false };
@@ -174,10 +198,17 @@ export async function importPrimersFromSequences(): Promise<ActionResult<{ added
   const added: { code: string; name: string }[] = [];
 
   for (const row of plan.add) {
-    const code = nextCode(OLIGO_PREFIX, codes);
-    await prisma.oligo.create({
-      data: { code, name: row.name, sequence: row.sequence, notes: row.notes, createdById: user.id },
-    });
+    const code = await withCodeRetry(async (attempt) => {
+      if (attempt > 0) {
+        codes.length = 0;
+        codes.push(...(await prisma.oligo.findMany({ select: { code: true } })).map(o => o.code));
+      }
+      const next = nextCode(OLIGO_PREFIX, codes);
+      await prisma.oligo.create({
+        data: { code: next, name: row.name, sequence: row.sequence, notes: row.notes, createdById: user.id },
+      });
+      return next;
+    }, { field: 'code' });
     codes.push(code);
     added.push({ code, name: row.name });
   }

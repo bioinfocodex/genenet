@@ -18,6 +18,7 @@ import { findHost, findStrain } from '@/lib/hosts';
 import { parseStyle, serialiseStyle } from '@/lib/map-display';
 import { planBackfill, prefixFor } from '@/lib/sequence-codes';
 import { nextCode } from '@/lib/fields';
+import { withCodeRetry } from '@/lib/registry';
 
 export async function createSequence(data: FormData) {
   const name = (data.get('name') as string).trim();
@@ -38,12 +39,12 @@ export async function createSequence(data: FormData) {
 
   if (sequence.length === 0) throw new Error('Sequence must contain valid nucleotides.');
 
-  await prisma.geneSequence.create({
+  await withFreshCode(type, code => prisma.geneSequence.create({
     data: {
       name, type, description, sequence, size: sequence.length, tags, host, strain,
-      code: await issueSequenceCode(type),
+      code,
     },
-  });
+  }));
 
   revalidatePath('/sequences');
   redirect('/sequences');
@@ -93,7 +94,7 @@ export async function extractToSequence(data: FormData) {
    * fragment until somebody closes it, and calling it a plasmid would draw
    * it as a circle it is not.
    */
-  const made = await prisma.geneSequence.create({
+  const made = await withFreshCode('gene', code => prisma.geneSequence.create({
     data: {
       name,
       type: 'gene',
@@ -103,9 +104,9 @@ export async function extractToSequence(data: FormData) {
       host: parent?.host ?? null,
       strain: parent?.strain ?? null,
       features: JSON.stringify(features),
-      code: await issueSequenceCode('gene'),
+      code,
     },
-  });
+  }));
 
   revalidatePath('/sequences');
   redirect(`/sequences/${made.id}`);
@@ -263,19 +264,20 @@ export async function importSequence(formData: FormData) {
     throw new Error('Provide a sequence, a file, or an accession number.');
   }
 
-  await prisma.geneSequence.create({
+  const kind = parsed.circular || parsed.sequence.length > 3000 ? 'plasmid' : 'gene';
+  await withFreshCode(kind, code => prisma.geneSequence.create({
     data: {
       name: parsed.name + note,
       description: parsed.description || null,
       // Circularity is not a column, so it goes where the viewer already looks.
-      type: parsed.circular ? 'plasmid' : (parsed.sequence.length > 3000 ? 'plasmid' : 'gene'),
-      code: await issueSequenceCode(parsed.circular || parsed.sequence.length > 3000 ? 'plasmid' : 'gene'),
+      type: kind,
+      code,
       sequence: parsed.sequence,
       size: parsed.sequence.length,
       tags: null,
       features: JSON.stringify(parsed.features ?? []),
     },
-  });
+  }));
 
   revalidatePath('/sequences');
   redirect('/sequences');
@@ -375,17 +377,18 @@ export async function saveConstruct(formData: FormData): Promise<SaveConstructRe
 
   if (!name || !sequence) return { error: 'A construct needs a name and a sequence.' };
 
-  const built = await prisma.geneSequence.create({
+  const kind = topology === 'circular' ? 'plasmid' : 'gene';
+  const built = await withFreshCode(kind, code => prisma.geneSequence.create({
     data: {
       name,
       description: `Assembled by ${method}${parts ? ` from ${parts}` : ''}.`,
-      type: topology === 'circular' ? 'plasmid' : 'gene',
-      code: await issueSequenceCode(topology === 'circular' ? 'plasmid' : 'gene'),
+      type: kind,
+      code,
       sequence,
       size: sequence.length,
       features,
     },
-  });
+  }));
 
   // Descent, as edges rather than a sentence. The parents are named even when
   // their ids are not known, so a construct assembled from something that is
@@ -514,4 +517,16 @@ export async function issueSequenceCode(type: string): Promise<string> {
     select: { code: true },
   });
   return nextCode(prefix, existing.map(e => e.code!).filter(Boolean));
+}
+
+/**
+ * Create a record with a freshly-issued code, and try again if it loses.
+ *
+ * The comment above says the unique constraint catches a collision. It does,
+ * by throwing -- which reached the person as the database's own error where
+ * the new construct should have been, with their import or assembly gone.
+ * Catching it and issuing the next code is what the constraint was for.
+ */
+async function withFreshCode<T>(type: string, create: (code: string) => Promise<T>): Promise<T> {
+  return withCodeRetry(async () => create(await issueSequenceCode(type)), { field: 'code' });
 }

@@ -7,6 +7,7 @@ import { annotate } from '@/lib/annotation';
 import { fullLibrary } from '@/lib/feature-library';
 import { normaliseFeatures } from '@/lib/features';
 import { nextCode } from '@/lib/fields';
+import { withCodeRetry } from '@/lib/registry';
 import { OLIGO_PREFIX, findDuplicate } from '@/lib/oligos';
 import {
   REFERENCE_VECTORS, STANDARD_PRIMERS, REFERENCE_TAG, accessionTag, mergeAnnotations,
@@ -113,13 +114,20 @@ export async function addStandardPrimers(): Promise<{ added: { code: string; nam
 
   for (const p of STANDARD_PRIMERS) {
     if (findDuplicate(p.sequence, existing)) continue;
-    const code = nextCode(OLIGO_PREFIX, codes);
-    await prisma.oligo.create({
-      data: {
-        code, name: p.name, sequence: p.sequence, createdById: user.id,
-        notes: `Universal primer. Anneals exactly to ${p.verifiedOn.map(a => `${names[a] ?? a} (${a})`).join(', ')}.`,
-      },
-    });
+    const code = await withCodeRetry(async (attempt) => {
+      if (attempt > 0) {
+        codes.length = 0;
+        codes.push(...(await prisma.oligo.findMany({ select: { code: true } })).map(o => o.code));
+      }
+      const next = nextCode(OLIGO_PREFIX, codes);
+      await prisma.oligo.create({
+        data: {
+          code: next, name: p.name, sequence: p.sequence, createdById: user.id,
+          notes: `Universal primer. Anneals exactly to ${p.verifiedOn.map(a => `${names[a] ?? a} (${a})`).join(', ')}.`,
+        },
+      });
+      return next;
+    }, { field: 'code' });
     codes.push(code);
     existing.push({ code, sequence: p.sequence });
     added.push({ code, name: p.name });
