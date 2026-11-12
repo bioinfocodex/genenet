@@ -4,6 +4,7 @@ import { createSequence, importSequence } from '@/app/actions/sequences';
 import Link from 'next/link';
 import { Upload, FileText } from 'lucide-react';
 import { LAB_HOSTS, TRANSFORMATION_STRAINS } from '@/lib/hosts';
+import { IMPORT_ACCEPT, IMPORT_HINT, IMPORT_FORMAT_LIST, formatFromFilename } from '@/lib/import-formats';
 
 type Mode = 'manual' | 'fasta' | 'genbank' | 'file';
 
@@ -39,26 +40,31 @@ export default function NewSequencePage() {
     setFileInfo(null);
     const file = e.target.files?.[0];
     if (!file) return;
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-    const format = ['gb', 'gbk'].includes(ext) ? 'genbank' : ['fasta', 'fa'].includes(ext) ? 'fasta' : null;
-    if (!format) { setFileError('Unsupported format. Use .fasta, .fa, .gb, or .gbk'); return; }
-    setFileInfo({ name: file.name, format });
+    /*
+     * The extension is only used to say what this looks like. The importer
+     * detects the real format from the content, so a file with an unfamiliar
+     * name is still worth sending -- rejecting it here is how a GenBank file
+     * somebody renamed used to become unimportable.
+     */
+    setFileInfo({ name: file.name, format: formatFromFilename(file.name) ?? 'unrecognised' });
   };
 
   const handleFileImport = () => {
     const file = fileRef.current?.files?.[0];
     if (!file || !fileInfo) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const raw = e.target?.result as string;
-      if (!raw?.trim()) { setFileError('File appears to be empty'); return; }
-      const fd = new FormData();
-      fd.append('format', fileInfo.format);
-      fd.append('raw', raw);
-      startTransition(() => { importSequence(fd); });
-    };
-    reader.onerror = () => setFileError('Could not read file');
-    reader.readAsText(file);
+    if (file.size === 0) { setFileError('That file is empty.'); return; }
+    /*
+     * The file goes as a file, not as text.
+     *
+     * It used to be read with readAsText and posted as a pasted sequence,
+     * which quietly limited this page to the formats that happen to be text.
+     * A SnapGene .dna or an ABI trace decoded as UTF-8 loses most of its bytes
+     * before the parser ever sees it. Sending the file itself gives this page
+     * every reader the import action has.
+     */
+    const fd = new FormData();
+    fd.append('file', file);
+    startTransition(() => { importSequence(fd); });
   };
 
   const tabs: [Mode, string][] = [['manual', 'Manual entry'], ['fasta', 'Import FASTA'], ['genbank', 'Import GenBank'], ['file', 'Upload File']];
@@ -251,7 +257,7 @@ export default function NewSequencePage() {
       {mode === 'file' && (
         <div className="glass-panel" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div style={{ padding: '0.75rem 1rem', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-            Upload a sequence file from your computer. Supported formats: <strong>.fasta</strong>, <strong>.fa</strong>, <strong>.gb</strong>, <strong>.gbk</strong>. GenBank files include features and annotations; FASTA files contain sequence only.
+            Upload a sequence file from your computer. The format is read from the file itself, so a renamed or unfamiliar extension is still worth trying. Supported: <strong>{IMPORT_FORMAT_LIST}</strong>. GenBank, EMBL, GFF3 and SnapGene files bring their features; FASTA and plain text are sequence only.
           </div>
 
           {/* Drop zone / file picker */}
@@ -267,7 +273,7 @@ export default function NewSequencePage() {
             <input
               ref={fileRef}
               type="file"
-              accept=".fasta,.fa,.gb,.gbk"
+              accept={IMPORT_ACCEPT}
               onChange={handleFileChange}
               style={{ display: 'none' }}
             />
@@ -276,7 +282,7 @@ export default function NewSequencePage() {
                 <FileText size={32} color="var(--accent-blue)" />
                 <div style={{ fontWeight: 600, color: 'var(--accent-blue)', fontSize: '0.95rem' }}>{fileInfo.name}</div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                  Format detected: <strong>{fileInfo.format === 'genbank' ? 'GenBank' : 'FASTA'}</strong>
+                  Looks like <strong>{fileInfo.format}</strong>
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Click to choose a different file</div>
               </div>
@@ -284,7 +290,7 @@ export default function NewSequencePage() {
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
                 <Upload size={32} color="var(--text-muted)" style={{ opacity: 0.5 }} />
                 <div style={{ fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Click to select a file</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>.fasta · .fa · .gb · .gbk</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{IMPORT_HINT}</div>
               </div>
             )}
           </div>
@@ -304,7 +310,7 @@ export default function NewSequencePage() {
               style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             >
               <Upload size={15} />
-              {isPending ? 'Importing…' : `Import ${fileInfo?.format === 'genbank' ? 'GenBank' : 'FASTA'} File`}
+              {isPending ? 'Importing…' : 'Import File'}
             </button>
           </div>
         </div>
