@@ -775,6 +775,12 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
    * to line a printout up against a published map.
    */
   const [molLineLen, setMolLineLen] = useState(0);
+  /*
+   * The whole-molecule strip. On, because the record it matters for is the one
+   * where nothing else on screen says where you are, and it withholds itself
+   * on anything short enough to take in.
+   */
+  const [showMinimap, setShowMinimap] = useState(true);
   const [fittedLineLen, setFittedLineLen] = useState(60);
   const seqPaneRef = useRef<HTMLDivElement>(null);
 
@@ -2196,6 +2202,8 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                 setFrames={setMolFrames}
                 lineLen={effectiveLineLen}
                 setLineLen={setMolLineLen}
+                minimap={showMinimap}
+                setMinimap={setShowMinimap}
                 showStats={showMolStats}
                 setShowStats={setShowMolStats}
                 showFind={showMolFind}
@@ -2275,6 +2283,7 @@ export default function SequenceViewer({ id, name: seqName, sequence: initialSeq
                     primers={drawablePrimers}
                     orfs={chosenOrfs}
                     lineLen={effectiveLineLen}
+                    minimap={showMinimap}
                     layers={molLayers}
                     frames={molFrames}
                     selection={selection}

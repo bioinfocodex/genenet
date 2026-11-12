@@ -54,10 +54,14 @@ const UNIQUE_CUTTER = '#c00000';
 const COMMON_CUTTER = '#0000d0';
 /** Three blocks either side, so a fast scroll never shows a bare edge. */
 const OVERSCAN_BLOCKS = 3;
+/** The strip plus its numbers, kept clear when scrolling a base to the top. */
+const MINIMAP_H = 36;
 import type { MapSite } from '@/lib/map-enzymes';
 import { siteTitle } from '@/lib/map-enzymes';
 import { frameColour, orfTitle, type MapOrf } from '@/lib/map-orfs';
 import { shapeFor, labelInk, outlineFor } from '@/lib/map-style';
+import Minimap from './Minimap';
+import { worthShowing } from '@/lib/minimap';
 
 interface MolbuilderRendererProps {
   sequence: string;
@@ -97,6 +101,13 @@ interface MolbuilderRendererProps {
   caret?: number | null;
   onCaret?: (at: number) => void;
   onFeatureClick?: (feat: SequenceFeature) => void;
+  /**
+   * Draw the whole-molecule strip above the sequence.
+   *
+   * On by default and still withheld on anything short enough to take in
+   * without it -- see `worthShowing`.
+   */
+  minimap?: boolean;
 }
 
 export default function MolbuilderRenderer({
@@ -114,6 +125,7 @@ export default function MolbuilderRenderer({
   caret = null,
   onCaret,
   onFeatureClick,
+  minimap = true,
 }: MolbuilderRendererProps) {
   /*
    * A set of positions rather than a scan per base. A search on a plasmid
@@ -129,6 +141,12 @@ export default function MolbuilderRenderer({
   }, [searchHits]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  /*
+   * The blocks live inside their own full-height box, which the minimap and
+   * the pane's padding sit above. Scrolling to a block means its offset plus
+   * where that box starts, not the offset alone.
+   */
+  const blocksRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number | null>(null);
 
   const seq = useMemo(() => sequence.toUpperCase(), [sequence]);
@@ -255,6 +273,16 @@ export default function MolbuilderRenderer({
   const offsets: number[] = [];
   let y = 0;
   let firstVisible = 1;
+  /*
+   * The screenful, as opposed to what was built.
+   *
+   * `firstVisible` is the first block rendered, which includes three blocks of
+   * overscan above the window -- fine for deciding what to build, wrong for
+   * anything that tells the reader where they are. These two are the blocks
+   * actually on screen.
+   */
+  let winFirst = 0;
+  let winLast = 0;
   for (let i = 0; i < len; i += lineLen) {
     const chunk = seq.slice(i, i + lineLen);
     const chunkLen = chunk.length;
@@ -368,6 +396,11 @@ export default function MolbuilderRenderer({
      * of the full height, so skipping one costs nothing and needs no spacer
      * arithmetic to keep the scrollbar honest.
      */
+    if (top + height > viewTop && top < viewBottom) {
+      if (!winFirst) winFirst = i1;
+      winLast = iEnd1;
+    }
+
     if (top + height < viewTop - OVERSCAN || top > viewBottom + OVERSCAN) continue;
 
     const enzRow = cutsHere.length > 0 && (
@@ -902,9 +935,34 @@ export default function MolbuilderRenderer({
    * the DOM where the blocks ended up: with most of them not rendered there
    * is nothing to ask, and the arithmetic already exists.
    */
-  const topBase = firstVisible;
   const totalHeight = y;
   offsetsRef.current = offsets;
+
+  /*
+   * The badge reads off the screenful rather than the first block built. It
+   * used to say `firstVisible`, which is up to three blocks of overscan above
+   * the window -- on a 60 bp line that is a badge claiming base 1 while the
+   * top line on screen is base 181.
+   */
+  const topBase = winFirst || firstVisible;
+  const visibleBases = measured && winLast ? winLast - winFirst + 1 : 0;
+  const showMinimap = minimap && worthShowing(len, visibleBases);
+
+  /*
+   * Put a base at the top of the window.
+   *
+   * Through the block offsets rather than a proportion of the scroll height:
+   * blocks are not a uniform height, so the proportion is wrong by however
+   * many enzyme labels happen to be above the line being scrolled to.
+   */
+  const goToBase = (base: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const at = offsetsRef.current[Math.floor((base - 1) / lineLen)];
+    if (at == null) return;
+    const base0 = blocksRef.current?.offsetTop ?? 0;
+    el.scrollTop = Math.max(0, base0 + at - MINIMAP_H);
+  };
 
   return (
     <div 
@@ -913,6 +971,39 @@ export default function MolbuilderRenderer({
       onMouseLeave={handleMouseUp}
       style={{ userSelect: 'none' }}
     >
+      {showMinimap && (
+        /*
+          * Sticky, and spanning the pane's padding, so the strip stays in
+          * sight at every scroll position -- a sense of place that scrolls
+          * away is the thing being fixed, not the fix.
+          */
+        <div style={{
+          /*
+            * top: -2rem, not 0.
+            *
+            * A sticky child pins inside the scroller's padding, and the
+            * blocks are absolutely positioned in a box that slides under
+            * that padding -- so at top: 0 there is a 32px band above the
+            * strip with half a line of sequence sliding through it. Pinning
+            * two rem higher and paying the same two rem back as padding
+            * leaves the strip exactly where it looks like it should be, with
+            * the band above it covered.
+            */
+          position: 'sticky', top: '-2rem', zIndex: 25,
+          margin: '-2rem -2rem 0.6rem', padding: '2rem 2rem 0',
+          background: 'var(--seq-bg, #fff)',
+        }}>
+          <Minimap
+            length={len}
+            features={layers.feat ? features : []}
+            hits={searchHits}
+            first={winFirst || 1}
+            last={winLast || Math.min(len, lineLen)}
+            selection={selection}
+            onGoTo={goToBase}
+          />
+        </div>
+      )}
       {/*
         * Locked to the top of the scrolling area, so the position on screen is
         * always the position you are looking at.
@@ -935,7 +1026,7 @@ export default function MolbuilderRenderer({
         * Full height, so the scrollbar describes the whole sequence even
         * though only a screenful of it exists.
         */}
-      <div style={{ position: 'relative', height: totalHeight }}>
+      <div ref={blocksRef} style={{ position: 'relative', height: totalHeight }}>
         {blocks}
       </div>
     </div>

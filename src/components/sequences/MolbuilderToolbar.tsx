@@ -24,6 +24,9 @@ interface MolbuilderToolbarProps {
   setFrames: (frames: Set<number>) => void;
   lineLen: number;
   setLineLen: (len: number) => void;
+  /** The whole-molecule strip above the sequence. */
+  minimap: boolean;
+  setMinimap: (show: boolean) => void;
   showStats: boolean;
   setShowStats: (show: boolean) => void;
   showFind: boolean;
@@ -45,6 +48,8 @@ export default function MolbuilderToolbar({
   setFrames,
   lineLen,
   setLineLen,
+  minimap,
+  setMinimap,
   showStats,
   setShowStats,
   showFind,
@@ -106,6 +111,13 @@ export default function MolbuilderToolbar({
           <option value={80}>80 bp</option>
           <option value={100}>100 bp</option>
         </select>
+        {/*
+          * A toggle rather than always-on: the strip costs 36px of a window
+          * somebody went to the trouble of filling with sequence, and on a
+          * record they know by heart it buys them nothing. It hides itself on
+          * anything short enough not to need it either way.
+          */}
+        <ToolbarToggle active={minimap} onClick={() => setMinimap(!minimap)} label="Minimap" />
       </div>
 
       {/* Group: Search & Tools */}
